@@ -3,7 +3,8 @@ const { DatabaseSync } = require('node:sqlite');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 
-const db = new DatabaseSync(path.join(__dirname, 'teamtask.db'));
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'teamtask.db');
+const db = new DatabaseSync(DB_PATH);
 
 // Compatibility wrapper to match better-sqlite3-style API
 function wrap(stmt) {

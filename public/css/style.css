@@ -1275,12 +1275,13 @@ input, textarea, select { font: inherit; }
 .act-mini-lbl  { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
 .act-legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 
-.act-chart { display: flex; align-items: flex-end; gap: 3px; height: 110px; }
-.act-bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; }
+.act-chart { display: flex; align-items: flex-end; gap: 3px; overflow: hidden; }
+.act-bar-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; }
 .act-bar-wrap { flex: 1; width: 100%; display: flex; align-items: flex-end; }
 .act-bar { width: 100%; border-radius: 3px 3px 0 0; min-height: 3px; transition: height 0.4s ease; }
-.act-bar-lbl { font-size: 9px; color: var(--text-light); }
+.act-bar-lbl { font-size: 9px; color: var(--text-light); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; text-align: center; }
 .act-bar-today { font-weight: 700; color: var(--text); }
+.act-bar-count { font-size: 9px; font-weight: 700; color: var(--text-secondary); text-align: center; width: 100%; line-height: 1; margin-bottom: 2px; }
 
 .act-users-list { display: flex; flex-direction: column; gap: 2px; max-height: 340px; overflow-y: auto; scrollbar-width: thin; }
 .act-user-row {

@@ -781,33 +781,36 @@ app.get('/api/events', auth, (req, res) => {
 
 // ─── Activity ─────────────────────────────────────────────────────────────────
 
-app.get('/api/activity', auth, adminOnly, (req, res) => {
+app.get('/api/activity', auth, requirePerm('view_activity'), (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+  const days  = Math.min(parseInt(req.query.days)  || 30,  365);
   const logs = db.prepare(`
     SELECT al.id, al.action, al.entity_type, al.entity_id, al.entity_title, al.detail, al.created_at,
            u.id as user_id, u.name as user_name, u.avatar_color as user_color, u.avatar_img as user_avatar
     FROM activity_log al
     JOIN users u ON u.id = al.user_id
+    WHERE al.created_at >= date('now', '-${days} days')
     ORDER BY al.created_at DESC
     LIMIT ?
   `).all(limit);
   res.json(logs);
 });
 
-app.get('/api/activity/chart', auth, adminOnly, (req, res) => {
+app.get('/api/activity/chart', auth, requirePerm('view_activity'), (req, res) => {
+  const days = Math.min(parseInt(req.query.days) || 30, 365);
   const rows = db.prepare(`
     SELECT date(created_at) as day,
            COUNT(*) as events,
            COUNT(DISTINCT user_id) as users
     FROM activity_log
-    WHERE created_at >= date('now', '-30 days')
+    WHERE created_at >= date('now', '-${days} days')
     GROUP BY day
     ORDER BY day ASC
   `).all();
   res.json(rows);
 });
 
-app.get('/api/activity/user/:id', auth, adminOnly, (req, res) => {
+app.get('/api/activity/user/:id', auth, requirePerm('view_activity'), (req, res) => {
   const days = Math.min(parseInt(req.query.days) || 30, 365);
   const uid  = req.params.id;
   const user = db.prepare('SELECT id, name, avatar_color, avatar_img, role, last_seen FROM users WHERE id = ?').get(uid);
@@ -836,7 +839,7 @@ app.get('/api/activity/user/:id', auth, adminOnly, (req, res) => {
   res.json({ user, logs, chart, actions });
 });
 
-app.get('/api/users/last-seen', auth, adminOnly, (req, res) => {
+app.get('/api/users/last-seen', auth, requirePerm('view_activity'), (req, res) => {
   const users = db.prepare(`
     SELECT id, name, avatar_color, avatar_img, role,
            last_seen,

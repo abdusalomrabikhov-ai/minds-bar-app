@@ -282,7 +282,7 @@ async function initApp() {
   document.querySelectorAll('.admin-only').forEach(el => {
     el.classList.toggle('hidden', !showAdmin);
   });
-  if (showAdmin) {
+  if (showAdmin || can('view_activity')) {
     const navActivity = document.getElementById('nav-activity');
     if (navActivity) navActivity.style.display = '';
   }
@@ -1071,6 +1071,7 @@ function showMoreDashTasks() {
 let tasksFilter = { status: '', priority: '', search: '', assignee_id: '', overdue: false };
 let myTasksMode = false;
 let dashPeriod = 'month';
+let activityDays = 30;
 let upcomingWeekOffset = 0;
 let tasksDisplayLimit = 10;
 let allFetchedTasks = [];
@@ -2607,8 +2608,22 @@ async function deleteProject(id) {
 
 // ─── Reports Page ────────────────────────────────────────────────────────────
 // ─── Activity Page ────────────────────────────────────────────────────────────
+const ACTIVITY_PERIODS = [
+  { label: '7 дней',    days: 7   },
+  { label: '14 дней',   days: 14  },
+  { label: '1 месяц',   days: 30  },
+  { label: '3 месяца',  days: 90  },
+  { label: '6 месяцев', days: 180 },
+  { label: '1 год',     days: 365 },
+];
+
 async function renderActivityPage() {
+  const periodBtns = ACTIVITY_PERIODS.map(p =>
+    `<button class="period-btn${activityDays === p.days ? ' active' : ''}" onclick="setActivityPeriod(${p.days})">${p.label}</button>`
+  ).join('');
+
   document.getElementById('page-content').innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">${periodBtns}</div>
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px">
       <div id="act-chart-block" style="flex:1;min-width:280px"><div style="color:#94a3b8;font-size:13px">Загрузка...</div></div>
       <div id="act-users-block" style="width:300px;flex-shrink:0"><div style="color:#94a3b8;font-size:13px">Загрузка...</div></div>
@@ -2616,13 +2631,30 @@ async function renderActivityPage() {
     <div id="act-log-block"><div style="color:#94a3b8;font-size:13px">Загрузка...</div></div>
   `;
 
+  await loadActivityData(activityDays);
+}
+
+async function setActivityPeriod(days) {
+  activityDays = days;
+  document.querySelectorAll('.period-btn[onclick^="setActivityPeriod"]').forEach(b => {
+    b.classList.toggle('active', b.getAttribute('onclick') === `setActivityPeriod(${days})`);
+  });
+  const loading = '<div style="color:#94a3b8;font-size:13px">Загрузка...</div>';
+  const chartEl = document.getElementById('act-chart-block');
+  const logEl   = document.getElementById('act-log-block');
+  if (chartEl) chartEl.innerHTML = loading;
+  if (logEl)   logEl.innerHTML   = loading;
+  await loadActivityData(days);
+}
+
+async function loadActivityData(days) {
   try {
     const [logs, chart, users] = await Promise.all([
-      GET('/activity?limit=100'),
-      GET('/activity/chart'),
+      GET(`/activity?limit=500&days=${days}`),
+      GET(`/activity/chart?days=${days}`),
       GET('/users/last-seen'),
     ]);
-    renderActivityChart(chart);
+    renderActivityChart(chart, days, logs);
     renderActivityUsers(users);
     renderActivityLog(logs);
   } catch (e) {
@@ -2631,56 +2663,176 @@ async function renderActivityPage() {
   }
 }
 
-function renderActivityChart(chart) {
+let _actBuckets = {};
+let _actBucketIdx = 0;
+
+function _actUserBreakdown(logs, fromDate, toDate) {
+  const map = {};
+  for (const log of logs) {
+    const d = log.created_at.slice(0, 10);
+    if (d < fromDate || d > toDate) continue;
+    if (!map[log.user_id]) map[log.user_id] = { name: log.user_name, color: log.user_color || '#6366f1', events: 0 };
+    map[log.user_id].events++;
+  }
+  return Object.values(map).sort((a, b) => b.events - a.events);
+}
+
+function showActBarTooltip(event, idx) {
+  const b = _actBuckets[idx];
+  if (!b) return;
+  let el = document.getElementById('act-bar-tip');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'act-bar-tip';
+    el.style.cssText = 'position:fixed;z-index:9999;background:#1e293b;color:#f1f5f9;border-radius:10px;padding:10px 14px;font-size:12px;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,0.35);min-width:170px;max-width:240px;';
+    document.body.appendChild(el);
+  }
+  const rows = b.breakdown.length
+    ? b.breakdown.map(u => {
+        const ini = u.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+        return `<div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+          <div style="width:24px;height:24px;border-radius:50%;background:${u.color};display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0;color:#fff">${ini}</div>
+          <div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#cbd5e1">${u.name}</div>
+          <div style="font-weight:700;color:#fff;flex-shrink:0">${u.events}</div>
+        </div>`;
+      }).join('')
+    : '<div style="color:#64748b;margin-top:6px">Нет активности</div>';
+  el.innerHTML = `<div style="font-weight:700;font-size:13px;padding-bottom:6px;border-bottom:1px solid #334155">${b.period}</div>${rows}`;
+  el.style.display = 'block';
+  _posActTip(el, event);
+}
+function moveActBarTooltip(event) {
+  const el = document.getElementById('act-bar-tip');
+  if (el && el.style.display !== 'none') _posActTip(el, event);
+}
+function hideActBarTooltip() {
+  const el = document.getElementById('act-bar-tip');
+  if (el) el.style.display = 'none';
+}
+function _posActTip(el, e) {
+  const w = el.offsetWidth || 200, h = el.offsetHeight || 100;
+  el.style.left = Math.min(e.clientX + 14, window.innerWidth - w - 10) + 'px';
+  el.style.top  = Math.max(Math.min(e.clientY - 10, window.innerHeight - h - 10), 10) + 'px';
+}
+
+function renderActivityChart(chart, days = 30, logs = []) {
   const el = document.getElementById('act-chart-block');
   if (!el) return;
-
-  // Build 30-day map
-  const today = new Date();
-  const days = [];
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    days.push(d.toISOString().slice(0, 10));
-  }
-  const map = {};
-  chart.forEach(r => { map[r.day] = r; });
-  const maxEvents = Math.max(...days.map(d => map[d]?.events || 0), 1);
+  _actBuckets = {};
+  _actBucketIdx = 0;
 
   const MONTHS_SHORT = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
 
-  const bars = days.map(d => {
-    const row = map[d] || { events: 0, users: 0 };
-    const h = Math.round((row.events / maxEvents) * 100);
-    const date = new Date(d + 'T00:00:00');
-    const label = date.getDate() + ' ' + MONTHS_SHORT[date.getMonth()];
-    const isToday = d === today.toISOString().slice(0, 10);
-    const color = row.events === 0 ? '#E2E8F0' : row.users >= 5 ? '#059669' : row.users >= 3 ? '#3B82F6' : '#D97706';
+  const dayMap = {};
+  chart.forEach(r => { dayMap[r.day] = r; });
+
+  let buckets = [];
+  let unitLabel = 'активных дней';
+
+  if (days <= 30) {
+    // Daily bars
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      const row = dayMap[key] || { events: 0, users: 0 };
+      const date = new Date(key + 'T00:00:00');
+      buckets.push({
+        events: row.events, users: row.users,
+        label: String(date.getDate()),
+        period: `${date.getDate()} ${MONTHS_SHORT[date.getMonth()]}`,
+        highlight: key === todayStr,
+        fromDate: key, toDate: key,
+      });
+    }
+  } else if (days <= 90) {
+    // Weekly bars
+    unitLabel = 'активных недель';
+    let remaining = days;
+    while (remaining > 0) {
+      const weekSize = Math.min(7, remaining);
+      let events = 0, users = 0;
+      for (let j = remaining - weekSize; j < remaining; j++) {
+        const d = new Date(today);
+        d.setDate(today.getDate() - j);
+        const key = d.toISOString().slice(0, 10);
+        const row = dayMap[key] || { events: 0, users: 0 };
+        events += row.events;
+        users = Math.max(users, row.users);
+      }
+      const wFrom = new Date(today); wFrom.setDate(today.getDate() - remaining + 1);
+      const wTo   = new Date(today); wTo.setDate(today.getDate() - remaining + weekSize);
+      const fromDate = wFrom.toISOString().slice(0, 10);
+      const toDate   = wTo.toISOString().slice(0, 10);
+      const lbl = wFrom.getDate() + ' ' + MONTHS_SHORT[wFrom.getMonth()];
+      buckets.push({ events, users, label: lbl, period: `Неделя ${lbl}–${wTo.getDate()} ${MONTHS_SHORT[wTo.getMonth()]}`, highlight: remaining <= 7, fromDate, toDate });
+      remaining -= weekSize;
+    }
+  } else {
+    // Monthly bars
+    unitLabel = 'активных месяцев';
+    const startDate = new Date(today);
+    startDate.setDate(today.getDate() - days + 1);
+    const monthMap = {};
+    for (let i = 0; i < days; i++) {
+      const d = new Date(startDate);
+      d.setDate(startDate.getDate() + i);
+      const key = d.toISOString().slice(0, 10);
+      const mk = key.slice(0, 7);
+      if (!monthMap[mk]) monthMap[mk] = { events: 0, users: 0 };
+      const row = dayMap[key] || { events: 0, users: 0 };
+      monthMap[mk].events += row.events;
+      monthMap[mk].users = Math.max(monthMap[mk].users, row.users);
+    }
+    const currentMk = todayStr.slice(0, 7);
+    buckets = Object.entries(monthMap).sort((a, b) => a[0].localeCompare(b[0])).map(([mk, data]) => {
+      const m = parseInt(mk.split('-')[1]) - 1;
+      return {
+        events: data.events, users: data.users,
+        label: MONTHS_SHORT[m],
+        period: `${MONTHS_SHORT[m]} ${mk.split('-')[0]}`,
+        highlight: mk === currentMk,
+        fromDate: mk + '-01', toDate: mk + '-31',
+      };
+    });
+  }
+
+  const maxEvents = Math.max(...buckets.map(b => b.events), 1);
+  const bars = buckets.map(b => {
+    const idx = _actBucketIdx++;
+    _actBuckets[idx] = { period: b.period, events: b.events, breakdown: _actUserBreakdown(logs, b.fromDate, b.toDate) };
+    const h = Math.max(Math.round((b.events / maxEvents) * 100), b.events > 0 ? 8 : 0);
+    const color = b.events === 0 ? '#E2E8F0' : b.users >= 5 ? '#059669' : b.users >= 3 ? '#3B82F6' : '#D97706';
+    const countLabel = b.events > 0 ? `<div class="act-bar-count">${b.events}</div>` : '';
     return `
-      <div class="act-bar-col" title="${label}: ${row.events} событий, ${row.users} польз.">
+      <div class="act-bar-col" onmouseenter="showActBarTooltip(event,${idx})" onmousemove="moveActBarTooltip(event)" onmouseleave="hideActBarTooltip()">
+        ${countLabel}
         <div class="act-bar-wrap">
-          <div class="act-bar" style="height:${h}%;background:${color};${isToday?'outline:2px solid #0F172A;outline-offset:1px':''}"></div>
+          <div class="act-bar" style="height:${h}%;background:${color};${b.highlight ? 'outline:2px solid #0F172A;outline-offset:1px' : ''}"></div>
         </div>
-        <div class="act-bar-lbl${isToday?' act-bar-today':''}">${date.getDate()}</div>
+        <div class="act-bar-lbl${b.highlight ? ' act-bar-today' : ''}">${b.label}</div>
       </div>`;
   }).join('');
 
-  const totalEvents = chart.reduce((s, r) => s + r.events, 0);
-  const activeDays = chart.filter(r => r.events > 0).length;
+  const totalEvents = buckets.reduce((s, b) => s + b.events, 0);
+  const activeCount = buckets.filter(b => b.events > 0).length;
+  const periodLabel = ACTIVITY_PERIODS.find(p => p.days === days)?.label || `${days} дней`;
 
   el.innerHTML = `
-    <div class="chart-panel" style="height:100%">
-      <div class="chart-title">Активность за 30 дней</div>
+    <div class="chart-panel" style="height:100%;display:flex;flex-direction:column">
+      <div class="chart-title">Активность за ${periodLabel}</div>
       <div style="display:flex;gap:14px;margin-bottom:16px;flex-wrap:wrap">
         <div class="act-mini-stat"><div class="act-mini-val">${totalEvents}</div><div class="act-mini-lbl">событий</div></div>
-        <div class="act-mini-stat"><div class="act-mini-val">${activeDays}</div><div class="act-mini-lbl">активных дней</div></div>
+        <div class="act-mini-stat"><div class="act-mini-val">${activeCount}</div><div class="act-mini-lbl">${unitLabel}</div></div>
         <div style="display:flex;align-items:center;gap:10px;margin-left:auto;font-size:11px;color:var(--text-muted)">
           <span><span class="act-legend-dot" style="background:#059669"></span> 5+ польз.</span>
           <span><span class="act-legend-dot" style="background:#3B82F6"></span> 3–4</span>
           <span><span class="act-legend-dot" style="background:#D97706"></span> 1–2</span>
         </div>
       </div>
-      <div class="act-chart">${bars}</div>
+      <div class="act-chart" style="overflow:hidden;flex:1;height:auto;min-height:80px">${bars}</div>
     </div>
   `;
 }
@@ -2763,35 +2915,54 @@ function renderActivityLog(logs) {
 
   const initials = name => name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
+  const VISIBLE = 15;
+  const renderRow = log => {
+    const color = ACTION_COLOR[log.action] || '#94a3b8';
+    const icon  = ACTION_ICON[log.action]  || ACTION_ICON.task_updated;
+    const text  = ACTION_TEXT[log.action]  || log.action;
+    return `
+      <div class="act-log-row">
+        <div class="act-log-avatar" style="background:${log.user_color || '#6366f1'}">
+          ${log.user_avatar
+            ? `<img src="${log.user_avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`
+            : initials(log.user_name)}
+        </div>
+        <div class="act-log-body">
+          <div class="act-log-text">
+            <span class="act-log-username">${log.user_name}</span>
+            ${text}
+            ${log.entity_title ? `<span class="act-log-entity">«${log.entity_title}»</span>` : ''}
+            ${log.detail ? `<span class="act-log-detail">${log.detail}</span>` : ''}
+          </div>
+          <div class="act-log-time">${fmtTime(log.created_at)}</div>
+        </div>
+        <div class="act-log-icon" style="background:${color}1a;color:${color}">${icon}</div>
+      </div>`;
+  };
+
+  const visible = logs.slice(0, VISIBLE);
+  const hidden  = logs.slice(VISIBLE);
+
+  const moreBlock = hidden.length > 0 ? `
+    <div id="act-log-more" style="display:none" class="act-log-list">
+      ${hidden.map(renderRow).join('')}
+    </div>
+    <button id="act-log-toggle" onclick="
+      const m=document.getElementById('act-log-more');
+      const b=document.getElementById('act-log-toggle');
+      const open=m.style.display==='none';
+      m.style.display=open?'':'none';
+      b.textContent=open?'Скрыть':'Показать ещё ${hidden.length} событий ↓';
+    " style="margin-top:8px;background:none;border:none;color:var(--primary);font-size:12px;font-weight:600;cursor:pointer;padding:4px 0">
+      Показать ещё ${hidden.length} событий ↓
+    </button>` : '';
+
   el.innerHTML = `
     <div class="chart-panel">
-      <div class="chart-title">Лог активности <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light);margin-left:4px">· последние ${logs.length} событий</span></div>
+      <div class="chart-title">Лог активности <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light);margin-left:4px">· всего ${logs.length} событий</span></div>
       ${logs.length === 0 ? '<div style="color:#94a3b8;font-size:13px;padding:8px 0">Активности нет — она появится после входа и работы сотрудников</div>' : ''}
-      <div class="act-log-list">
-        ${logs.map(log => {
-          const color = ACTION_COLOR[log.action] || '#94a3b8';
-          const icon  = ACTION_ICON[log.action]  || ACTION_ICON.task_updated;
-          const text  = ACTION_TEXT[log.action]  || log.action;
-          return `
-            <div class="act-log-row">
-              <div class="act-log-avatar" style="background:${log.user_color || '#6366f1'}">
-                ${log.user_avatar
-                  ? `<img src="${log.user_avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`
-                  : initials(log.user_name)}
-              </div>
-              <div class="act-log-body">
-                <div class="act-log-text">
-                  <span class="act-log-username">${log.user_name}</span>
-                  ${text}
-                  ${log.entity_title ? `<span class="act-log-entity">«${log.entity_title}»</span>` : ''}
-                  ${log.detail ? `<span class="act-log-detail">${log.detail}</span>` : ''}
-                </div>
-                <div class="act-log-time">${fmtTime(log.created_at)}</div>
-              </div>
-              <div class="act-log-icon" style="background:${color}1a;color:${color}">${icon}</div>
-            </div>`;
-        }).join('')}
-      </div>
+      <div class="act-log-list">${visible.map(renderRow).join('')}</div>
+      ${moreBlock}
     </div>
   `;
 }
@@ -2879,6 +3050,7 @@ function renderUserActivityContent(userId, data, days) {
     const showLbl = i % showLabelEvery === 0;
     return `
       <div class="act-bar-col" title="${label}: ${ev} событий" style="min-width:0">
+        ${ev > 0 ? `<div class="act-bar-count">${ev}</div>` : ''}
         <div class="act-bar-wrap">
           <div class="act-bar" style="height:${Math.max(h,ev>0?4:0)}%;background:${color};${isToday?'outline:2px solid #0F172A;outline-offset:1px':''}"></div>
         </div>
@@ -3116,6 +3288,7 @@ const PERM_LABELS = {
   manage_projects: { icon: svgI(SVG_PATHS.folder, 13), text: 'Проекты' },
   assign_tasks:    { icon: svgI(SVG_PATHS.clip, 13),   text: 'Назначать задачи' },
   manage_team:     { icon: svgI(SVG_PATHS.users, 13),  text: 'Команда' },
+  view_activity:   { icon: svgI(SVG_PATHS.eye, 13),    text: 'Активность' },
 };
 
 function permTags(perms) {
