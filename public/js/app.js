@@ -260,9 +260,24 @@ function roleLabel(user) {
 }
 
 // ─── App Init ─────────────────────────────────────────────────────────────────
+function applyTheme(dark) {
+  document.body.classList.toggle('dark', dark);
+  const moon = document.getElementById('theme-icon-moon');
+  const sun  = document.getElementById('theme-icon-sun');
+  if (moon) moon.style.display = dark ? 'none'  : '';
+  if (sun)  sun.style.display  = dark ? '' : 'none';
+}
+
+function toggleTheme() {
+  const isDark = !document.body.classList.contains('dark');
+  localStorage.setItem('tt_dark', isDark ? '1' : '0');
+  applyTheme(isDark);
+}
+
 async function initApp() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app-screen').classList.remove('hidden');
+  applyTheme(localStorage.getItem('tt_dark') === '1');
 
   // Fetch fresh user data (including permissions)
   try {
@@ -876,7 +891,7 @@ function svgDonut(slices, total, size = 150) {
     return g;
   });
   const donePct = total > 0 ? Math.round((slices.find(s => s.key === 'done')?.v || 0) / total * 100) : 0;
-  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${arcs.join('')}<text x="${cx}" y="${cy - 4}" text-anchor="middle" fill="#0F172A" font-size="20" font-weight="800" font-family="system-ui"><tspan class="donut-count" data-count="${donePct}">0%</tspan></text><text x="${cx}" y="${cy + 13}" text-anchor="middle" fill="#94A3B8" font-size="10" font-family="system-ui">выполнено</text></svg>`;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${arcs.join('')}<text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="20" font-weight="800" font-family="system-ui" class="donut-pct-text"><tspan class="donut-count" data-count="${donePct}">0%</tspan></text><text x="${cx}" y="${cy + 13}" text-anchor="middle" fill="#94A3B8" font-size="10" font-family="system-ui">выполнено</text></svg>`;
 }
 
 function renderDashboardCharts(tasks) {
@@ -998,12 +1013,18 @@ async function renderDashboard() {
   dashTasksLimit = 10;
   try {
     const tasks = await GET('/tasks');
-    const urgent = tasks.filter(t => t.status !== 'done' && t.deadline &&
-      parseDeadline(t.deadline) - Date.now() < 24 * 60 * 60 * 1000 && parseDeadline(t.deadline) > Date.now()
-    ).slice(0, 5);
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const todayEnd   = new Date(); todayEnd.setHours(23, 59, 59, 999);
+    const tomorrowEnd = new Date(todayEnd.getTime() + 24 * 60 * 60 * 1000);
+    const active = tasks.filter(t => t.status !== 'done' && t.deadline);
+    const overdueT  = active.filter(t => parseDeadline(t.deadline) < todayStart);
+    const todayT    = active.filter(t => { const d = parseDeadline(t.deadline); return d >= todayStart && d <= todayEnd; });
+    const tomorrowT = active.filter(t => { const d = parseDeadline(t.deadline); return d > todayEnd && d <= tomorrowEnd; });
+    const totalUrgent = overdueT.length + todayT.length + tomorrowT.length;
 
+    const urgentIds = new Set([...overdueT, ...todayT, ...tomorrowT].map(t => t.id));
     const pStart = periodStart(dashPeriod);
-    dashRecentTasks = tasks.filter(t => t.status !== 'done' && new Date(t.created_at) >= pStart);
+    dashRecentTasks = tasks.filter(t => t.status !== 'done' && new Date(t.created_at) >= pStart && !urgentIds.has(t.id));
 
     const periodNames = [['week','Неделя'],['month','Месяц'],['3month','3 мес.'],['6month','6 мес.'],['year','1 год']];
     const periodLabels = { week: 'за неделю', month: 'за месяц', '3month': 'за 3 месяца', '6month': 'за 6 месяцев', year: 'за год' };
@@ -1011,12 +1032,27 @@ async function renderDashboard() {
     document.getElementById('page-content').innerHTML = `
       ${renderDashboardCharts(tasks)}
 
-      ${urgent.length > 0 ? `
-        <div class="section-header">
-          <div class="section-title" style="display:inline-flex;align-items:center;gap:6px">${svgI(SVG_PATHS.warning,15)} Срочные задачи (до 24ч)</div>
-        </div>
-        <div class="tasks-list" style="margin-bottom:28px">
-          ${urgent.map(t => taskCard(t)).join('')}
+      ${totalUrgent > 0 ? `
+        <div class="urgent-section">
+          <div class="urgent-section-hdr">
+            <span class="urgent-section-title">${svgI(SVG_PATHS.warning,16)} Требуют внимания</span>
+            <span class="urgent-total-badge">${totalUrgent}</span>
+            ${overdueT.length  ? `<span class="urgent-pill urgent-pill-overdue">${overdueT.length} просрочено</span>`  : ''}
+            ${todayT.length    ? `<span class="urgent-pill urgent-pill-today">${todayT.length} сегодня</span>`         : ''}
+            ${tomorrowT.length ? `<span class="urgent-pill urgent-pill-tomorrow">${tomorrowT.length} завтра</span>`    : ''}
+          </div>
+          ${overdueT.length ? `
+            <div class="urgent-group-hdr urgent-overdue-hdr">${svgI(SVG_PATHS.warning,13)} Просрочены · ${overdueT.length}</div>
+            <div class="tasks-list urgent-tasks-list">${overdueT.map(t => taskCard(t,'overdue')).join('')}</div>
+          ` : ''}
+          ${todayT.length ? `
+            <div class="urgent-group-hdr urgent-today-hdr">${svgI(SVG_PATHS.clock,13)} Срок сегодня · ${todayT.length}</div>
+            <div class="tasks-list urgent-tasks-list">${todayT.map(t => taskCard(t,'today')).join('')}</div>
+          ` : ''}
+          ${tomorrowT.length ? `
+            <div class="urgent-group-hdr urgent-tomorrow-hdr">${svgI(SVG_PATHS.cal,13)} Срок завтра · ${tomorrowT.length}</div>
+            <div class="tasks-list urgent-tasks-list">${tomorrowT.map(t => taskCard(t,'tomorrow')).join('')}</div>
+          ` : ''}
         </div>
       ` : ''}
 
@@ -2002,7 +2038,7 @@ function parseCpDate(raw) {
 }
 
 // ─── Task Card ────────────────────────────────────────────────────────────────
-function taskCard(t) {
+function taskCard(t, urgencyLevel = null) {
   const dl = deadlineFmt(t.deadline, t.status);
   const ma = t.multi_assignees;
   const isMulti = ma && ma.length > 0;
@@ -2038,8 +2074,9 @@ function taskCard(t) {
     assigneeMetaHtml = `<span class="task-meta-item" style="display:inline-flex;align-items:center;gap:4px">${svgI(SVG_PATHS.user)} ${t.assignee_name}</span>`;
   }
 
+  const urgentBorder = { overdue: '#DC2626', today: '#EA580C', tomorrow: '#D97706' }[urgencyLevel] || '';
   return `
-    <div class="task-card ${t.status === 'done' ? 'done' : ''}" data-task-id="${t.id}">
+    <div class="task-card ${t.status === 'done' ? 'done' : ''}" data-task-id="${t.id}"${urgentBorder ? ` style="border-left:3px solid ${urgentBorder};border-radius:0 10px 10px 0"` : ''}>
       <div class="task-card-left">
         <div class="task-card-top">
           ${priorityBadge(t.priority)}
