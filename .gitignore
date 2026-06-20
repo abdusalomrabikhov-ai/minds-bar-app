@@ -1,0 +1,5 @@
+node_modules/
+teamtask.db
+.env
+*.log
+.DS_Store
