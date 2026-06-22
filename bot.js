@@ -4,14 +4,30 @@ const { db } = require('./database');
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 let bot = null;
 
+// Webhook URL — Railway automatically provides RAILWAY_PUBLIC_DOMAIN
+const PUBLIC_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL;
+const WEBHOOK_PATH  = '/api/telegram/webhook';
+const WEBHOOK_URL   = PUBLIC_DOMAIN ? `https://${PUBLIC_DOMAIN}${WEBHOOK_PATH}` : null;
+
 if (BOT_TOKEN && process.env.NODE_ENV === 'production') {
   try {
     const TelegramBot = require('node-telegram-bot-api');
-    bot = new TelegramBot(BOT_TOKEN, { polling: true });
+
+    if (WEBHOOK_URL) {
+      // Webhook mode — no polling, no 409 conflicts on redeploy
+      bot = new TelegramBot(BOT_TOKEN, { webHook: false });
+      bot.setWebHook(WEBHOOK_URL)
+        .then(() => console.log('🤖 Telegram бот запущен (webhook):', WEBHOOK_URL))
+        .catch(e => console.error('⚠️  Webhook error:', e.message));
+    } else {
+      // Fallback to polling if no public domain is set
+      bot = new TelegramBot(BOT_TOKEN, { polling: true });
+      console.log('🤖 Telegram бот запущен (polling)');
+    }
 
     bot.onText(/\/start(.*)/, (msg, match) => {
       const chatId = msg.chat.id;
-      const token = match[1]?.trim().toUpperCase();
+      const token  = match[1]?.trim().toUpperCase();
 
       if (token) {
         const user = db.prepare('SELECT * FROM users WHERE telegram_token = ?').get(token);
@@ -33,7 +49,6 @@ if (BOT_TOKEN && process.env.NODE_ENV === 'production') {
       }
     });
 
-    console.log('🤖 Telegram бот запущен');
   } catch (e) {
     console.log('⚠️  Ошибка запуска Telegram бота:', e.message);
   }
@@ -48,4 +63,8 @@ function sendTelegramNotification(telegramId, message) {
   });
 }
 
-module.exports = { sendTelegramNotification };
+function processWebhookUpdate(update) {
+  bot?.processUpdate(update);
+}
+
+module.exports = { sendTelegramNotification, processWebhookUpdate, WEBHOOK_PATH };

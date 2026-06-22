@@ -5,7 +5,7 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { db, initDB } = require('./database');
-const { sendTelegramNotification } = require('./bot');
+const { sendTelegramNotification, processWebhookUpdate, WEBHOOK_PATH } = require('./bot');
 const { startScheduler } = require('./scheduler');
 
 const app = express();
@@ -77,6 +77,12 @@ function requirePerm(perm) {
     next();
   };
 }
+
+// ─── Telegram Webhook ─────────────────────────────────────────────────────────
+app.post(WEBHOOK_PATH, (req, res) => {
+  processWebhookUpdate(req.body);
+  res.sendStatus(200);
+});
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
