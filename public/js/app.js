@@ -681,12 +681,21 @@ function countUp(el, target, duration = 850, suffix = '') {
 }
 
 function renderMyTasksSummary(tasks) {
+  const uid = state.user.id;
+  // Personal done: overall done OR user marked their part done in multi-assignee
+  const myDone = t => {
+    if (t.status === 'done') return true;
+    const ma = t.multi_assignees;
+    if (ma && ma.length > 0) return ma.find(a => a.id === uid)?.done === 1;
+    return false;
+  };
   const total = tasks.length;
-  const done  = tasks.filter(t => t.status === 'done').length;
-  const inp   = tasks.filter(t => t.status === 'in_progress').length;
-  const nw    = tasks.filter(t => t.status === 'new').length;
-  const ov    = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date()).length;
+  const done  = tasks.filter(t => myDone(t)).length;
+  const inp   = tasks.filter(t => !myDone(t) && t.status === 'in_progress').length;
+  const nw    = tasks.filter(t => !myDone(t) && t.status === 'new').length;
+  const ov    = tasks.filter(t => !myDone(t) && t.deadline && parseDeadline(t.deadline) < new Date()).length;
   const pct   = total > 0 ? Math.round(done / total * 100) : 0;
+  const effColor = pct >= 80 ? '#059669' : pct >= 50 ? '#D97706' : pct > 0 ? '#DC2626' : '#94A3B8';
 
   const donutSlices = [
     { key: 'new',         label: 'Новые',    v: nw,  c: '#3B82F6' },
@@ -733,16 +742,32 @@ function renderMyTasksSummary(tasks) {
   const daysLeft = dt => Math.ceil((parseDeadline(dt) - now) / (1000 * 60 * 60 * 24));
 
   return `
+    <div class="dash-stat-cards-header">
+      <div class="dsc-username">${state.user.name}</div>
+      <div class="dsc-eff-wrap">
+        <span class="dsc-eff-pct" style="color:${effColor}"><span data-count="${pct}" data-suffix="%">0%</span></span>
+        <span class="dsc-eff-lbl">эффективность</span>
+      </div>
+    </div>
+    <div class="dsc-eff-bar-bg" style="margin-bottom:12px">
+      <div class="dsc-eff-bar-fill" style="width:${pct}%;background:${effColor}"></div>
+    </div>
+
     <div class="dash-stat-cards">
       <div class="dash-stat-card dash-stat-card--click" onclick="navigateToTasksWithFilter({status:'new'})" title="Новые задачи">
         <div class="dsc-label">Всего задач</div>
         <div class="dsc-value"><span data-count="${total}">0</span></div>
         <div class="dsc-sub"><span data-count="${nw}">0</span> новых</div>
       </div>
-      <div class="dash-stat-card dash-stat-card--click" onclick="navigateToTasksWithFilter({status:'done'})" title="Выполненные задачи">
-        <div class="dsc-label">Выполнено</div>
-        <div class="dsc-value dsc-value--green"><span data-count="${pct}" data-suffix="%">0%</span></div>
-        <div class="dsc-sub"><span data-count="${done}">0</span> из ${total}</div>
+      <div class="dash-stat-card dash-stat-card--click" onclick="navigateToTasksWithFilter({status:'done'})" title="Завершённые задачи">
+        <div class="dsc-label">Завершено</div>
+        <div class="dsc-value dsc-value--green"><span data-count="${done}">0</span></div>
+        <div class="dsc-sub">из ${total} задач</div>
+      </div>
+      <div class="dash-stat-card dash-stat-card--click" onclick="navigateToTasksWithFilter({status:'in_progress'})" title="Задачи в работе">
+        <div class="dsc-label">В работе</div>
+        <div class="dsc-value" style="color:#D97706"><span data-count="${inp}">0</span></div>
+        <div class="dsc-sub">${inp > 0 ? 'активных' : 'нет активных'}</div>
       </div>
       <div class="dash-stat-card dash-stat-card--click" onclick="navigateToTasksWithFilter({overdue:true})" title="Просроченные задачи">
         <div class="dsc-label">Просрочено</div>
@@ -4340,6 +4365,7 @@ const SCHED_CLASSES = [
   { id: 1, name: 'Зелёный',    color: '#15803d', bg: '#f0fdf4', light: '#bbf7d0' },
   { id: 2, name: 'Красный',    color: '#b91c1c', bg: '#fef2f2', light: '#fecaca' },
   { id: 3, name: 'Фиолетовый', color: '#6d28d9', bg: '#f5f3ff', light: '#ddd6fe' },
+  { id: 4, name: 'Жёлтый',     color: '#b45309', bg: '#fffbeb', light: '#fde68a' },
 ];
 const SCHED_START = 8;
 const SCHED_END   = 22;

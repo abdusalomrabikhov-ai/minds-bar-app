@@ -1830,6 +1830,18 @@ body.dark .fb-question.fb-answered { background: rgba(136,19,55,0.08); }
 }
 .fb-response-comment-lbl { font-weight: 700; color: var(--text-muted); margin-right: 6px; font-size: 11px; }
 
+/* ─── My Tasks Stats Header ───────────────────────────────────────────────── */
+.dash-stat-cards-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 8px; padding: 0 2px;
+}
+.dsc-username { font-size: 16px; font-weight: 800; color: var(--text); }
+.dsc-eff-wrap { display: flex; align-items: baseline; gap: 5px; }
+.dsc-eff-pct { font-size: 22px; font-weight: 900; }
+.dsc-eff-lbl { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.dsc-eff-bar-bg { height: 5px; background: var(--border); border-radius: 99px; overflow: hidden; }
+.dsc-eff-bar-fill { height: 100%; border-radius: 99px; transition: width 0.5s ease; }
+
 /* ─── Task History ─────────────────────────────────────────────────────────── */
 .task-history-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 .task-history-title {
@@ -2162,6 +2174,7 @@ body.dark .sched-class-col:nth-child(1) { background: #1a1f2e !important; }
 body.dark .sched-class-col:nth-child(2) { background: #052e16 !important; }
 body.dark .sched-class-col:nth-child(3) { background: #2d0a0a !important; }
 body.dark .sched-class-col:nth-child(4) { background: #1e0a2d !important; }
+body.dark .sched-class-col:nth-child(5) { background: #1c1500 !important; }
 body.dark .sched-class-col.sched-col-hidden { opacity: 0.15 !important; }
 
 .sched-dragging { opacity: 0.35 !important; }
