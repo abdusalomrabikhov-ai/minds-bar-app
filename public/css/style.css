@@ -2152,6 +2152,29 @@ body.dark .be-sb-bronze { background: var(--card-bg); border-color: #fb923c; }
 body.dark .fin-sum-card { background: var(--card-bg); }
 body.dark .fin-table th { background: var(--card-bg); }
 
+/* Finance extras */
+.fin-tabs-bar { display: flex; gap: 6px; padding: 0 24px 14px; border-bottom: 1.5px solid var(--border); margin-bottom: 0; }
+.fin-tab { padding: 6px 16px; border-radius: 20px; border: 1.5px solid var(--border); background: var(--card-bg); color: var(--text-muted); font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.12s; }
+.fin-tab.active { background: var(--primary); border-color: var(--primary); color: white; }
+.fin-tab:hover:not(.active) { border-color: var(--primary); color: var(--primary); }
+
+.fin-filter-bar { display: flex; align-items: center; gap: 8px; padding: 12px 24px; flex-wrap: wrap; background: var(--bg); border-bottom: 1px solid var(--border); }
+.fin-search-wrap { display: flex; align-items: center; gap: 7px; background: var(--card-bg); border: 1.5px solid var(--border); border-radius: 9px; padding: 6px 12px; flex: 1; max-width: 280px; }
+.fin-search-input { flex: 1; border: none; outline: none; font-size: 13px; color: var(--text); background: transparent; }
+.fin-filter-sel { padding: 6px 10px; border: 1.5px solid var(--border); border-radius: 9px; font-size: 13px; background: var(--card-bg); color: var(--text); cursor: pointer; }
+
+.fin-cur { font-size: 10px; color: var(--text-muted); font-weight: 600; }
+.fin-pmts-badge { display: inline-block; margin-left: 5px; background: #bae6fd; color: #0369a1; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 8px; cursor: pointer; }
+.fin-recur-dot { font-size: 10px; color: #d97706; margin-left: 3px; }
+.fin-row-recurring { background: #fffbeb !important; }
+body.dark .fin-row-recurring { background: rgba(180,83,9,0.08) !important; }
+
+.fin-chart-wrap {
+  margin: 0 24px 20px;
+  background: var(--card-bg); border: 1.5px solid var(--border);
+  border-radius: 12px; padding: 16px 18px;
+}
+
 /* ─── Schedule Page ───────────────────────────────────────────────────────── */
 .sched-page { padding: 0 0 40px; }
 .sched-toolbar {

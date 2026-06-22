@@ -4560,12 +4560,15 @@ function filterAssigneeChips(q) {
 }
 
 // ─── Finance Page ─────────────────────────────────────────────────────────────
-const FIN_STATUS = { paid: 'Оплачено', unpaid: 'Не оплачено', partial: 'Частично' };
+const FIN_STATUS       = { paid: 'Оплачено', unpaid: 'Не оплачено', partial: 'Частично' };
 const FIN_STATUS_COLOR = { paid: '#16a34a', unpaid: '#dc2626', partial: '#d97706' };
-const FIN_TYPE = { cash: 'Наличными', bank: 'Банк', alif: 'Alif', dushanbecity: 'DC' };
-const FIN_TYPE_COLOR = { cash: '#b45309', bank: '#0891b2', alif: '#16a34a', dushanbecity: '#1d4ed8' };
+const FIN_TYPE         = { cash: 'Наличными', bank: 'Банк', alif: 'Alif', dushanbecity: 'DC' };
+const FIN_TYPE_COLOR   = { cash: '#b45309', bank: '#0891b2', alif: '#16a34a', dushanbecity: '#1d4ed8' };
+const FIN_CURRENCIES   = ['TJS', 'USD', 'RUB', 'EUR'];
 
-let _finMonth = new Date().toISOString().slice(0, 7);
+let _finMonth  = new Date().toISOString().slice(0, 7);
+let _finTab    = 'month';   // month | projects | annual
+let _finFilter = { status: '', payment_type: '', search: '' };
 
 const fmtMoney = v => {
   const n = Number(v||0);
@@ -4576,8 +4579,19 @@ async function renderFinancePage() {
   const content = document.getElementById('page-content');
   content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
   try {
-    const rows = await GET('/finance?month=' + _finMonth);
+    if (_finTab === 'annual') { await _renderFinanceAnnual(); return; }
+    if (_finTab === 'projects') { await _renderFinanceProjects(); return; }
+    const params = new URLSearchParams({ month: _finMonth });
+    if (_finFilter.status)       params.set('status', _finFilter.status);
+    if (_finFilter.payment_type) params.set('payment_type', _finFilter.payment_type);
+    if (_finFilter.search)       params.set('search', _finFilter.search);
+    const rows = await GET('/finance?' + params.toString());
     _renderFinance(rows);
+    // Load annual chart data async (non-blocking)
+    GET('/finance/annual?year=' + _finMonth.slice(0,4)).then(annual => {
+      const wrap = document.getElementById('fin-chart-svg-wrap');
+      if (wrap) wrap.innerHTML = _buildFinLineChart(annual, _finMonth);
+    }).catch(() => {});
   } catch (err) {
     content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
   }
@@ -4589,10 +4603,34 @@ function _renderFinance(rows) {
   const [y,m] = _finMonth.split('-');
   const monthLabel = MONTH_NAMES[+m-1] + ' ' + y;
 
-  // Month nav — use local date methods to avoid UTC timezone shift
   const fmtYM = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
   const prevMonth = () => fmtYM(new Date(+y, +m-2, 1));
   const nextMonth = () => fmtYM(new Date(+y, +m,   1));
+
+  const tabs = [
+    { key:'month', label:'По месяцам' },
+    { key:'projects', label:'По проектам' },
+    { key:'annual', label:'Годовой отчёт' },
+  ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
+
+  const filterBar = `
+    <div class="fin-filter-bar">
+      <div class="fin-search-wrap">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input class="fin-search-input" id="fin-search-input" placeholder="Поиск по проекту или клиенту..." value="${_escHtml(_finFilter.search)}"
+          oninput="_finLiveSearch(this.value)">
+      </div>
+      <select class="fin-filter-sel" onchange="_finFilter.status=this.value; renderFinancePage()">
+        <option value="">Все статусы</option>
+        ${Object.entries(FIN_STATUS).map(([k,v])=>`<option value="${k}" ${_finFilter.status===k?'selected':''}>${v}</option>`).join('')}
+      </select>
+      <select class="fin-filter-sel" onchange="_finFilter.payment_type=this.value; renderFinancePage()">
+        <option value="">Все типы оплаты</option>
+        ${Object.entries(FIN_TYPE).map(([k,v])=>`<option value="${k}" ${_finFilter.payment_type===k?'selected':''}>${v}</option>`).join('')}
+      </select>
+      ${(_finFilter.status||_finFilter.payment_type||_finFilter.search)
+        ? `<button class="btn btn-outline btn-sm" onclick="_finFilter={status:'',payment_type:'',search:''};renderFinancePage()">Сбросить</button>` : ''}
+    </div>`;
 
   // Summary
   const totalService = rows.reduce((s,r)=>s+(+r.service_amount||0),0);
@@ -4602,33 +4640,42 @@ function _renderFinance(rows) {
   const unpaidCount  = rows.filter(r=>r.status==='unpaid').length;
   const partialCount = rows.filter(r=>r.status==='partial').length;
 
-  const tableRows = rows.map((r,i) => `
-    <tr class="fin-row">
-      <td class="fin-td fin-num">${i+1}</td>
-      <td class="fin-td fin-project">${_escHtml(r.project_name)}</td>
+  const tableRows = rows.map((r,i) => {
+    const debt = +r.service_amount - +r.paid_amount;
+    const pmts = r.payments || [];
+    return `<tr class="fin-row ${r.is_recurring?'fin-row-recurring':''}">
+      <td class="fin-td fin-num">${i+1}${r.is_recurring?'<span class="fin-recur-dot" title="Повторяющаяся">↻</span>':''}</td>
+      <td class="fin-td fin-project">
+        <div>${_escHtml(r.project_name)}</div>
+        ${r.client_name?`<div style="font-size:11px;color:var(--text-muted)">${_escHtml(r.client_name)}${r.client_phone?' · '+_escHtml(r.client_phone):''}</div>`:''}
+      </td>
       <td class="fin-td fin-money">${fmtMoney(r.service_amount)}</td>
-      <td class="fin-td fin-money" style="color:#16a34a">${fmtMoney(r.paid_amount)}</td>
-      <td class="fin-td fin-money" style="color:${+r.service_amount-+r.paid_amount>0?'#dc2626':'#16a34a'}">${fmtMoney(+r.service_amount-+r.paid_amount)}</td>
-      <td class="fin-td">
-        <span class="fin-status-badge" style="background:${FIN_STATUS_COLOR[r.status]}22;color:${FIN_STATUS_COLOR[r.status]}">${FIN_STATUS[r.status]||r.status}</span>
+      <td class="fin-td fin-money" style="color:#16a34a">
+        ${fmtMoney(r.paid_amount)}
+        ${pmts.length>0?`<span class="fin-pmts-badge" onclick="openPaymentsModal(${r.id})" title="Платежей: ${pmts.length}">${pmts.length}п</span>`:''}
       </td>
-      <td class="fin-td">
-        <span class="fin-type-badge" style="background:${FIN_TYPE_COLOR[r.payment_type]||'#64748b'}22;color:${FIN_TYPE_COLOR[r.payment_type]||'#64748b'}">${FIN_TYPE[r.payment_type]||r.payment_type}</span>
-      </td>
+      <td class="fin-td fin-money" style="color:${debt>0?'#dc2626':'#16a34a'}">${fmtMoney(debt)}</td>
+      <td class="fin-td"><span class="fin-status-badge" style="background:${FIN_STATUS_COLOR[r.status]}22;color:${FIN_STATUS_COLOR[r.status]}">${FIN_STATUS[r.status]||r.status}</span></td>
+      <td class="fin-td"><span class="fin-type-badge" style="background:${FIN_TYPE_COLOR[r.payment_type]||'#64748b'}22;color:${FIN_TYPE_COLOR[r.payment_type]||'#64748b'}">${FIN_TYPE[r.payment_type]||r.payment_type}</span></td>
       <td class="fin-td fin-comment">${_escHtml(r.comment||'—')}</td>
       <td class="fin-td fin-actions">
         <button class="fin-btn-edit" onclick="openFinanceModal(${r.id})" title="Редактировать">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="fin-btn-edit" onclick="openPaymentsModal(${r.id})" title="История платежей и изменений" style="color:#0891b2;border-color:#bae6fd">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
         </button>
         <button class="fin-btn-del" onclick="deleteFinance(${r.id})" title="Удалить">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
         </button>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   content.innerHTML = `
     <div class="fin-page">
-      <!-- Header -->
+      <!-- Tabs + Header -->
+      <div class="fin-tabs-bar">${tabs}</div>
       <div class="fin-header">
         <div class="fin-month-nav">
           <button class="fin-nav-btn" onclick="finSetMonth('${prevMonth()}')">‹</button>
@@ -4636,17 +4683,16 @@ function _renderFinance(rows) {
           <button class="fin-nav-btn" onclick="finSetMonth('${nextMonth()}')">›</button>
         </div>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-outline" onclick="exportFinanceExcel()" style="display:inline-flex;align-items:center;gap:6px">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-            Excel
+          <button class="btn btn-outline" onclick="exportFinanceExcel()" style="display:inline-flex;align-items:center;gap:6px" title="Скачать Excel">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Excel
           </button>
-          <button class="btn btn-outline" onclick="exportFinancePDF()" style="display:inline-flex;align-items:center;gap:6px">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-            PDF
+          <button class="btn btn-outline" onclick="exportFinancePDF()" style="display:inline-flex;align-items:center;gap:6px" title="Экспорт PDF">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> PDF
           </button>
           <button class="btn btn-blue" onclick="openFinanceModal()">＋ Добавить запись</button>
         </div>
       </div>
+      ${filterBar}
 
       <!-- Summary cards -->
       <div class="fin-summary">
@@ -4672,15 +4718,29 @@ function _renderFinance(rows) {
         </div>
       </div>
 
+      <!-- Annual line chart -->
+      <div class="fin-chart-wrap" id="fin-annual-chart-block">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted)">Динамика по месяцам · ${y} год</div>
+          <div style="display:flex;gap:16px;font-size:11px;color:var(--text-muted)">
+            <span><svg width="20" height="4"><line x1="0" y1="2" x2="20" y2="2" stroke="#881337" stroke-width="2"/></svg> Сумма услуги</span>
+            <span><svg width="20" height="4"><line x1="0" y1="2" x2="20" y2="2" stroke="#16a34a" stroke-width="2"/></svg> Оплачено</span>
+          </div>
+        </div>
+        <div id="fin-chart-svg-wrap" style="width:100%">
+          <div style="color:#9ca3af;font-size:12px;padding:20px 0;text-align:center">Загрузка...</div>
+        </div>
+      </div>
+
       <!-- Table -->
       ${rows.length === 0
         ? `<div class="empty-state" style="margin-top:40px"><div class="empty-icon"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="1.5"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div><h3>Нет записей</h3><p>Нажмите «Добавить запись» чтобы начать</p></div>`
         : `<div class="fin-table-wrap">
-            <table class="fin-table">
+            <table class="fin-table" id="fin-main-table">
               <thead>
                 <tr>
-                  <th>#</th><th>Проект</th><th>Сумма услуги</th><th>Оплачено</th><th>Остаток</th>
-                  <th>Статус</th><th>Тип оплаты</th><th>Комментарий</th><th></th>
+                  <th>#</th><th>Проект / Клиент</th><th>Сумма услуги</th><th>Оплачено</th><th>Остаток</th>
+                  <th>Статус</th><th>Тип оплаты</th><th>Комментарий</th><th style="width:90px"></th>
                 </tr>
               </thead>
               <tbody>${tableRows}</tbody>
@@ -4698,9 +4758,275 @@ function _renderFinance(rows) {
     </div>`;
 }
 
-async function finSetMonth(m) {
-  _finMonth = m;
-  renderFinancePage();
+function _buildFinLineChart(annualData, currentMonth) {
+  const MONTHS = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const year = currentMonth.slice(0,4);
+  const W = 600, H = 180, pL = 36, pB = 28, pT = 16, pR = 16;
+  const iW = W-pL-pR, iH = H-pB-pT;
+  const months12 = Array.from({length:12},(_,i)=>String(i+1).padStart(2,'0'));
+  const pts = months12.map((mo,i) => {
+    const r = annualData.find(d=>d.month===`${year}-${mo}`)||{total_service:0,total_paid:0};
+    return { x: pL+i/11*iW, svc:+r.total_service||0, paid:+r.total_paid||0, mo, isCurrent: `${year}-${mo}`===currentMonth };
+  });
+  const maxV = Math.max(...pts.map(p=>Math.max(p.svc,p.paid)), 1);
+  const yv = v => pT + (1 - v/maxV)*iH;
+  const grid = [0,0.25,0.5,0.75,1].map(f => {
+    const yy = pT+(1-f)*iH;
+    const val = Math.round(maxV*f);
+    return `<line x1="${pL}" y1="${yy}" x2="${W-pR}" y2="${yy}" stroke="#e2e8f0" stroke-width="${f===0?1:0.8}"/>
+            ${f>0?`<text x="${pL-4}" y="${yy+3}" text-anchor="end" font-size="9" fill="#94a3b8">${fmtMoney(val)}</text>`:''}`;
+  }).join('');
+  const polyline = (key,color) => `<polyline points="${pts.map(p=>`${p.x},${yv(p[key])}`).join(' ')}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  const dots = (key,color) => pts.map(p => {
+    const r = p.isCurrent ? 5 : 3.5;
+    return `<circle cx="${p.x}" cy="${yv(p[key])}" r="${r}" fill="${color}" stroke="white" stroke-width="${p.isCurrent?2:1.5}"/>
+            ${p[key]>0?`<title>${MONTHS[+p.mo-1]}: ${fmtMoney(p[key])}</title>`:''}`;
+  }).join('');
+  const labels = pts.map(p => `<text x="${p.x}" y="${H-6}" text-anchor="middle" font-size="9" fill="${p.isCurrent?'#881337':'#94a3b8'}" font-weight="${p.isCurrent?'700':'400'}">${MONTHS[+p.mo-1]}</text>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block">
+    ${grid}${polyline('svc','#881337')}${polyline('paid','#16a34a')}${dots('svc','#881337')}${dots('paid','#16a34a')}${labels}
+  </svg>`;
+}
+
+async function finSetMonth(m) { _finMonth = m; renderFinancePage(); }
+function finSetTab(t) { _finTab = t; renderFinancePage(); }
+
+function _finLiveSearch(q) {
+  _finFilter.search = q;
+  const ql = q.toLowerCase().trim();
+  document.querySelectorAll('#fin-main-table .fin-row').forEach(row => {
+    const text = row.textContent.toLowerCase();
+    row.style.display = !ql || text.includes(ql) ? '' : 'none';
+  });
+  // Update totals visibility
+  const visible = [...document.querySelectorAll('#fin-main-table .fin-row')].filter(r=>r.style.display!=='none');
+  const totalFooter = document.getElementById('fin-total-footer');
+  if (totalFooter && ql) {
+    let svc=0, paid=0;
+    visible.forEach(row => {
+      const cells = row.querySelectorAll('.fin-money');
+      if (cells[0]) svc  += parseFloat(cells[0].textContent.replace(/\s/g,''))||0;
+      if (cells[1]) paid += parseFloat(cells[1].textContent.replace(/\s/g,''))||0;
+    });
+  }
+}
+
+async function _renderFinanceProjects() {
+  const content = document.getElementById('page-content');
+  const data = await GET('/finance/by-project');
+  const total = data.reduce((s,r)=>s+(+r.total_service||0),0);
+  const paid  = data.reduce((s,r)=>s+(+r.total_paid||0),0);
+  const tabs = [
+    { key:'month', label:'По месяцам' },
+    { key:'projects', label:'По проектам' },
+    { key:'annual', label:'Годовой отчёт' },
+  ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
+  content.innerHTML = `<div class="fin-page">
+    <div class="fin-tabs-bar">${tabs}</div>
+    <div class="fin-header"><div class="fin-month-title" style="font-size:15px">Сводка по всем проектам</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" onclick="exportFinanceProjectsExcel()" style="display:inline-flex;align-items:center;gap:6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Excel</button>
+        <button class="btn btn-outline" onclick="exportFinanceProjectsPDF()" style="display:inline-flex;align-items:center;gap:6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> PDF</button>
+      </div>
+    </div>
+    <div class="fin-table-wrap" style="margin-top:0">
+      <table class="fin-table">
+        <thead><tr><th>#</th><th>Проект</th><th>Записей</th><th>Сумма услуг</th><th>Оплачено</th><th>Задолженность</th><th>%</th></tr></thead>
+        <tbody>
+          ${data.map((r,i)=>{
+            const debt=+r.total_service-+r.total_paid;
+            const pct=r.total_service>0?Math.round(r.total_paid/r.total_service*100):0;
+            return `<tr class="fin-row">
+              <td class="fin-td fin-num">${i+1}</td>
+              <td class="fin-td fin-project">${_escHtml(r.project_name)}</td>
+              <td class="fin-td" style="text-align:center">${r.count}</td>
+              <td class="fin-td fin-money">${fmtMoney(r.total_service)}</td>
+              <td class="fin-td fin-money" style="color:#16a34a">${fmtMoney(r.total_paid)}</td>
+              <td class="fin-td fin-money" style="color:${debt>0?'#dc2626':'#16a34a'}">${fmtMoney(debt)}</td>
+              <td class="fin-td" style="min-width:100px">
+                <div style="display:flex;align-items:center;gap:6px">
+                  <div style="flex:1;height:6px;background:var(--bg);border-radius:99px;overflow:hidden;border:1px solid var(--border)"><div style="height:100%;width:${pct}%;background:${pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626'};border-radius:99px"></div></div>
+                  <span style="font-size:11px;font-weight:700;color:${pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626'}">${pct}%</span>
+                </div>
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+        <tfoot><tr class="fin-total-row">
+          <td colspan="3" class="fin-td fin-total-lbl">ИТОГО</td>
+          <td class="fin-td fin-money fin-total">${fmtMoney(total)}</td>
+          <td class="fin-td fin-money fin-total" style="color:#16a34a">${fmtMoney(paid)}</td>
+          <td class="fin-td fin-money fin-total" style="color:${(total-paid)>0?'#dc2626':'#16a34a'}">${fmtMoney(total-paid)}</td>
+          <td></td>
+        </tr></tfoot>
+      </table>
+    </div>
+  </div>`;
+}
+
+async function _renderFinanceAnnual() {
+  const content = document.getElementById('page-content');
+  const year = _finMonth.slice(0,4);
+  const data  = await GET('/finance/annual?year=' + year);
+  const MONTH_NAMES = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const tabs = [
+    { key:'month', label:'По месяцам' },
+    { key:'projects', label:'По проектам' },
+    { key:'annual', label:'Годовой отчёт' },
+  ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
+
+  // SVG line chart
+  const W=700,H=180,pL=40,pB=24,pT=16,pR=16;
+  const iW=W-pL-pR, iH=H-pB-pT;
+  const maxV = Math.max(...data.map(r=>+r.total_service||0), 1);
+  const months12 = Array.from({length:12},(_,i)=>String(i+1).padStart(2,'0'));
+  const pts = months12.map((mo,i) => {
+    const r = data.find(d=>d.month===`${year}-${mo}`)||{total_service:0,total_paid:0};
+    return { x: pL+i/11*iW, svc:+r.total_service||0, paid:+r.total_paid||0, mo };
+  });
+  const line = (key,color) => `<polyline points="${pts.map(p=>`${p.x},${pT+(1-p[key]/maxV)*iH}`).join(' ')}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  const dots = (key,color) => pts.map(p=>`<circle cx="${p.x}" cy="${pT+(1-p[key]/maxV)*iH}" r="3.5" fill="${color}" stroke="white" stroke-width="1.5"/>`).join('');
+  const grid = [0.25,0.5,0.75,1].map(f=>`<line x1="${pL}" y1="${pT+(1-f)*iH}" x2="${W-pR}" y2="${pT+(1-f)*iH}" stroke="#e2e8f0" stroke-width="0.8"/>`).join('');
+  const labels = pts.map(p=>`<text x="${p.x}" y="${H-4}" text-anchor="middle" font-size="9" fill="#94a3b8">${MONTH_NAMES[+p.mo-1]}</text>`).join('');
+
+  const totSvc  = data.reduce((s,r)=>s+(+r.total_service||0),0);
+  const totPaid = data.reduce((s,r)=>s+(+r.total_paid||0),0);
+
+  content.innerHTML = `<div class="fin-page">
+    <div class="fin-tabs-bar">${tabs}</div>
+    <div class="fin-header"><div class="fin-month-title">Год: ${year}</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" onclick="exportFinanceAnnualExcel('${year}')" style="display:inline-flex;align-items:center;gap:6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Excel</button>
+        <button class="btn btn-outline" onclick="exportFinanceAnnualPDF('${year}')" style="display:inline-flex;align-items:center;gap:6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> PDF</button>
+      </div>
+    </div>
+    <div style="padding:0 24px 20px">
+      <div class="fin-summary" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px">
+        <div class="fin-sum-card"><div class="fin-sum-lbl">Сумма услуг за год</div><div class="fin-sum-val">${fmtMoney(totSvc)}</div></div>
+        <div class="fin-sum-card"><div class="fin-sum-lbl">Оплачено за год</div><div class="fin-sum-val" style="color:#16a34a">${fmtMoney(totPaid)}</div></div>
+        <div class="fin-sum-card"><div class="fin-sum-lbl">Задолженность</div><div class="fin-sum-val" style="color:${(totSvc-totPaid)>0?'#dc2626':'#16a34a'}">${fmtMoney(totSvc-totPaid)}</div></div>
+      </div>
+      <div class="chart-panel" style="margin-bottom:20px">
+        <div class="chart-title">Динамика по месяцам</div>
+        <div style="display:flex;gap:14px;font-size:11px;color:var(--text-muted);margin-bottom:8px">
+          <span><svg width="20" height="4"><line x1="0" y1="2" x2="20" y2="2" stroke="#881337" stroke-width="2"/></svg> Сумма услуг</span>
+          <span><svg width="20" height="4"><line x1="0" y1="2" x2="20" y2="2" stroke="#16a34a" stroke-width="2"/></svg> Оплачено</span>
+        </div>
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px">${grid}${line('svc','#881337')}${line('paid','#16a34a')}${dots('svc','#881337')}${dots('paid','#16a34a')}${labels}</svg>
+      </div>
+      <div class="fin-table-wrap" style="margin-top:0">
+        <table class="fin-table">
+          <thead><tr><th>Месяц</th><th>Записей</th><th>Сумма услуг</th><th>Оплачено</th><th>Остаток</th><th>%</th></tr></thead>
+          <tbody>
+            ${months12.map(mo=>{
+              const r = data.find(d=>d.month===`${year}-${mo}`)||null;
+              if (!r) return `<tr class="fin-row"><td class="fin-td" style="color:var(--text-muted)">${MONTH_NAMES[+mo-1]}</td><td class="fin-td" style="text-align:center;color:var(--text-muted)">—</td><td colspan="4" class="fin-td" style="color:var(--text-muted)">Нет записей</td></tr>`;
+              const debt=+r.total_service-+r.total_paid;
+              const pct=r.total_service>0?Math.round(r.total_paid/r.total_service*100):0;
+              return `<tr class="fin-row" style="cursor:pointer" onclick="finSetTab('month');finSetMonth('${r.month}')">
+                <td class="fin-td fin-project">${MONTH_NAMES[+mo-1]} ${year}</td>
+                <td class="fin-td" style="text-align:center">${r.count}</td>
+                <td class="fin-td fin-money">${fmtMoney(r.total_service)}</td>
+                <td class="fin-td fin-money" style="color:#16a34a">${fmtMoney(r.total_paid)}</td>
+                <td class="fin-td fin-money" style="color:${debt>0?'#dc2626':'#16a34a'}">${fmtMoney(debt)}</td>
+                <td class="fin-td"><span style="font-weight:700;color:${pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626'}">${pct}%</span></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function openPaymentsModal(finId) {
+  const root = document.getElementById('modal-root');
+  const fin = (await GET('/finance?month=' + _finMonth)).find(r=>r.id===finId);
+  if (!fin) return;
+  const pmts = fin.payments || [];
+  const hist = await GET(`/finance/${finId}/history`).catch(()=>[]);
+
+  function render() {
+    const pmts2 = (window._finPmts||pmts);
+    const totalPaid = pmts2.reduce((s,p)=>s+(+p.amount||0),0);
+    root.innerHTML = `
+      <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+        <div class="modal" style="max-width:520px">
+          <div class="modal-header">
+            <div><div class="modal-title">Платежи · ${_escHtml(fin.project_name)}</div>
+            <div style="font-size:12px;color:var(--text-muted)">Сумма услуги: ${fmtMoney(fin.service_amount)} ${fin.currency||'TJS'}</div></div>
+            <button class="modal-close" onclick="closeModal()">✕</button>
+          </div>
+          <div class="modal-body">
+            <!-- Existing payments -->
+            ${pmts2.length ? `<div style="margin-bottom:16px">
+              <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px">История платежей (${pmts2.length})</div>
+              ${pmts2.map(p=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+                <div style="flex:1">
+                  <div style="font-size:13px;font-weight:700">${fmtMoney(p.amount)} ${fin.currency||'TJS'}</div>
+                  <div style="font-size:11px;color:var(--text-muted)">${p.payment_date} · <span style="color:${FIN_TYPE_COLOR[p.payment_type]||'#64748b'}">${FIN_TYPE[p.payment_type]||p.payment_type}</span>${p.note?' · '+p.note:''}</div>
+                </div>
+                <button class="fin-btn-del" onclick="delPayment(${p.id},${finId})">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>
+                </button>
+              </div>`).join('')}
+              <div style="margin-top:8px;font-size:13px;font-weight:700;color:#16a34a">Итого оплачено: ${fmtMoney(totalPaid)} ${fin.currency||'TJS'}</div>
+            </div>` : '<div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">Платежей пока нет</div>'}
+            <!-- Add payment -->
+            <div style="background:var(--bg);border-radius:10px;padding:14px">
+              <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:10px">Добавить платёж</div>
+              <div class="form-row">
+                <div class="field"><label>Сумма</label><input id="pmt-amount" class="input" type="number" placeholder="0"></div>
+                <div class="field"><label>Дата</label><input id="pmt-date" class="input" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+              </div>
+              <div class="form-row">
+                <div class="field"><label>Тип оплаты</label>
+                  <select id="pmt-type" class="input">
+                    ${Object.entries(FIN_TYPE).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}
+                  </select>
+                </div>
+                <div class="field"><label>Примечание</label><input id="pmt-note" class="input" placeholder="Необязательно"></div>
+              </div>
+            </div>
+            <!-- History -->
+            ${hist.length ? `<div style="margin-top:16px">
+              <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px">История изменений</div>
+              ${hist.map(h=>`<div style="font-size:12px;padding:5px 0;border-bottom:1px solid var(--border);color:var(--text-secondary)">
+                <span style="font-weight:600">${h.user_name}</span> изменил <b>${h.field}</b>:
+                <span style="text-decoration:line-through;color:var(--text-muted)">${h.old_value}</span> → <span style="color:var(--primary)">${h.new_value}</span>
+                <span style="float:right;color:var(--text-light)">${fmtDate(h.created_at)}</span>
+              </div>`).join('')}
+            </div>` : ''}
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
+            <button class="btn btn-blue" onclick="addPayment(${finId})">Добавить платёж</button>
+          </div>
+        </div>
+      </div>`;
+  }
+  window._finPmts = pmts;
+  window.delPayment = async (pid, fid) => {
+    await DEL(`/finance/payments/${pid}`);
+    const updated = await GET('/finance?month='+_finMonth);
+    const f2 = updated.find(r=>r.id===fid);
+    window._finPmts = f2?.payments||[];
+    render(); renderFinancePage();
+  };
+  window.addPayment = async (fid) => {
+    const amount = parseFloat(document.getElementById('pmt-amount').value)||0;
+    const date   = document.getElementById('pmt-date').value;
+    if (!amount||!date) return toast('Укажите сумму и дату','error');
+    const r = await POST(`/finance/${fid}/payments`, {
+      amount, payment_type: document.getElementById('pmt-type').value,
+      payment_date: date, note: document.getElementById('pmt-note')?.value||''
+    });
+    const updated = await GET('/finance?month='+_finMonth);
+    const f2 = updated.find(x=>x.id===fid);
+    window._finPmts = f2?.payments||[];
+    render(); renderFinancePage();
+  };
+  render();
 }
 
 function openFinanceModal(id = null) {
@@ -4752,10 +5078,11 @@ function _showFinanceModal(row) {
           </div>
           <div class="form-row">
             <div class="field">
-              <label>Статус</label>
-              <select id="fin-status" class="input">
-                ${Object.entries(FIN_STATUS).map(([k,v])=>`<option value="${k}" ${(row?.status||'unpaid')===k?'selected':''}>${v}</option>`).join('')}
-              </select>
+              <label>Статус <span style="font-size:11px;color:var(--text-muted)">(авто)</span></label>
+              <div class="input" style="background:var(--bg);display:flex;align-items:center;gap:8px;cursor:default">
+                <span id="fin-status-preview" style="font-weight:700"></span>
+                <span style="font-size:11px;color:var(--text-muted)">рассчитывается по суммам</span>
+              </div>
             </div>
             <div class="field">
               <label>Тип оплаты</label>
@@ -4768,9 +5095,23 @@ function _showFinanceModal(row) {
             <label>Месяц</label>
             <input id="fin-month" class="input" type="month" value="${row?.month||_finMonth}">
           </div>
+          <div class="form-row">
+            <div class="field">
+              <label>Клиент (ФИО)</label>
+              <input id="fin-client-name" class="input" placeholder="Имя клиента" value="${_escHtml(row?.client_name||'')}">
+            </div>
+            <div class="field">
+              <label>Телефон клиента</label>
+              <input id="fin-client-phone" class="input" placeholder="+992..." value="${_escHtml(row?.client_phone||'')}">
+            </div>
+          </div>
           <div class="field">
             <label>Комментарий</label>
             <textarea id="fin-comment" class="input" rows="2" placeholder="Дополнительная информация...">${row?.comment||''}</textarea>
+          </div>
+          <div class="field" style="display:flex;align-items:center;gap:10px;margin-top:4px">
+            <input type="checkbox" id="fin-recurring" ${row?.is_recurring?'checked':''} style="width:16px;height:16px">
+            <label for="fin-recurring" style="font-size:13px;cursor:pointer">Повторяющаяся запись (копировать каждый месяц)</label>
           </div>
         </div>
         <div class="modal-footer">
@@ -4780,6 +5121,20 @@ function _showFinanceModal(row) {
         </div>
       </div>
     </div>`;
+
+  // Update status preview live
+  const updateStatusPreview = () => {
+    const svc  = parseFloat(document.getElementById('fin-service')?.value)||0;
+    const paid = parseFloat(document.getElementById('fin-paid')?.value)||0;
+    const st   = paid <= 0 ? 'unpaid' : paid >= svc ? 'paid' : 'partial';
+    const el   = document.getElementById('fin-status-preview');
+    if (el) { el.textContent = FIN_STATUS[st]; el.style.color = FIN_STATUS_COLOR[st]; }
+  };
+  setTimeout(() => {
+    document.getElementById('fin-service')?.addEventListener('input', updateStatusPreview);
+    document.getElementById('fin-paid')?.addEventListener('input', updateStatusPreview);
+    updateStatusPreview();
+  }, 0);
 }
 
 function finProjSelect(sel) {
@@ -4795,14 +5150,24 @@ async function saveFinance(id) {
   const selVal = document.getElementById('fin-proj-sel').value;
   const projId = selVal ? parseInt(selVal.split('|')[0]) || null : null;
   const body = {
-    project_id: projId,
+    project_id:   projId,
     project_name: name,
-    service_amount: parseFloat(document.getElementById('fin-service').value)||0,
-    paid_amount:    parseFloat(document.getElementById('fin-paid').value)||0,
-    status:       document.getElementById('fin-status').value,
-    payment_type: document.getElementById('fin-type').value,
-    comment:      document.getElementById('fin-comment').value.trim(),
-    month:        document.getElementById('fin-month').value || _finMonth,
+    service_amount:  parseFloat(document.getElementById('fin-service').value)||0,
+    paid_amount:     parseFloat(document.getElementById('fin-paid').value)||0,
+    status: (() => {
+      const svc  = parseFloat(document.getElementById('fin-service').value)||0;
+      const paid = parseFloat(document.getElementById('fin-paid').value)||0;
+      if (paid <= 0)        return 'unpaid';
+      if (paid >= svc)      return 'paid';
+      return 'partial';
+    })(),
+    payment_type:    document.getElementById('fin-type').value,
+    comment:         document.getElementById('fin-comment').value.trim(),
+    month:           document.getElementById('fin-month').value || _finMonth,
+    currency:        document.getElementById('fin-currency')?.value || 'TJS',
+    client_name:     document.getElementById('fin-client-name')?.value.trim()||'',
+    client_phone:    document.getElementById('fin-client-phone')?.value.trim()||'',
+    is_recurring:    document.getElementById('fin-recurring')?.checked ? 1 : 0,
   };
   try {
     if (id && id !== 'null') await PUT(`/finance/${id}`, body);
@@ -4822,6 +5187,51 @@ async function deleteFinance(id) {
     renderFinancePage();
     toast('Удалено', 'success');
   } catch (err) { toast(err.message, 'error'); }
+}
+
+async function exportFinanceProjectsExcel() {
+  const data = await GET('/finance/by-project');
+  if (!data.length) return toast('Нет данных', 'error');
+  const rows = data.map((r,i) => ({ '№':i+1, 'Проект':r.project_name, 'Записей':r.count, 'Сумма услуг':+r.total_service, 'Оплачено':+r.total_paid, 'Задолженность':(+r.total_service-+r.total_paid), '%':r.total_service>0?Math.round(r.total_paid/r.total_service*100):0 }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws['!cols'] = [{wch:4},{wch:24},{wch:8},{wch:14},{wch:14},{wch:14},{wch:8}];
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'По проектам');
+  XLSX.writeFile(wb, 'Финансы_по_проектам.xlsx'); toast('Excel скачан','success');
+}
+
+function exportFinanceProjectsPDF() {
+  const tableEl = document.querySelector('.fin-page .fin-table');
+  if (!tableEl) return;
+  const win = window.open('','_blank','width=900,height=700');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>По проектам</title>
+    <style>*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}body{font-family:system-ui;font-size:12px;padding:24px}h2{margin-bottom:16px}table{width:100%;border-collapse:collapse}th{background:#f1f5f9;padding:8px;text-align:left;border:1px solid #e2e8f0;font-size:11px}td{padding:8px;border:1px solid #e2e8f0}@media print{@page{size:A4 landscape;margin:1cm}}</style>
+    </head><body><h2>Финансы по проектам · MindsBar</h2>${tableEl.outerHTML}<script>window.onload=()=>window.print()<\/script></body></html>`);
+  win.document.close();
+}
+
+async function exportFinanceAnnualExcel(year) {
+  const data = await GET('/finance/annual?year=' + year);
+  const MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const rows = Array.from({length:12},(_,i)=>{
+    const mo = String(i+1).padStart(2,'0');
+    const r = data.find(d=>d.month===`${year}-${mo}`)||{total_service:0,total_paid:0,count:0};
+    return { 'Месяц':MONTHS[i], 'Записей':r.count, 'Сумма услуг':+r.total_service, 'Оплачено':+r.total_paid, 'Остаток':(+r.total_service-+r.total_paid), '%': r.total_service>0?Math.round(r.total_paid/r.total_service*100):0 };
+  });
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws['!cols'] = [{wch:12},{wch:8},{wch:14},{wch:14},{wch:14},{wch:8}];
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, year);
+  XLSX.writeFile(wb, `Финансы_${year}.xlsx`); toast('Excel скачан','success');
+}
+
+function exportFinanceAnnualPDF(year) {
+  const tableEl = document.querySelector('.fin-page .fin-table');
+  const svgEl   = document.querySelector('#fin-chart-svg-wrap svg');
+  if (!tableEl) return;
+  const win = window.open('','_blank','width=1100,height=800');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Год ${year}</title>
+    <style>*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}body{font-family:system-ui;font-size:12px;padding:24px}h2{margin-bottom:16px}svg{width:100%;height:auto;margin-bottom:20px;display:block}table{width:100%;border-collapse:collapse}th{background:#f1f5f9;padding:8px;text-align:left;border:1px solid #e2e8f0;font-size:11px}td{padding:8px;border:1px solid #e2e8f0}@media print{@page{size:A4 landscape;margin:1cm}}</style>
+    </head><body><h2>Финансовый отчёт · ${year} год · MindsBar</h2>${svgEl?svgEl.outerHTML:''}${tableEl.outerHTML}<script>window.onload=()=>window.print()<\/script></body></html>`);
+  win.document.close();
 }
 
 async function exportFinanceExcel() {

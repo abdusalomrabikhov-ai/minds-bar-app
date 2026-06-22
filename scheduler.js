@@ -121,10 +121,47 @@ function backupDB() {
   }
 }
 
+function copyRecurringFinance() {
+  const now = new Date();
+  const thisMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const prevDate  = new Date(now.getFullYear(), now.getMonth()-1, 1);
+  const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}`;
+  const recurring = db.prepare('SELECT * FROM finance WHERE is_recurring=1 AND month=?').all(prevMonth);
+  recurring.forEach(r => {
+    const exists = db.prepare('SELECT id FROM finance WHERE project_name=? AND month=? AND is_recurring=1').get(r.project_name, thisMonth);
+    if (!exists) {
+      db.prepare(`INSERT INTO finance (project_id,project_name,service_amount,paid_amount,status,payment_type,comment,month,currency,client_name,client_phone,is_recurring)
+        VALUES (?,?,?,0,'unpaid',?,?,?,?,?,?,1)`)
+        .run(r.project_id, r.project_name, r.service_amount, r.payment_type, r.comment, thisMonth, r.currency||'TJS', r.client_name||'', r.client_phone||'');
+    }
+  });
+  if (recurring.length) console.log(`[Финансы] Скопировано повторяющихся записей: ${recurring.length} → ${thisMonth}`);
+}
+
+function checkFinanceOverdue() {
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 7); // 7+ дней не оплачено
+  const overdue = db.prepare(`
+    SELECT f.*, u.telegram_id FROM finance f
+    JOIN users u ON u.role='admin'
+    WHERE f.status IN ('unpaid','partial')
+      AND f.overdue_notified = 0
+      AND f.updated_at < datetime('now', '-7 days')
+    LIMIT 10
+  `).all();
+  overdue.forEach(f => {
+    const msg = `💰 *Задолженность*\n\nПроект: *${f.project_name}*\nОстаток: *${(f.service_amount - f.paid_amount).toLocaleString()} ${f.currency||'TJS'}*\nМесяц: ${f.month}\n\nСтатус: ${f.status === 'partial' ? 'Частично оплачено' : 'Не оплачено'}`;
+    if (f.telegram_id) sendTelegramNotification(f.telegram_id, msg);
+    db.prepare('UPDATE finance SET overdue_notified=1 WHERE id=?').run(f.id);
+  });
+  if (overdue.length) console.log(`[Финансы] Отправлено напоминаний о задолженности: ${overdue.length}`);
+}
+
 function startScheduler(sseClients) {
   setSseClients(sseClients);
   cron.schedule('*/30 * * * *', checkDeadlines);
-  cron.schedule('0 2 * * *', backupDB);   // ежедневно в 02:00
+  cron.schedule('0 2 * * *', backupDB);        // ежедневно в 02:00
+  cron.schedule('0 9 * * 1', checkFinanceOverdue); // каждый понедельник в 09:00
+  cron.schedule('0 8 1 * *', copyRecurringFinance); // 1-го числа каждого месяца
   console.log('⏰ Планировщик запущен (проверка каждые 30 минут)');
 }
 

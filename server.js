@@ -937,30 +937,104 @@ app.get('/api/users/last-seen', auth, requirePerm('view_activity'), (req, res) =
 });
 
 // ─── Finance ──────────────────────────────────────────────────────────────────
+// ─── Finance ──────────────────────────────────────────────────────────────────
 app.get('/api/finance', auth, requirePerm('manage_finance'), (req, res) => {
-  const month = req.query.month || new Date().toISOString().slice(0, 7);
-  const rows = db.prepare('SELECT * FROM finance WHERE month = ? ORDER BY created_at DESC').all(month);
+  const { month, all_months, status, payment_type, search } = req.query;
+  let where = 'WHERE 1=1';
+  const params = [];
+  if (!all_months) { where += ' AND month=?'; params.push(month || new Date().toISOString().slice(0,7)); }
+  if (status)       { where += ' AND status=?'; params.push(status); }
+  if (payment_type) { where += ' AND payment_type=?'; params.push(payment_type); }
+  if (search)       { where += ' AND (project_name LIKE ? OR client_name LIKE ?)'; params.push('%'+search+'%','%'+search+'%'); }
+  const rows = db.prepare(`SELECT * FROM finance ${where} ORDER BY created_at DESC`).all(...params);
+  // Attach payments to each row
+  const ids = rows.map(r=>r.id);
+  const payments = ids.length ? db.prepare(`SELECT * FROM finance_payments WHERE finance_id IN (${ids.map(()=>'?').join(',')}) ORDER BY payment_date`).all(...ids) : [];
+  const payMap = {};
+  payments.forEach(p => { if (!payMap[p.finance_id]) payMap[p.finance_id]=[]; payMap[p.finance_id].push(p); });
+  res.json(rows.map(r => ({ ...r, payments: payMap[r.id]||[] })));
+});
+
+// Annual summary
+app.get('/api/finance/annual', auth, requirePerm('manage_finance'), (req, res) => {
+  const year = req.query.year || new Date().getFullYear();
+  const rows = db.prepare(`SELECT month, SUM(service_amount) as total_service, SUM(paid_amount) as total_paid, COUNT(*) as count
+    FROM finance WHERE month LIKE ? GROUP BY month ORDER BY month`).all(year + '-%');
+  res.json(rows);
+});
+
+// Project breakdown
+app.get('/api/finance/by-project', auth, requirePerm('manage_finance'), (req, res) => {
+  const rows = db.prepare(`SELECT project_name, SUM(service_amount) as total_service, SUM(paid_amount) as total_paid, COUNT(*) as count
+    FROM finance GROUP BY project_name ORDER BY total_service DESC`).all();
   res.json(rows);
 });
 
 app.post('/api/finance', auth, requirePerm('manage_finance'), (req, res) => {
-  const { project_id, project_name, service_amount, paid_amount, status, payment_type, comment, month } = req.body;
+  const { project_id, project_name, service_amount, paid_amount, status, payment_type, comment, month, currency='TJS', client_name='', client_phone='', is_recurring=0 } = req.body;
   if (!project_name?.trim()) return res.status(400).json({ error: 'Укажите название проекта' });
-  const result = db.prepare(`INSERT INTO finance (project_id,project_name,service_amount,paid_amount,status,payment_type,comment,month)
-    VALUES (?,?,?,?,?,?,?,?)`).run(project_id||null, project_name.trim(), service_amount||0, paid_amount||0, status||'unpaid', payment_type||'cash', comment||'', month);
+  const result = db.prepare(`INSERT INTO finance (project_id,project_name,service_amount,paid_amount,status,payment_type,comment,month,currency,client_name,client_phone,is_recurring)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(project_id||null, project_name.trim(), service_amount||0, paid_amount||0, status||'unpaid', payment_type||'cash', comment||'', month, currency, client_name, client_phone, is_recurring?1:0);
   res.json({ id: result.lastInsertRowid });
 });
 
 app.put('/api/finance/:id', auth, requirePerm('manage_finance'), (req, res) => {
-  const { project_id, project_name, service_amount, paid_amount, status, payment_type, comment, month } = req.body;
-  db.prepare(`UPDATE finance SET project_id=?,project_name=?,service_amount=?,paid_amount=?,status=?,payment_type=?,comment=?,month=?,updated_at=datetime('now') WHERE id=?`)
-    .run(project_id||null, project_name, service_amount||0, paid_amount||0, status, payment_type, comment||'', month, req.params.id);
+  const existing = db.prepare('SELECT * FROM finance WHERE id=?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Не найдено' });
+  const { project_id, project_name, service_amount, paid_amount, status, payment_type, comment, month, currency='TJS', client_name='', client_phone='', is_recurring=0 } = req.body;
+  // Log history for changed fields
+  const actor = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id);
+  const fieldLabels = { service_amount:'Сумма услуги', paid_amount:'Сумма оплаты', status:'Статус', payment_type:'Тип оплаты', project_name:'Проект', currency:'Валюта' };
+  const newVals = { service_amount, paid_amount, status, payment_type, project_name, currency };
+  Object.keys(fieldLabels).forEach(f => {
+    if (String(existing[f]||'') !== String(newVals[f]||'')) {
+      db.prepare('INSERT INTO finance_history (finance_id,user_id,user_name,field,old_value,new_value) VALUES (?,?,?,?,?,?)')
+        .run(req.params.id, req.user.id, actor?.name||'', fieldLabels[f], String(existing[f]||''), String(newVals[f]||''));
+    }
+  });
+  db.prepare(`UPDATE finance SET project_id=?,project_name=?,service_amount=?,paid_amount=?,status=?,payment_type=?,comment=?,month=?,currency=?,client_name=?,client_phone=?,is_recurring=?,updated_at=datetime('now') WHERE id=?`)
+    .run(project_id||null, project_name, service_amount||0, paid_amount||0, status, payment_type, comment||'', month, currency, client_name||'', client_phone||'', is_recurring?1:0, req.params.id);
   res.json({ ok: true });
 });
 
 app.delete('/api/finance/:id', auth, requirePerm('manage_finance'), (req, res) => {
+  db.prepare('DELETE FROM finance_payments WHERE finance_id=?').run(req.params.id);
+  db.prepare('DELETE FROM finance_history WHERE finance_id=?').run(req.params.id);
   db.prepare('DELETE FROM finance WHERE id=?').run(req.params.id);
   res.json({ ok: true });
+});
+
+// Payments (partial)
+app.get('/api/finance/:id/payments', auth, requirePerm('manage_finance'), (req, res) => {
+  res.json(db.prepare('SELECT * FROM finance_payments WHERE finance_id=? ORDER BY payment_date').all(req.params.id));
+});
+app.post('/api/finance/:id/payments', auth, requirePerm('manage_finance'), (req, res) => {
+  const { amount, payment_type='cash', payment_date, note='' } = req.body;
+  if (!amount || !payment_date) return res.status(400).json({ error: 'Укажите сумму и дату' });
+  const r = db.prepare('INSERT INTO finance_payments (finance_id,amount,payment_type,payment_date,note) VALUES (?,?,?,?,?)')
+    .run(req.params.id, amount, payment_type, payment_date, note);
+  // Recalculate paid_amount
+  const total = db.prepare('SELECT SUM(amount) as t FROM finance_payments WHERE finance_id=?').get(req.params.id).t || 0;
+  const fin = db.prepare('SELECT service_amount FROM finance WHERE id=?').get(req.params.id);
+  const newStatus = total >= fin.service_amount ? 'paid' : total > 0 ? 'partial' : 'unpaid';
+  db.prepare("UPDATE finance SET paid_amount=?, status=?, updated_at=datetime('now') WHERE id=?").run(total, newStatus, req.params.id);
+  res.json({ id: r.lastInsertRowid, paid_amount: total, status: newStatus });
+});
+app.delete('/api/finance/payments/:id', auth, requirePerm('manage_finance'), (req, res) => {
+  const p = db.prepare('SELECT finance_id FROM finance_payments WHERE id=?').get(req.params.id);
+  db.prepare('DELETE FROM finance_payments WHERE id=?').run(req.params.id);
+  if (p) {
+    const total = db.prepare('SELECT SUM(amount) as t FROM finance_payments WHERE finance_id=?').get(p.finance_id).t || 0;
+    const fin = db.prepare('SELECT service_amount FROM finance WHERE id=?').get(p.finance_id);
+    const newStatus = total >= (fin?.service_amount||0) ? 'paid' : total > 0 ? 'partial' : 'unpaid';
+    db.prepare("UPDATE finance SET paid_amount=?, status=?, updated_at=datetime('now') WHERE id=?").run(total, newStatus, p.finance_id);
+  }
+  res.json({ ok: true });
+});
+
+// History
+app.get('/api/finance/:id/history', auth, requirePerm('manage_finance'), (req, res) => {
+  res.json(db.prepare('SELECT * FROM finance_history WHERE finance_id=? ORDER BY created_at DESC LIMIT 30').all(req.params.id));
 });
 
 // ─── Feedback (anonymous) ─────────────────────────────────────────────────────

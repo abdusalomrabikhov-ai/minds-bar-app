@@ -140,6 +140,31 @@ function initDB() {
     created_at TEXT DEFAULT (datetime('now'))
   )`); } catch {}
   try { db.exec("ALTER TABLE feedback ADD COLUMN archived INTEGER DEFAULT 0"); } catch {}
+  // Finance enhancements
+  try { db.exec("ALTER TABLE finance ADD COLUMN currency TEXT DEFAULT 'TJS'"); } catch {}
+  try { db.exec("ALTER TABLE finance ADD COLUMN client_name TEXT DEFAULT ''"); } catch {}
+  try { db.exec("ALTER TABLE finance ADD COLUMN client_phone TEXT DEFAULT ''"); } catch {}
+  try { db.exec("ALTER TABLE finance ADD COLUMN is_recurring INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE finance ADD COLUMN overdue_notified INTEGER DEFAULT 0"); } catch {}
+  try { db.exec(`CREATE TABLE IF NOT EXISTS finance_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    finance_id INTEGER NOT NULL REFERENCES finance(id) ON DELETE CASCADE,
+    amount REAL NOT NULL,
+    payment_type TEXT DEFAULT 'cash',
+    payment_date TEXT NOT NULL,
+    note TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+  try { db.exec(`CREATE TABLE IF NOT EXISTS finance_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    finance_id INTEGER NOT NULL REFERENCES finance(id) ON DELETE CASCADE,
+    user_id INTEGER,
+    user_name TEXT,
+    field TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
   try { db.exec(`CREATE TABLE IF NOT EXISTS finance (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
