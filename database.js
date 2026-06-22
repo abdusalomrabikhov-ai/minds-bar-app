@@ -136,8 +136,10 @@ function initDB() {
     q1 INTEGER, q2 INTEGER, q3 INTEGER, q4 INTEGER, q5 INTEGER,
     q6 INTEGER, q7 INTEGER, q8 INTEGER, q9 INTEGER, q10 INTEGER,
     suggestion TEXT DEFAULT '',
+    archived INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
   )`); } catch {}
+  try { db.exec("ALTER TABLE feedback ADD COLUMN archived INTEGER DEFAULT 0"); } catch {}
   try { db.exec(`CREATE TABLE IF NOT EXISTS task_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

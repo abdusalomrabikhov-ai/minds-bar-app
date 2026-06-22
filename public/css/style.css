@@ -1832,6 +1832,20 @@ body.dark .fb-question.fb-answered { background: rgba(136,19,55,0.08); }
   border: 1px solid var(--border);
 }
 .fb-response-comment-lbl { font-weight: 700; color: var(--text-muted); margin-right: 6px; font-size: 11px; }
+.fb-archive-btn {
+  margin-left: auto; width: 26px; height: 26px; border-radius: 6px;
+  border: 1.5px solid #e2e8f0; background: #f8fafc; color: #64748b;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; flex-shrink: 0; transition: all 0.12s;
+}
+.fb-archive-btn:hover { background: #f59e0b; color: white; border-color: #f59e0b; }
+.fb-delete-btn {
+  width: 26px; height: 26px; border-radius: 6px;
+  border: 1.5px solid #fecaca; background: #fef2f2; color: #dc2626;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; flex-shrink: 0; transition: all 0.12s;
+}
+.fb-delete-btn:hover { background: #dc2626; color: white; border-color: #dc2626; }
 
 /* ─── Global Search ──────────────────────────────────────────────────────── */
 .gs-overlay {

@@ -2759,9 +2759,11 @@ async function openTaskModal(taskId = null, defaultProjectId = null) {
         </div>
         <div class="field">
           <label>Исполнители <span style="font-size:11px;color:#9ca3af;font-weight:400">(можно выбрать несколько)</span></label>
+          <input id="assignee-search" class="input" placeholder="Поиск по имени..." style="margin-bottom:8px;padding:7px 12px;font-size:13px"
+            oninput="filterAssigneeChips(this.value)">
           <div class="assignee-picker" id="f-assignees">
             ${state.users.map(u => `
-              <div class="assignee-chip ${selectedIds.has(u.id) ? 'selected' : ''}" data-uid="${u.id}" onclick="this.classList.toggle('selected')">
+              <div class="assignee-chip ${selectedIds.has(u.id) ? 'selected' : ''}" data-uid="${u.id}" data-name="${u.name.toLowerCase()}" onclick="this.classList.toggle('selected')">
                 ${avatar(u.name, u.avatar_color, 'avatar-xs', u.avatar_img || '')}
                 <span>${u.name}</span>
               </div>`).join('')}
@@ -4368,6 +4370,13 @@ function _renderBestEmployee(data) {
     </div>`;
 }
 
+function filterAssigneeChips(q) {
+  const ql = q.toLowerCase().trim();
+  document.querySelectorAll('#f-assignees .assignee-chip').forEach(chip => {
+    chip.style.display = !ql || chip.dataset.name.includes(ql) ? '' : 'none';
+  });
+}
+
 // ─── Schedule Page ────────────────────────────────────────────────────────────
 const SCHED_DAYS   = ['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'];
 const SCHED_CLASSES = [
@@ -4782,11 +4791,84 @@ function openFeedbackForm() {
   };
 }
 
+async function deleteFeedback(id) {
+  if (!confirm('Удалить этот ответ навсегда? Действие необратимо.')) return;
+  try {
+    await DEL(`/feedback/${id}`);
+    window._fbAllRows = window._fbAllRows?.filter(r => r.id !== id);
+    toast('Ответ удалён', 'success');
+    window._fbAdminRender?.();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function archiveFeedback(id) {
+  try {
+    await api('PATCH', `/feedback/${id}/archive`, { archived: true });
+    window._fbAllRows = window._fbAllRows?.filter(r => r.id !== id);
+    toast('Ответ архивирован', 'success');
+    window._fbAdminRender?.();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function openFeedbackArchive() {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal" style="max-width:580px">
+      <div class="modal-header">
+        <div class="modal-title">Архив обратной связи</div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body" id="fb-archive-body">
+        <div style="text-align:center;padding:20px;color:#9ca3af">Загрузка...</div>
+      </div>
+    </div></div>`;
+  try {
+    const rows = await GET('/feedback?archived=1');
+    const body = document.getElementById('fb-archive-body');
+    const scoreColor = v => v >= 4 ? '#16a34a' : v >= 3 ? '#d97706' : '#dc2626';
+    const rowAvg = r => { const v=[1,2,3,4,5,6,7,8,9,10].map(i=>r[`q${i}`]).filter(x=>x!=null); return v.length?v.reduce((a,b)=>a+b,0)/v.length:0; };
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty-state" style="padding:30px 0"><h3>Архив пуст</h3><p>Архивированные ответы появятся здесь</p></div>';
+      return;
+    }
+    body.innerHTML = `<div style="display:flex;flex-direction:column;gap:10px;padding-bottom:8px">
+      ${rows.map(r => {
+        const overall = rowAvg(r);
+        return `<div class="fb-response-card">
+          <div class="fb-response-header">
+            <span class="fb-response-num" style="color:#9ca3af">Архив</span>
+            <span class="fb-response-date">${fmtDate(r.created_at)}</span>
+            <span class="fb-response-overall" style="color:${scoreColor(overall)}">Балл: ${overall.toFixed(1)}</span>
+            <button class="btn btn-outline btn-sm" style="margin-left:auto" onclick="restoreFeedback(${r.id})">Восстановить</button>
+            <button class="fb-delete-btn" onclick="deleteFeedback(${r.id}); document.getElementById('fb-archive-body').innerHTML='<div style=padding:20px>Обновите...</div>'; openFeedbackArchive()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+            </button>
+          </div>
+          ${r.suggestion?.trim() ? `<div class="fb-response-comment"><span class="fb-response-comment-lbl">Комментарий:</span>${_escHtml(r.suggestion)}</div>` : ''}
+        </div>`;
+      }).join('')}
+    </div>`;
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function restoreFeedback(id) {
+  try {
+    await api('PATCH', `/feedback/${id}/archive`, { archived: false });
+    toast('Ответ восстановлен', 'success');
+    openFeedbackArchive();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 async function openFeedbackAdmin() {
   const root = document.getElementById('modal-root');
   root.innerHTML = `<div class="modal-overlay"><div class="modal fb-admin-modal">
-    <div class="modal-header"><div class="modal-title">Обратная связь от команды</div>
-    <button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-header">
+      <div class="modal-title">Обратная связь от команды</div>
+      <button class="btn btn-outline btn-sm" onclick="openFeedbackArchive()" style="font-size:12px;display:inline-flex;align-items:center;gap:4px">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/></svg> Архив
+      </button>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
     <div class="modal-body fb-body"><div style="text-align:center;color:#9ca3af;padding:30px">Загрузка...</div>
     </div></div></div>`;
 
@@ -4969,7 +5051,15 @@ async function openFeedbackAdmin() {
                   <span class="fb-response-overall" style="color:${scoreColor(overall)}">
                     Общий балл: ${overall.toFixed(1)}
                   </span>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
+                  <button class="fb-archive-btn" title="Архивировать"
+                    onclick="event.stopPropagation(); archiveFeedback(${r.id})">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+                  </button>
+                  <button class="fb-delete-btn" title="Удалить навсегда"
+                    onclick="event.stopPropagation(); deleteFeedback(${r.id})">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+                  </button>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
                 </div>
                 <div class="fb-response-scores">
                   ${[1,2,3,4,5,6,7,8,9,10].map(qi => {

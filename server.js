@@ -949,8 +949,20 @@ app.post('/api/feedback', auth, (req, res) => {
 });
 
 app.get('/api/feedback', auth, adminOnly, (req, res) => {
-  const rows = db.prepare('SELECT * FROM feedback ORDER BY created_at DESC').all();
+  const showArchived = req.query.archived === '1';
+  const rows = db.prepare(`SELECT * FROM feedback WHERE archived = ${showArchived ? 1 : 0} ORDER BY created_at DESC`).all();
   res.json(rows);
+});
+
+app.patch('/api/feedback/:id/archive', auth, adminOnly, (req, res) => {
+  const { archived } = req.body;
+  db.prepare('UPDATE feedback SET archived = ? WHERE id = ?').run(archived ? 1 : 0, req.params.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/feedback/:id', auth, adminOnly, (req, res) => {
+  db.prepare('DELETE FROM feedback WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 // ─── Best Employee ────────────────────────────────────────────────────────────
