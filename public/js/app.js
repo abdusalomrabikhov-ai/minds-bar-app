@@ -3802,16 +3802,23 @@ async function renderTeamPage() {
     const [users, tasks] = await Promise.all([GET('/users'), GET('/tasks')]);
     state.users = users;
 
-    // Group task counts by assignee
+    // Group task counts by assignee — include both single and multi-assignee tasks
     const tasksByUser = {};
-    tasks.forEach(t => {
-      if (!t.assignee_id) return;
-      if (!tasksByUser[t.assignee_id]) tasksByUser[t.assignee_id] = { total: 0, done: 0, in_progress: 0, new_count: 0 };
-      const s = tasksByUser[t.assignee_id];
+    const addToUser = (uid, isDone, status) => {
+      if (!tasksByUser[uid]) tasksByUser[uid] = { total: 0, done: 0, in_progress: 0, new_count: 0 };
+      const s = tasksByUser[uid];
       s.total++;
-      if (t.status === 'done') s.done++;
-      else if (t.status === 'in_progress') s.in_progress++;
+      if (isDone) s.done++;
+      else if (status === 'in_progress') s.in_progress++;
       else s.new_count++;
+    };
+    tasks.forEach(t => {
+      const ma = t.multi_assignees;
+      if (ma && ma.length > 0) {
+        ma.forEach(a => addToUser(a.id, t.status === 'done' || a.done === 1, t.status));
+      } else if (t.assignee_id) {
+        addToUser(t.assignee_id, t.status === 'done', t.status);
+      }
     });
 
     document.getElementById('page-content').innerHTML = `
