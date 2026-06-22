@@ -4,7 +4,7 @@ const { db } = require('./database');
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 let bot = null;
 
-if (BOT_TOKEN) {
+if (BOT_TOKEN && process.env.NODE_ENV === 'production') {
   try {
     const TelegramBot = require('node-telegram-bot-api');
     bot = new TelegramBot(BOT_TOKEN, { polling: true });
@@ -38,7 +38,7 @@ if (BOT_TOKEN) {
     console.log('⚠️  Ошибка запуска Telegram бота:', e.message);
   }
 } else {
-  console.log('ℹ️  TELEGRAM_BOT_TOKEN не задан — бот отключён');
+  console.log('ℹ️  Telegram бот отключён локально (работает только на сервере)');
 }
 
 function sendTelegramNotification(telegramId, message) {
