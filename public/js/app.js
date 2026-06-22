@@ -25,6 +25,13 @@ async function api(method, path, body) {
     body: body ? JSON.stringify(body) : undefined
   });
   const data = await res.json();
+  if (res.status === 401) {
+    // Token expired or invalid — auto logout and show login
+    localStorage.removeItem('tt_token');
+    localStorage.removeItem('tt_user');
+    location.reload();
+    return;
+  }
   if (!res.ok) throw new Error(data.error || 'Ошибка сервера');
   return data;
 }
