@@ -4,10 +4,13 @@ const { db } = require('./database');
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 let bot = null;
 
-// Webhook URL — Railway automatically provides RAILWAY_PUBLIC_DOMAIN
-const PUBLIC_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL;
-const WEBHOOK_PATH  = '/api/telegram/webhook';
-const WEBHOOK_URL   = PUBLIC_DOMAIN ? `https://${PUBLIC_DOMAIN}${WEBHOOK_PATH}` : null;
+// Webhook URL
+const PUBLIC_DOMAIN =
+  process.env.RAILWAY_PUBLIC_DOMAIN ||
+  process.env.APP_DOMAIN ||
+  (process.env.NODE_ENV === 'production' ? 'minds-bar-app-production.up.railway.app' : null);
+const WEBHOOK_PATH = '/api/telegram/webhook';
+const WEBHOOK_URL  = PUBLIC_DOMAIN ? `https://${PUBLIC_DOMAIN}${WEBHOOK_PATH}` : null;
 
 if (BOT_TOKEN && process.env.NODE_ENV === 'production') {
   try {
