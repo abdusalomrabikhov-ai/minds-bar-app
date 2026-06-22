@@ -5747,6 +5747,14 @@ let _flSection = '', _flDays = 30;
 
 let _flShowAll = false;
 
+async function deleteFinanceLog(id) {
+  if (!confirm('Удалить эту запись из лога?')) return;
+  try {
+    await DEL(`/finance-log/${id}`);
+    renderFinanceLogPage();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 async function renderFinanceLogPage() {
   const content = document.getElementById('page-content');
   content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
@@ -5787,6 +5795,12 @@ async function renderFinanceLogPage() {
         ${l.amount!=null?`${l.action.includes('expense')?'-':''}${fmtMoney(l.amount)}`:'—'}
       </td>
       <td class="fin-td fin-comment" style="max-width:200px">${_escHtml(l.detail||'—')}</td>
+      <td class="fin-td" style="width:36px">
+        <button class="fin-btn-del" title="Удалить запись"
+          onclick="deleteFinanceLog(${l.id})">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+        </button>
+      </td>
     </tr>`;
 
     content.innerHTML = `
@@ -5816,7 +5830,7 @@ async function renderFinanceLogPage() {
               <table class="fin-table">
                 <thead><tr>
                   <th>#</th><th>Дата и время</th><th>Сотрудник</th><th>Раздел</th>
-                  <th>Действие</th><th>Объект</th><th>Сумма</th><th>Детали</th>
+                  <th>Действие</th><th>Объект</th><th>Сумма</th><th>Детали</th><th></th>
                 </tr></thead>
                 <tbody>${logs.map(logRow).join('')}</tbody>
               </table>

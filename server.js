@@ -968,6 +968,11 @@ function logFinance(userId, userName, section, action, entityType='', entityId=n
   } catch {}
 }
 
+app.delete('/api/finance-log/:id', auth, requirePerm('manage_finance_log'), (req, res) => {
+  db.prepare('DELETE FROM finance_activity_log WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
 app.get('/api/finance-log', auth, requirePerm('manage_finance_log'), (req, res) => {
   const { section, days=30, limit=200 } = req.query;
   let where = `WHERE created_at >= datetime('now', '-${Math.min(+days,365)} days')`;
