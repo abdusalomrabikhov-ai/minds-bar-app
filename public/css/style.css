@@ -1001,6 +1001,9 @@ input, textarea, select { font: inherit; }
 .notif-item.unread:hover { background: #FFE4E8; }
 .notif-item-msg { font-size: 12.5px; line-height: 1.4; margin-bottom: 3px; }
 .notif-item-time { font-size: 11px; color: var(--text-muted); }
+.notif-item-clickable { cursor: pointer; }
+.notif-item-clickable:hover .notif-item-link { opacity: 1; }
+.notif-item-link { font-size: 11px; color: var(--primary); font-weight: 600; opacity: 0; transition: opacity 0.15s; }
 .notif-empty { padding: 30px 16px; text-align: center; color: var(--text-muted); font-size: 13px; }
 
 /* ─── Project Tabs ───────────────────────────────────────────────────────── */

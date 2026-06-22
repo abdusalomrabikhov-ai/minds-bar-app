@@ -648,9 +648,13 @@ function setupNotifButton() {
         </div>
         ${notifs.length === 0 ? '<div class="notif-empty">Уведомлений нет</div>' :
           notifs.map(n => `
-            <div class="notif-item ${n.read ? '' : 'unread'}">
+            <div class="notif-item ${n.read ? '' : 'unread'} ${n.task_id ? 'notif-item-clickable' : ''}"
+              ${n.task_id ? `onclick="document.getElementById('notif-panel').classList.add('hidden'); openTaskDetail(${n.task_id})"` : ''}>
               <div class="notif-item-msg">${n.message}</div>
-              <div class="notif-item-time">${fmtDate(n.created_at)}</div>
+              <div style="display:flex;align-items:center;gap:6px;margin-top:3px">
+                <div class="notif-item-time">${fmtDate(n.created_at)}</div>
+                ${n.task_id ? `<span class="notif-item-link">Открыть задачу →</span>` : ''}
+              </div>
             </div>
           `).join('')}
       `;
