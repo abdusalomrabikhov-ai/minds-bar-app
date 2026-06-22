@@ -971,9 +971,11 @@ app.get('/api/best-employee', auth, (req, res) => {
       `).all(u.id, u.id, u.id, m);
 
       const total       = rows.length;
+      const now = new Date().toISOString();
       const doneOnTime  = rows.filter(t => t.status === 'done' && t.updated_at <= t.deadline).length;
       const doneLate    = rows.filter(t => t.status === 'done' && t.updated_at > t.deadline).length;
-      const overdue     = rows.filter(t => t.status !== 'done').length;
+      // Only count as overdue if NOT done AND deadline has already passed
+      const overdue     = rows.filter(t => t.status !== 'done' && t.deadline < now).length;
       const done        = doneOnTime + doneLate;
       // Score: on-time fully weighted, late partially, overdue penalised
       const score = total > 0
