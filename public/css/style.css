@@ -839,6 +839,7 @@ input, textarea, select { font: inherit; }
   display: flex; flex-direction: column; gap: 5px;
   background: var(--bg); border-radius: var(--radius-sm);
   padding: 12px 14px; border: 1.5px solid var(--border);
+  max-height: 280px; overflow-y: auto;
 }
 .perm-checkbox-row {
   display: flex; align-items: center; gap: 10px;

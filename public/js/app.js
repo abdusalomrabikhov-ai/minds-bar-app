@@ -4193,8 +4193,8 @@ async function openUserModal(userId = null) {
   `).join('');
 
   openModal(`
-    <div class="modal">
-      <div class="modal-header">
+    <div class="modal" style="max-height:90vh;overflow-y:auto;display:flex;flex-direction:column">
+      <div class="modal-header" style="flex-shrink:0">
         <div class="modal-title">${user ? 'Редактировать сотрудника' : '＋ Новый сотрудник'}</div>
         <button class="modal-close" onclick="closeModal()">✕</button>
       </div>
