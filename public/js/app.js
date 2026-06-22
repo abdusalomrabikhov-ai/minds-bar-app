@@ -4644,9 +4644,9 @@ function _renderFinance(rows) {
     const debt = +r.service_amount - +r.paid_amount;
     const pmts = r.payments || [];
     return `<tr class="fin-row ${r.is_recurring?'fin-row-recurring':''}">
-      <td class="fin-td fin-num">${i+1}${r.is_recurring?'<span class="fin-recur-dot" title="Повторяющаяся">↻</span>':''}</td>
+      <td class="fin-td fin-num">${i+1}</td>
       <td class="fin-td fin-project">
-        <div>${_escHtml(r.project_name)}</div>
+        <div>${_escHtml(r.project_name)}${r.is_recurring?` <span style="font-size:10px;color:#d97706;background:#fef9c3;padding:1px 5px;border-radius:4px;font-weight:600" title="Повторяется каждый месяц">повтор</span>`:''}</div>
         ${r.client_name?`<div style="font-size:11px;color:var(--text-muted)">${_escHtml(r.client_name)}${r.client_phone?' · '+_escHtml(r.client_phone):''}</div>`:''}
       </td>
       <td class="fin-td fin-money">${fmtMoney(r.service_amount)}</td>
