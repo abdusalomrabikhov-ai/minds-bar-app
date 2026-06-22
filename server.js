@@ -116,8 +116,10 @@ app.get('/api/projects', auth, (req, res) => {
 
 app.put('/api/projects/:id/archive', auth, requirePerm('manage_projects'), (req, res) => {
   const { archived } = req.body;
+  const proj = db.prepare('SELECT name FROM projects WHERE id = ?').get(req.params.id);
   db.prepare('UPDATE projects SET archived = ? WHERE id = ?').run(archived ? 1 : 0, req.params.id);
   sendSSEAll({ type: archived ? 'project_deleted' : 'project_created', id: parseInt(req.params.id) });
+  logActivity(req.user.id, archived ? 'project_archived' : 'project_unarchived', 'project', parseInt(req.params.id), proj?.name);
   res.json({ ok: true });
 });
 
@@ -128,6 +130,7 @@ app.post('/api/projects', auth, requirePerm('manage_projects'), (req, res) => {
     .run(name.trim(), color || '#6366f1', description || '');
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(result.lastInsertRowid);
   sendSSEAll({ type: 'project_created', project });
+  logActivity(req.user.id, 'project_created', 'project', project.id, project.name);
   res.json(project);
 });
 
@@ -139,15 +142,18 @@ app.put('/api/projects/:id', auth, requirePerm('manage_projects'), (req, res) =>
     .run(name || existing.name, color || existing.color, description ?? existing.description, req.params.id);
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
   sendSSEAll({ type: 'project_updated', project });
+  logActivity(req.user.id, 'project_updated', 'project', project.id, project.name);
   res.json(project);
 });
 
 app.delete('/api/projects/:id', auth, requirePerm('manage_projects'), (req, res) => {
+  const proj = db.prepare('SELECT name FROM projects WHERE id = ?').get(req.params.id);
   db.prepare('DELETE FROM notifications WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)').run(req.params.id);
   db.prepare('DELETE FROM comments WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)').run(req.params.id);
   db.prepare('DELETE FROM tasks WHERE project_id = ?').run(req.params.id);
   db.prepare('DELETE FROM projects WHERE id = ?').run(req.params.id);
   sendSSEAll({ type: 'project_deleted', id: parseInt(req.params.id) });
+  logActivity(req.user.id, 'project_deleted', 'project', parseInt(req.params.id), proj?.name);
   res.json({ ok: true });
 });
 
@@ -275,7 +281,9 @@ app.post('/api/projects/:id/content/item', auth, requirePerm('manage_projects'),
   const r = db.prepare('INSERT INTO content_plan (project_id, date, type, title, quantity) VALUES (?,?,?,?,?)')
     .run(req.params.id, date, type, title || '', quantity || 1);
   const item = db.prepare('SELECT * FROM content_plan WHERE id = ?').get(r.lastInsertRowid);
+  const proj = db.prepare('SELECT name FROM projects WHERE id = ?').get(req.params.id);
   syncTasksForItem(item, req.params.id, req.user.id);
+  logActivity(req.user.id, 'content_created', 'project', parseInt(req.params.id), proj?.name, `${date} · ${type}${title ? ' · ' + title : ''}`);
   res.json({ ok: true, id: r.lastInsertRowid });
 });
 
@@ -286,13 +294,17 @@ app.put('/api/content/:id', auth, requirePerm('manage_projects'), (req, res) => 
   db.prepare('UPDATE content_plan SET date=?, type=?, title=?, quantity=? WHERE id=?')
     .run(date ?? row.date, type ?? row.type, title !== undefined ? title : row.title, quantity ?? row.quantity, req.params.id);
   const updated = db.prepare('SELECT * FROM content_plan WHERE id = ?').get(req.params.id);
+  const proj = db.prepare('SELECT name FROM projects WHERE id = ?').get(row.project_id);
   syncTasksForItem(updated, row.project_id, req.user.id);
+  logActivity(req.user.id, 'content_updated', 'project', row.project_id, proj?.name, `${updated.date} · ${updated.type}${updated.title ? ' · ' + updated.title : ''}`);
   res.json({ ok: true });
 });
 
 app.delete('/api/content/:id', auth, requirePerm('manage_projects'), (req, res) => {
+  const row = db.prepare('SELECT cp.*, p.name as proj_name FROM content_plan cp LEFT JOIN projects p ON p.id = cp.project_id WHERE cp.id = ?').get(req.params.id);
   db.prepare('DELETE FROM tasks WHERE source_content_id = ?').run(req.params.id);
   db.prepare('DELETE FROM content_plan WHERE id = ?').run(req.params.id);
+  if (row) logActivity(req.user.id, 'content_deleted', 'project', row.project_id, row.proj_name, `${row.date} · ${row.type}`);
   res.json({ ok: true });
 });
 
@@ -601,10 +613,12 @@ app.patch('/api/tasks/:id/my-done', auth, (req, res) => {
 });
 
 app.delete('/api/tasks/:id', auth, adminOnly, (req, res) => {
+  const task = db.prepare('SELECT title FROM tasks WHERE id = ?').get(req.params.id);
   db.prepare('DELETE FROM notifications WHERE task_id = ?').run(req.params.id);
   db.prepare('DELETE FROM comments WHERE task_id = ?').run(req.params.id);
   db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
   sendSSEAll({ type: 'task_deleted', id: parseInt(req.params.id) });
+  logActivity(req.user.id, 'task_deleted', 'task', parseInt(req.params.id), task?.title);
   res.json({ ok: true });
 });
 
@@ -690,6 +704,7 @@ app.post('/api/users', auth, adminOnly, (req, res) => {
   const result = db.prepare('INSERT INTO users (name, email, password, role, avatar_color, permissions) VALUES (?, ?, ?, ?, ?, ?)')
     .run(name.trim(), email.toLowerCase().trim(), bcrypt.hashSync(password, 10), role || 'employee', color, permsJson);
   const user = db.prepare('SELECT id, name, email, role, avatar_color, permissions FROM users WHERE id = ?').get(result.lastInsertRowid);
+  logActivity(req.user.id, 'user_created', 'user', user.id, user.name);
   res.json({ ...user, permissions: parsePerms(user.permissions) });
 });
 
@@ -709,6 +724,7 @@ app.put('/api/users/:id', auth, (req, res) => {
     permsJson,
     req.params.id
   );
+  logActivity(req.user.id, 'user_updated', 'user', parseInt(req.params.id), name || user.name);
   res.json({ ok: true });
 });
 
@@ -716,7 +732,9 @@ app.delete('/api/users/:id', auth, adminOnly, (req, res) => {
   if (parseInt(req.params.id) === req.user.id) {
     return res.status(400).json({ error: 'Нельзя удалить себя' });
   }
+  const deletedUser = db.prepare('SELECT name FROM users WHERE id = ?').get(req.params.id);
   db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+  logActivity(req.user.id, 'user_deleted', 'user', parseInt(req.params.id), deletedUser?.name);
   res.json({ ok: true });
 });
 
@@ -929,10 +947,64 @@ app.get('/api/feedback', auth, adminOnly, (req, res) => {
   res.json(rows);
 });
 
+// ─── Best Employee ────────────────────────────────────────────────────────────
+app.get('/api/best-employee', auth, (req, res) => {
+  const month = req.query.month || new Date().toISOString().slice(0, 7);
+
+  function calcMonth(m) {
+    const users = db.prepare("SELECT id, name, avatar_color, avatar_img FROM users WHERE role='employee' ORDER BY name").all();
+    return users.map(u => {
+      // All tasks assigned to this user with deadline in month m
+      const rows = db.prepare(`
+        SELECT DISTINCT t.id, t.status, t.deadline, t.updated_at
+        FROM tasks t
+        LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
+        WHERE (t.assignee_id = ? OR ta.user_id = ?)
+          AND t.deadline IS NOT NULL AND t.deadline != ''
+          AND strftime('%Y-%m', t.deadline) = ?
+      `).all(u.id, u.id, u.id, m);
+
+      const total       = rows.length;
+      const doneOnTime  = rows.filter(t => t.status === 'done' && t.updated_at <= t.deadline).length;
+      const doneLate    = rows.filter(t => t.status === 'done' && t.updated_at > t.deadline).length;
+      const overdue     = rows.filter(t => t.status !== 'done').length;
+      const done        = doneOnTime + doneLate;
+      // Score: on-time fully weighted, late partially, overdue penalised
+      const score = total > 0
+        ? Math.round((doneOnTime * 100 + doneLate * 50) / total)
+        : null; // null = no tasks assigned that month
+
+      return { ...u, total, done, doneOnTime, doneLate, overdue, score };
+    }).filter(u => u.total > 0) // only include employees with tasks that month
+      .sort((a, b) => (b.score ?? -1) - (a.score ?? -1) || b.doneOnTime - a.doneOnTime || a.overdue - b.overdue);
+  }
+
+  // Current selected month
+  const current = calcMonth(month);
+
+  // History: last 12 months, find winner of each
+  const history = [];
+  const now = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const m = d.toISOString().slice(0, 7);
+    if (m === month && i === 0) { history.push({ month: m, winner: current[0] || null }); continue; }
+    const ranked = calcMonth(m);
+    if (ranked.length > 0) history.push({ month: m, winner: ranked[0] });
+  }
+
+  res.json({ month, rankings: current, history });
+});
+
 // ─── Schedule ─────────────────────────────────────────────────────────────────
 app.get('/api/schedule', auth, (req, res) => {
   const rows = db.prepare('SELECT * FROM schedule ORDER BY day, class_id, start_time').all();
   res.json(rows);
+});
+
+app.post('/api/auth/logout', auth, (req, res) => {
+  logActivity(req.user.id, 'logout');
+  res.json({ ok: true });
 });
 
 app.post('/api/schedule', auth, requirePerm('manage_schedule'), (req, res) => {
@@ -944,6 +1016,8 @@ app.post('/api/schedule', auth, requirePerm('manage_schedule'), (req, res) => {
   const result = db.prepare(
     'INSERT INTO schedule (day, class_id, start_time, end_time, title, comment) VALUES (?, ?, ?, ?, ?, ?)'
   ).run(day, class_id, start_time, end_time, title, comment);
+  const days = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  logActivity(req.user.id, 'schedule_created', 'schedule', result.lastInsertRowid, title, `${days[day]} ${start_time}–${end_time}`);
   res.json({ id: result.lastInsertRowid });
 });
 
@@ -954,11 +1028,18 @@ app.put('/api/schedule/:id', auth, requirePerm('manage_schedule'), (req, res) =>
   db.prepare(
     'UPDATE schedule SET day=?, class_id=?, start_time=?, end_time=?, title=?, comment=? WHERE id=?'
   ).run(day, class_id, start_time, end_time, title, comment, req.params.id);
+  const days = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  logActivity(req.user.id, 'schedule_updated', 'schedule', parseInt(req.params.id), title, `${days[day]} ${start_time}–${end_time}`);
   res.json({ ok: true });
 });
 
 app.delete('/api/schedule/:id', auth, requirePerm('manage_schedule'), (req, res) => {
+  const ev = db.prepare('SELECT * FROM schedule WHERE id=?').get(req.params.id);
   db.prepare('DELETE FROM schedule WHERE id=?').run(req.params.id);
+  if (ev) {
+    const days = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+    logActivity(req.user.id, 'schedule_deleted', 'schedule', parseInt(req.params.id), ev.title, `${days[ev.day]} ${ev.start_time}–${ev.end_time}`);
+  }
   res.json({ ok: true });
 });
 

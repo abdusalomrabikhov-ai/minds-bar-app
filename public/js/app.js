@@ -257,6 +257,7 @@ document.getElementById('login-form').addEventListener('submit', async e => {
 });
 
 function logout() {
+  POST('/auth/logout').catch(() => {});
   localStorage.removeItem('tt_token');
   localStorage.removeItem('tt_user');
   location.reload();
@@ -479,6 +480,7 @@ const PAGE_TITLES = {
   mytasks: 'Мои задачи',
   team: 'Команда',
   reports: 'Отчёты',
+  'best-employee': 'Лучший сотрудник',
   schedule: 'Расписание',
   settings: 'Настройки',
   employee: 'Профиль сотрудника',
@@ -529,6 +531,7 @@ function navigateTo(page, projectId = null) {
     case 'settings': renderSettingsPage(); break;
     case 'employee': renderEmployeeProfile(state.currentEmployeeId); break;
     case 'activity': renderActivityPage(); break;
+    case 'best-employee': renderBestEmployeePage(); break;
     case 'schedule': renderSchedulePage(); break;
   }
 }
@@ -967,8 +970,9 @@ function shiftUpcomingWeek(delta) {
 function svgDonut(slices, total, size = 150) {
   const cx = size / 2, cy = size / 2, r = size / 2 - 18, sw = 20;
   const C = 2 * Math.PI * r;
+  const svgAttrs = `width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="max-width:100%;height:auto;display:block"`;
   if (total === 0) {
-    return `<svg width="${size}" height="${size}"><circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#E2E8F0" stroke-width="${sw}"/><text x="${cx}" y="${cy+5}" text-anchor="middle" fill="#94A3B8" font-size="11" font-family="system-ui">—</text></svg>`;
+    return `<svg ${svgAttrs}><circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#E2E8F0" stroke-width="${sw}"/><text x="${cx}" y="${cy+5}" text-anchor="middle" fill="#94A3B8" font-size="11" font-family="system-ui">—</text></svg>`;
   }
   let cum = 0;
   const arcs = slices.filter(s => s.v > 0).map(s => {
@@ -981,7 +985,7 @@ function svgDonut(slices, total, size = 150) {
     return g;
   });
   const donePct = total > 0 ? Math.round((slices.find(s => s.key === 'done')?.v || 0) / total * 100) : 0;
-  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${arcs.join('')}<text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="20" font-weight="800" font-family="system-ui" class="donut-pct-text"><tspan class="donut-count" data-count="${donePct}">0%</tspan></text><text x="${cx}" y="${cy + 13}" text-anchor="middle" fill="#94A3B8" font-size="10" font-family="system-ui">выполнено</text></svg>`;
+  return `<svg ${svgAttrs}>${arcs.join('')}<text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="20" font-weight="800" font-family="system-ui" class="donut-pct-text"><tspan class="donut-count" data-count="${donePct}">0%</tspan></text><text x="${cx}" y="${cy + 13}" text-anchor="middle" fill="#94A3B8" font-size="10" font-family="system-ui">выполнено</text></svg>`;
 }
 
 function renderDashboardCharts(tasks) {
@@ -3097,8 +3101,15 @@ function renderActivityUsers(users) {
   if (!el) return;
 
   const ACTION_LABELS = {
-    login: 'Вход в систему', task_created: 'Создал задачу',
-    task_status: 'Изменил статус', task_updated: 'Обновил задачу', comment: 'Написал комментарий',
+    login: 'Вход в систему',          logout: 'Выход из системы',
+    task_created: 'Создал задачу',    task_status: 'Изменил статус',
+    task_updated: 'Обновил задачу',   task_deleted: 'Удалил задачу',
+    comment: 'Написал комментарий',
+    project_created: 'Создал проект', project_updated: 'Изменил проект',
+    project_deleted: 'Удалил проект', project_archived: 'Архивировал проект',
+    content_created: 'Добавил в контент-план', content_updated: 'Изменил контент-план',
+    user_created: 'Добавил сотрудника', user_updated: 'Изменил данные',
+    schedule_created: 'Добавил расписание', schedule_updated: 'Изменил расписание',
   };
 
   const toUtc = dt => dt ? new Date(dt.endsWith('Z') ? dt : dt + 'Z') : null;
@@ -3148,17 +3159,54 @@ function renderActivityLog(logs) {
   const el = document.getElementById('act-log-block');
   if (!el) return;
 
+  const iS = (d) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
   const ACTION_ICON = {
-    login:        `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>`,
-    task_created: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
-    task_status:  `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
-    task_updated: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`,
-    comment:      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>`,
+    login:              iS('<path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/>'),
+    logout:             iS('<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>'),
+    task_created:       iS('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'),
+    task_status:        iS('<polyline points="20 6 9 17 4 12"/>'),
+    task_updated:       iS('<path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>'),
+    task_deleted:       iS('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/>'),
+    comment:            iS('<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>'),
+    project_created:    iS('<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>'),
+    project_updated:    iS('<path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>'),
+    project_deleted:    iS('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/>'),
+    project_archived:   iS('<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>'),
+    project_unarchived: iS('<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/>'),
+    content_created:    iS('<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'),
+    content_updated:    iS('<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'),
+    content_deleted:    iS('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/>'),
+    user_created:       iS('<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>'),
+    user_updated:       iS('<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>'),
+    user_deleted:       iS('<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/><line x1="9" y1="14" x2="15" y2="14"/>'),
+    schedule_created:   iS('<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'),
+    schedule_updated:   iS('<path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>'),
+    schedule_deleted:   iS('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/>'),
   };
-  const ACTION_COLOR = { login:'#6366f1', task_created:'#3B82F6', task_status:'#059669', task_updated:'#D97706', comment:'#8B5CF6' };
+  const ACTION_COLOR = {
+    login:'#6366f1',            logout:'#94a3b8',
+    task_created:'#3B82F6',     task_status:'#059669',     task_updated:'#D97706',   task_deleted:'#DC2626',
+    comment:'#8B5CF6',
+    project_created:'#f97316',  project_updated:'#f59e0b', project_deleted:'#DC2626',
+    project_archived:'#9ca3af', project_unarchived:'#22c55e',
+    content_created:'#ec4899',  content_updated:'#a78bfa', content_deleted:'#DC2626',
+    user_created:'#22c55e',     user_updated:'#14b8a6',    user_deleted:'#DC2626',
+    schedule_created:'#8b5cf6', schedule_updated:'#d97706',schedule_deleted:'#DC2626',
+  };
   const ACTION_TEXT = {
-    login: 'вошёл в систему', task_created: 'создал задачу', task_status: 'изменил статус',
-    task_updated: 'обновил задачу', comment: 'написал комментарий к',
+    login: 'вошёл в систему',              logout: 'вышел из системы',
+    task_created: 'создал задачу',         task_status: 'изменил статус задачи',
+    task_updated: 'обновил задачу',        task_deleted: 'удалил задачу',
+    comment: 'написал комментарий к',
+    project_created: 'создал проект',      project_updated: 'изменил проект',
+    project_deleted: 'удалил проект',      project_archived: 'архивировал проект',
+    project_unarchived: 'восстановил проект',
+    content_created: 'добавил в контент-план',  content_updated: 'изменил контент-план',
+    content_deleted: 'удалил из контент-плана',
+    user_created: 'добавил сотрудника',    user_updated: 'изменил данные',
+    user_deleted: 'удалил сотрудника',
+    schedule_created: 'добавил расписание', schedule_updated: 'изменил расписание',
+    schedule_deleted: 'удалил расписание',
   };
 
   const toUtcLog = dt => dt ? new Date(dt.endsWith('Z') ? dt : dt + 'Z') : null;
@@ -4038,6 +4086,225 @@ async function disconnectTelegram() {
     toast('Telegram отключён', 'success');
     renderSettingsPage();
   } catch (err) { toast(err.message, 'error'); }
+}
+
+// ─── Best Employee Page ───────────────────────────────────────────────────────
+let _beMonth       = new Date().toISOString().slice(0, 7);
+let _beWinOffset   = 0; // sliding window offset in months
+
+async function renderBestEmployeePage() {
+  const content = document.getElementById('page-content');
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  try {
+    const data = await GET('/best-employee?month=' + _beMonth);
+    _renderBestEmployee(data);
+  } catch (err) {
+    content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
+  }
+}
+
+async function beSetMonth(m) {
+  _beMonth = m;
+  const data = await GET('/best-employee?month=' + m);
+  _renderBestEmployee(data);
+}
+
+async function beShiftWindow(delta) {
+  _beWinOffset += delta;
+  const data = await GET('/best-employee?month=' + _beMonth);
+  _renderBestEmployee(data);
+}
+
+function _renderBestEmployee(data) {
+  const content = document.getElementById('page-content');
+  const { month, rankings, history } = data;
+
+  const MONTH_NAMES = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const fmtMonth = m => { const [y,mo] = m.split('-'); return MONTH_NAMES[+mo-1] + ' ' + y; };
+
+  const scoreBar = (score) => {
+    const pct = score ?? 0;
+    const col = pct >= 80 ? '#16a34a' : pct >= 50 ? '#d97706' : '#dc2626';
+    return `<div class="be-score-bar-bg"><div class="be-score-bar-fill" style="width:${pct}%;background:${col}"></div></div>`;
+  };
+  const MEDAL_SVG = [
+    `<svg viewBox="0 0 26 26" width="26" height="26"><circle cx="13" cy="13" r="12" fill="#fbbf24" stroke="#d97706" stroke-width="1.5"/><circle cx="13" cy="13" r="9" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="1"/><text x="13" y="17.5" text-anchor="middle" font-size="11" font-weight="900" fill="#78350f" font-family="system-ui">1</text></svg>`,
+    `<svg viewBox="0 0 26 26" width="26" height="26"><circle cx="13" cy="13" r="12" fill="#94a3b8" stroke="#64748b" stroke-width="1.5"/><circle cx="13" cy="13" r="9" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1"/><text x="13" y="17.5" text-anchor="middle" font-size="11" font-weight="900" fill="#0f172a" font-family="system-ui">2</text></svg>`,
+    `<svg viewBox="0 0 26 26" width="26" height="26"><circle cx="13" cy="13" r="12" fill="#c2410c" stroke="#9a3412" stroke-width="1.5"/><circle cx="13" cy="13" r="9" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1"/><text x="13" y="17.5" text-anchor="middle" font-size="11" font-weight="900" fill="white" font-family="system-ui">3</text></svg>`,
+  ];
+  const medal = (i) => MEDAL_SVG[i] || `<span class="be-rank-num">${i+1}</span>`;
+  const scoreColor = s => s >= 80 ? '#16a34a' : s >= 50 ? '#d97706' : '#dc2626';
+
+  // Sliding window: 1 past + current + 4 future = 6, with arrows
+  const nowD = new Date();
+  const currentMonth = nowD.toISOString().slice(0, 7);
+  // Window start = 1 month before current + user offset
+  const winStart = -1 + _beWinOffset;
+  const visible6 = Array.from({length: 6}, (_, i) => {
+    const d = new Date(nowD.getFullYear(), nowD.getMonth() + winStart + i, 1);
+    return d.toISOString().slice(0, 7);
+  });
+  const canLeft  = _beWinOffset > -24;
+  const canRight = _beWinOffset < 24;
+  const arrowBtn = (dir, disabled) =>
+    `<button class="be-arrow-btn ${disabled ? 'disabled' : ''}"
+      onclick="${disabled ? '' : `beShiftWindow(${dir})`}">${dir < 0 ? '‹' : '›'}</button>`;
+
+  const monthTabs = `
+    ${arrowBtn(-1, !canLeft)}
+    ${visible6.map(m => {
+      const isCurrent = m === currentMonth;
+      const isSelected = m === month;
+      return `<button class="be-month-tab ${isSelected ? 'active' : ''} ${isCurrent && !isSelected ? 'be-month-tab-current' : ''}"
+        onclick="beSetMonth('${m}')">
+        ${fmtMonth(m)}${isCurrent ? '<span class="be-tab-now">сейчас</span>' : ''}
+      </button>`;
+    }).join('')}
+    ${arrowBtn(1, !canRight)}`;
+
+  // Podium (top 3)
+  const top3 = rankings.slice(0, 3);
+  const rest = rankings.slice(3);
+  const champion = top3[0];
+
+  let podiumHtml = '';
+  if (!champion) {
+    podiumHtml = `<div class="be-empty"><div style="font-size:48px">📋</div><div>В этом месяце нет данных</div><div style="font-size:13px;color:#9ca3af;margin-top:6px">Задачи с дедлайном в этом месяце ещё не назначены</div></div>`;
+  } else {
+    // Champion card
+    const av = champion.avatar_img
+      ? `<img src="${champion.avatar_img}" class="be-champ-img">`
+      : `<div class="be-champ-avatar" style="background:${champion.avatar_color||'#6366f1'}">${champion.name.split(' ').map(w=>w[0]).join('').slice(0,2)}</div>`;
+
+    podiumHtml = `
+      <div class="be-champion-card">
+        <div class="be-champion-crown">
+          <svg viewBox="0 0 80 52" width="68" height="46">
+            <path d="M6 44 L16 13 L30 31 L40 4 L50 31 L64 13 L74 44 Z" fill="#fbbf24" stroke="#d97706" stroke-width="2" stroke-linejoin="round"/>
+            <rect x="6" y="42" width="68" height="8" rx="3" fill="#d97706"/>
+            <circle cx="40" cy="6" r="5.5" fill="#dc2626" stroke="#991b1b" stroke-width="1"/>
+            <circle cx="14" cy="14" r="4" fill="#60a5fa" stroke="#2563eb" stroke-width="1"/>
+            <circle cx="66" cy="14" r="4" fill="#60a5fa" stroke="#2563eb" stroke-width="1"/>
+            <circle cx="38.5" cy="4.5" r="1.8" fill="rgba(255,255,255,0.7)"/>
+          </svg>
+        </div>
+        ${av}
+        <div class="be-champ-name">${champion.name}</div>
+        <div class="be-champ-score" style="color:${scoreColor(champion.score)}">${champion.score}%</div>
+        <div class="be-champ-label">Эффективность</div>
+        <div class="be-champ-stats">
+          <div class="be-champ-stat"><span class="be-champ-stat-val" style="color:#16a34a">${champion.doneOnTime}</span><span class="be-champ-stat-lbl">в срок</span></div>
+          <div class="be-champ-stat"><span class="be-champ-stat-val" style="color:#d97706">${champion.doneLate}</span><span class="be-champ-stat-lbl">с опозданием</span></div>
+          <div class="be-champ-stat"><span class="be-champ-stat-val" style="color:#dc2626">${champion.overdue}</span><span class="be-champ-stat-lbl">просрочено</span></div>
+          <div class="be-champ-stat"><span class="be-champ-stat-val" style="color:white">${champion.total}</span><span class="be-champ-stat-lbl">всего задач</span></div>
+        </div>
+        <div class="be-champ-badge">Лучший сотрудник · ${fmtMonth(month)}</div>
+      </div>
+
+      ${top3.length > 1 ? `
+      <div class="be-silver-bronze">
+        ${top3.slice(1).map((u, i) => {
+          const av2 = u.avatar_img
+            ? `<img src="${u.avatar_img}" class="be-sb-img">`
+            : `<div class="be-sb-avatar" style="background:${u.avatar_color||'#6366f1'}">${u.name.split(' ').map(w=>w[0]).join('').slice(0,2)}</div>`;
+          return `<div class="be-sb-card be-sb-${i===0?'silver':'bronze'}">
+            <div class="be-sb-medal">${i===0
+              ? `<svg viewBox="0 0 44 56" width="40" height="50">
+                  <polygon points="16,0 22,0 22,20 10,14" fill="#475569"/>
+                  <polygon points="22,0 28,0 34,14 22,20" fill="#94a3b8"/>
+                  <circle cx="22" cy="38" r="16" fill="#cbd5e1" stroke="#94a3b8" stroke-width="2"/>
+                  <circle cx="22" cy="38" r="12" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"/>
+                  <text x="22" y="43.5" text-anchor="middle" font-size="15" font-weight="900" fill="#0f172a" font-family="system-ui">2</text>
+                </svg>`
+              : `<svg viewBox="0 0 44 56" width="40" height="50">
+                  <polygon points="16,0 22,0 22,20 10,14" fill="#9a3412"/>
+                  <polygon points="22,0 28,0 34,14 22,20" fill="#c2410c"/>
+                  <circle cx="22" cy="38" r="16" fill="#fb923c" stroke="#c2410c" stroke-width="2"/>
+                  <circle cx="22" cy="38" r="12" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1.5"/>
+                  <text x="22" y="43.5" text-anchor="middle" font-size="15" font-weight="900" fill="white" font-family="system-ui">3</text>
+                </svg>`
+            }</div>
+            ${av2}
+            <div class="be-sb-name">${u.name}</div>
+            <div class="be-sb-score" style="color:${scoreColor(u.score)}">${u.score}%</div>
+            <div style="font-size:11px;color:var(--text-muted)">${u.doneOnTime} из ${u.total} в срок</div>
+          </div>`;
+        }).join('')}
+      </div>` : ''}`;
+  }
+
+  // Full table
+  const tableRows = rankings.map((u, i) => {
+    const av = u.avatar_img
+      ? `<img src="${u.avatar_img}" style="width:32px;height:32px;border-radius:50%;object-fit:cover">`
+      : `<div class="be-tbl-avatar" style="background:${u.avatar_color||'#6366f1'}">${u.name.split(' ').map(w=>w[0]).join('').slice(0,2)}</div>`;
+    return `<tr class="be-tbl-row ${i===0?'be-tbl-top':''}">
+      <td class="be-tbl-rank">${i < 3 ? medal(i) : i+1}</td>
+      <td class="be-tbl-user">${av}<span>${u.name}</span></td>
+      <td class="be-tbl-num">${u.total}</td>
+      <td class="be-tbl-num be-green">${u.doneOnTime}</td>
+      <td class="be-tbl-num be-orange">${u.doneLate}</td>
+      <td class="be-tbl-num be-red">${u.overdue}</td>
+      <td class="be-tbl-score">
+        ${scoreBar(u.score)}
+        <span style="color:${scoreColor(u.score)};font-weight:700;font-size:13px">${u.score}%</span>
+      </td>
+    </tr>`;
+  }).join('');
+
+  // History winners
+  const historyHtml = history.filter(h => h.winner && h.month !== month).map(h => {
+    const w = h.winner;
+    const av = w.avatar_img
+      ? `<img src="${w.avatar_img}" class="be-hist-img">`
+      : `<div class="be-hist-avatar" style="background:${w.avatar_color||'#6366f1'}">${w.name.split(' ').map(x=>x[0]).join('').slice(0,2)}</div>`;
+    return `<div class="be-hist-card" onclick="beSetMonth('${h.month}')">
+      <div class="be-hist-month">${fmtMonth(h.month)}</div>
+      ${av}
+      <div class="be-hist-name">${w.name}</div>
+      <div class="be-hist-score" style="color:${scoreColor(w.score)}">${w.score}%</div>
+    </div>`;
+  }).join('');
+
+  content.innerHTML = `
+    <div class="be-page">
+      <div class="be-month-bar">${monthTabs}</div>
+
+      <div class="be-top-section">
+        ${podiumHtml}
+      </div>
+
+      ${rankings.length > 0 ? `
+      <div class="be-table-section">
+        <div class="be-section-title">Таблица рейтинга · ${fmtMonth(month)}</div>
+        <div class="be-table-wrap">
+          <table class="be-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Сотрудник</th>
+                <th title="Всего задач с дедлайном в месяце">Задач</th>
+                <th title="Выполнено в срок" style="color:#16a34a">В срок</th>
+                <th title="Выполнено с опозданием" style="color:#d97706">С опозд.</th>
+                <th title="Просрочено / не выполнено" style="color:#dc2626">Просроч.</th>
+                <th>Эффективность</th>
+              </tr>
+            </thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+        </div>
+      </div>` : ''}
+
+      ${historyHtml ? `
+      <div class="be-history-section">
+        <div class="be-section-title">История победителей</div>
+        <div class="be-history-row">${historyHtml}</div>
+      </div>` : ''}
+
+      <div class="be-formula-note">
+        Эффективность = (задачи в срок × 100% + задачи с опозданием × 50%) / всего задач с дедлайном в месяце
+      </div>
+    </div>`;
 }
 
 // ─── Schedule Page ────────────────────────────────────────────────────────────
