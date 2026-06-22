@@ -100,16 +100,25 @@ app.get('/api/auth/me', auth, (req, res) => {
 // ─── Projects ─────────────────────────────────────────────────────────────────
 
 app.get('/api/projects', auth, (req, res) => {
+  const showArchived = req.query.archived === '1';
   const projects = db.prepare(`
     SELECT p.*,
       COUNT(t.id) as task_count,
       SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) as done_count
     FROM projects p
     LEFT JOIN tasks t ON t.project_id = p.id
+    WHERE p.archived = ${showArchived ? 1 : 0}
     GROUP BY p.id
     ORDER BY p.name
   `).all();
   res.json(projects);
+});
+
+app.put('/api/projects/:id/archive', auth, requirePerm('manage_projects'), (req, res) => {
+  const { archived } = req.body;
+  db.prepare('UPDATE projects SET archived = ? WHERE id = ?').run(archived ? 1 : 0, req.params.id);
+  sendSSEAll({ type: archived ? 'project_deleted' : 'project_created', id: parseInt(req.params.id) });
+  res.json({ ok: true });
 });
 
 app.post('/api/projects', auth, requirePerm('manage_projects'), (req, res) => {
@@ -540,6 +549,26 @@ app.put('/api/tasks/:id', auth, (req, res) => {
   } else if (title && title !== existing.title) {
     logActivity(req.user.id, 'task_updated', 'task', task.id, task.title);
   }
+
+  // Task history log
+  const actor = db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id);
+  const actorName = actor?.name || 'Неизвестно';
+  const histFields = [
+    { field: 'status',   oldV: existing.status,   newV: newStatus,     labels: statusLabels },
+    { field: 'priority', oldV: existing.priority, newV: priority || existing.priority, labels: { low:'Низкий', medium:'Средний', high:'Высокий' } },
+    { field: 'title',    oldV: existing.title,    newV: title || existing.title },
+    { field: 'deadline', oldV: existing.deadline || '', newV: (deadline !== undefined ? (deadline||'') : (existing.deadline||'')) },
+    { field: 'assignee', oldV: String(existing.assignee_id||''), newV: String(newAssignee||'') },
+  ];
+  histFields.forEach(({ field, oldV, newV, labels }) => {
+    const resolvedOld = labels ? (labels[oldV] || oldV || '—') : (oldV || '—');
+    const resolvedNew = labels ? (labels[newV] || newV || '—') : (newV || '—');
+    if (String(oldV) !== String(newV)) {
+      db.prepare('INSERT INTO task_history (task_id, user_id, user_name, field, old_value, new_value) VALUES (?,?,?,?,?,?)')
+        .run(task.id, req.user.id, actorName, field, resolvedOld, resolvedNew);
+    }
+  });
+
   sendSSE(task.assignee_id, { type: 'task_updated', task });
   res.json(task);
 });
@@ -579,6 +608,14 @@ app.delete('/api/tasks/:id', auth, adminOnly, (req, res) => {
   res.json({ ok: true });
 });
 
+// ─── Task History ─────────────────────────────────────────────────────────────
+app.get('/api/tasks/:id/history', auth, (req, res) => {
+  const rows = db.prepare(
+    'SELECT * FROM task_history WHERE task_id = ? ORDER BY created_at DESC LIMIT 50'
+  ).all(req.params.id);
+  res.json(rows);
+});
+
 // ─── Comments ─────────────────────────────────────────────────────────────────
 
 app.get('/api/tasks/:id/comments', auth, (req, res) => {
@@ -603,6 +640,31 @@ app.post('/api/tasks/:id/comments', auth, (req, res) => {
   `).get(result.lastInsertRowid);
   const taskRow = db.prepare('SELECT title FROM tasks WHERE id = ?').get(req.params.id);
   logActivity(req.user.id, 'comment', 'task', Number(req.params.id), taskRow?.title, text.trim().slice(0, 120));
+
+  // @mention notifications
+  const mentions = [...text.matchAll(/@([\wА-ЯЁа-яё]+(?:\s+[\wА-ЯЁа-яё]+)?)/gu)].map(m => m[1].trim());
+  if (mentions.length) {
+    const allUsers = db.prepare('SELECT id, name, telegram_id FROM users').all();
+    const sender = db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id);
+    const notified = new Set();
+    mentions.forEach(mention => {
+      const matched = allUsers.find(u =>
+        u.name.toLowerCase().startsWith(mention.toLowerCase()) && u.id !== req.user.id
+      );
+      if (matched && !notified.has(matched.id)) {
+        notified.add(matched.id);
+        const msg = `${sender?.name} упомянул вас в комментарии к задаче «${taskRow?.title}»`;
+        db.prepare('INSERT INTO notifications (user_id, task_id, type, message) VALUES (?,?,?,?)')
+          .run(matched.id, req.params.id, 'mention', msg);
+        sendSSE(matched.id, { type: 'notification', message: msg });
+        if (matched.telegram_id) {
+          sendTelegramNotification(matched.telegram_id,
+            `💬 *Вас упомянули в комментарии*\n\n*Задача:* ${taskRow?.title}\n*Комментарий:* ${text.trim().slice(0,150)}`);
+        }
+      }
+    });
+  }
+
   res.json(comment);
 });
 
@@ -848,6 +910,71 @@ app.get('/api/users/last-seen', auth, requirePerm('view_activity'), (req, res) =
     FROM users ORDER BY last_seen DESC NULLS LAST
   `).all();
   res.json(users);
+});
+
+// ─── Feedback (anonymous) ─────────────────────────────────────────────────────
+app.post('/api/feedback', auth, (req, res) => {
+  const { q1,q2,q3,q4,q5,q6,q7,q8,q9,q10, suggestion='' } = req.body;
+  const scores = [q1,q2,q3,q4,q5,q6,q7,q8,q9,q10];
+  if (scores.some(s => s === undefined || s === null || s < 0 || s > 5))
+    return res.status(400).json({ error: 'Оцените все вопросы от 0 до 5' });
+  // Deliberately no user_id — fully anonymous
+  db.prepare(`INSERT INTO feedback (q1,q2,q3,q4,q5,q6,q7,q8,q9,q10,suggestion)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(...scores, suggestion.trim());
+  res.json({ ok: true });
+});
+
+app.get('/api/feedback', auth, adminOnly, (req, res) => {
+  const rows = db.prepare('SELECT * FROM feedback ORDER BY created_at DESC').all();
+  res.json(rows);
+});
+
+// ─── Schedule ─────────────────────────────────────────────────────────────────
+app.get('/api/schedule', auth, (req, res) => {
+  const rows = db.prepare('SELECT * FROM schedule ORDER BY day, class_id, start_time').all();
+  res.json(rows);
+});
+
+app.post('/api/schedule', auth, requirePerm('manage_schedule'), (req, res) => {
+  const { day, class_id, start_time, end_time, title, comment = '' } = req.body;
+  if (day === undefined || class_id === undefined || !start_time || !end_time || !title)
+    return res.status(400).json({ error: 'Заполните все поля' });
+  if (start_time >= end_time)
+    return res.status(400).json({ error: 'Время окончания должно быть позже начала' });
+  const result = db.prepare(
+    'INSERT INTO schedule (day, class_id, start_time, end_time, title, comment) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(day, class_id, start_time, end_time, title, comment);
+  res.json({ id: result.lastInsertRowid });
+});
+
+app.put('/api/schedule/:id', auth, requirePerm('manage_schedule'), (req, res) => {
+  const { day, class_id, start_time, end_time, title, comment = '' } = req.body;
+  if (start_time >= end_time)
+    return res.status(400).json({ error: 'Время окончания должно быть позже начала' });
+  db.prepare(
+    'UPDATE schedule SET day=?, class_id=?, start_time=?, end_time=?, title=?, comment=? WHERE id=?'
+  ).run(day, class_id, start_time, end_time, title, comment, req.params.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/schedule/:id', auth, requirePerm('manage_schedule'), (req, res) => {
+  db.prepare('DELETE FROM schedule WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// [seed endpoint removed after successful migration]
+if (false) app.post('/api/_seed_once', (req, res) => {
+  if (req.headers['x-seed-key'] !== 'MINDSBAR_SEED_2026') return res.status(403).end();
+  const users = [{"id": 1, "name": "Abdusalom Rabikhov", "email": "abdusalom@agency.com", "password": "$2a$10$xUQLq5rAhZBoli5o07WqXOxjCTRCJpLTZx3L3LxDLyor3Ofju9/yK", "role": "admin", "avatar_color": "#6366f1", "telegram_id": "685071534", "telegram_token": "", "permissions": "{}"}, {"id": 2, "name": "\u041f\u0443\u043b\u0430\u0442\u043e\u0432\u0430 \u041a\u0430\u043c\u0438\u043b\u043b\u0430", "email": "kamilla@agency.com", "password": "$2a$10$9v2ofYa5t5wXawFuzeXkBeiTsLGzTGRQ0BZ1QItshehtw8qBxMX4u", "role": "employee", "avatar_color": "#8b5cf6", "telegram_id": "", "telegram_token": "", "permissions": "{\"reports\":true,\"manage_projects\":true,\"assign_tasks\":true,\"manage_team\":true,\"view_activity\":true}"}, {"id": 6, "name": "\u0421\u0430\u043b\u043e\u043c\u043e\u0432\u0430 \u0411\u0443\u043d\u0430\u0444\u0448\u0430", "email": "bunafsha@agency.com", "password": "$2a$10$HuhboLIn8hGPZIzcdaVjku3n.Q.tQi6O2nDT5HietaOMujTklw3tW", "role": "employee", "avatar_color": "#3b82f6", "telegram_id": "", "telegram_token": "", "permissions": "{\"reports\":false,\"manage_projects\":false,\"assign_tasks\":false,\"manage_team\":false}"}, {"id": 7, "name": "\u0425\u0430\u043c\u0438\u0434\u043e\u0432\u0430 \u041c\u0435\u0445\u0440\u043e\u043d\u0430", "email": "mehrona@agency", "password": "$2a$10$0eLyUU5pkjpw3MdPmfI.QOqCxoTsjQUbAgOJK7aFUkymiTgSUNoSO", "role": "employee", "avatar_color": "#22c55e", "telegram_id": "", "telegram_token": "", "permissions": "{\"reports\":false,\"manage_projects\":false,\"assign_tasks\":false,\"manage_team\":false}"}, {"id": 8, "name": "\u0410\u0440\u0438\u043f\u043e\u0432\u0430 \u0421\u0430\u043b\u043e\u043c\u0430\u0442", "email": "salomat@agency.com", "password": "$2a$10$vSPdwxmJVJsQY/Rc7GaTq.9XMVf7c55TOjBfBYOnx3zJQf/7rN8le", "role": "employee", "avatar_color": "#06b6d4", "telegram_id": "", "telegram_token": "", "permissions": "{\"reports\":false,\"manage_projects\":false,\"assign_tasks\":false,\"manage_team\":false}"}, {"id": 9, "name": "\u041c\u0430\u0434\u043c\u0430\u0434\u0451\u0440\u043e\u0432\u0430 \u0424\u0430\u0440\u0437\u043e\u043d\u0430", "email": "farzona@agency.com", "password": "$2a$10$jGPa1b5FSrqN6i/agLwly.nI4PNWusmr4erv/3OGlLe27zR2CWa8q", "role": "employee", "avatar_color": "#3b82f6", "telegram_id": "", "telegram_token": "", "permissions": "{\"reports\":false,\"manage_projects\":false,\"assign_tasks\":false,\"manage_team\":false}"}, {"id": 10, "name": "\u041a\u0430\u0441\u044b\u043c\u043e\u0432\u0430 \u0414\u0438\u043b\u043d\u043e\u0437\u0430", "email": "dilnoza@agency.com", "password": "$2a$10$BDHMqZ8sndmlhZrkCKnRS.cZWBhPUbzAj.eezf/y9MhLwPLgN.1ZC", "role": "employee", "avatar_color": "#f43f5e", "telegram_id": "", "telegram_token": "", "permissions": "{\"reports\":false,\"manage_projects\":false,\"assign_tasks\":false,\"manage_team\":false}"}, {"id": 11, "name": "\u0421\u043e\u043b\u0438\u0435\u0432 \u0421\u0438\u043d\u043e", "email": "sino@agency.com", "password": "$2a$10$Xhs3/V4BVNDvvH3ai5WN..4yK3Ol.VtCHox6pH7UvHsM1KuFBjOPG", "role": "employee", "avatar_color": "#8b5cf6", "telegram_id": "", "telegram_token": "", "permissions": "{\"reports\":false,\"manage_projects\":false,\"assign_tasks\":false,\"manage_team\":false}"}, {"id": 12, "name": "\u041d\u0443\u0440\u0438\u0434\u0438\u043d\u043e\u0432 \u041c\u0443\u0445\u0441\u0438\u043d", "email": "muhsin@agency.com", "password": "$2a$10$J51Nl6FZO.VknCxUNO3dYOEH7tWxagCRwnWWHk38TOAVrztEdh4j6", "role": "employee", "avatar_color": "#6366f1", "telegram_id": "", "telegram_token": "", "permissions": "{\"reports\":false,\"manage_projects\":false,\"assign_tasks\":false,\"manage_team\":false}"}, {"id": 13, "name": "\u0421\u0430\u044a\u0434\u0438\u0437\u043e\u0434\u0430 \u0410\u0431\u0443\u0431\u0430\u043a\u0440", "email": "abubakr@agency.com", "password": "$2a$10$DTtmg4z4ZejhO/b/vRylI.AquPvyomoCCeAvV0YKhbZnIW82Hmmf2", "role": "employee", "avatar_color": "#14b8a6", "telegram_id": "", "telegram_token": "", "permissions": "{\"reports\":false,\"manage_projects\":false,\"assign_tasks\":false,\"manage_team\":false}"}, {"id": 14, "name": "\u0418\u0441\u043c\u0430\u0438\u043b\u043e\u0432\u0430 \u041c\u0430\u0445\u0432\u0430\u0448", "email": "mahvash@agency.com", "password": "$2a$10$t3WagDGfn9Yh499axrEjNOSETKiJv5.2kuWjRAREXBi37f9FSlYlm", "role": "employee", "avatar_color": "#3b82f6", "telegram_id": "", "telegram_token": "", "permissions": "{\"reports\":false,\"manage_projects\":false,\"assign_tasks\":false,\"manage_team\":false}"}, {"id": 15, "name": "\u0423\u043c\u0430\u0440\u043e\u0432 \u0410\u043c\u0438\u0440", "email": "amir@agency.com", "password": "$2a$10$Bf7Ae69.kMCwY3/QyFyMkeSwMxYXdoBmZBVIMJFvpLlgcQnwrZkgm", "role": "employee", "avatar_color": "#f43f5e", "telegram_id": "", "telegram_token": "", "permissions": "{\"reports\":false,\"manage_projects\":false,\"assign_tasks\":false,\"manage_team\":false}"}, {"id": 16, "name": "\u0421\u0430\u043b\u0438\u043c\u043e\u0432\u0430 \u0423\u043c\u0438\u044f", "email": "umiya@agency.com", "password": "$2a$10$fctyBGxGADsY3j5I8WUuH.AE3ZJFit5ahzItc9PVPdrAtB08Tcmna", "role": "employee", "avatar_color": "#f43f5e", "telegram_id": "", "telegram_token": "", "permissions": "{\"reports\":false,\"manage_projects\":false,\"assign_tasks\":false,\"manage_team\":false}"}, {"id": 17, "name": "\u041c\u0438\u0440\u0441\u0430\u0431\u0443\u0440\u043e\u0432\u0430 \u0410\u043c\u0430\u043d\u0438", "email": "amani@agency.com", "password": "$2a$10$wSW1nkzsjLsMatY6jPabdenpI1/Y3W0lTlfsX/mlwrVqwJijYcuWm", "role": "employee", "avatar_color": "#14b8a6", "telegram_id": "", "telegram_token": "", "permissions": "{\"reports\":false,\"manage_projects\":false,\"assign_tasks\":false,\"manage_team\":false,\"view_activity\":false,\"manage_schedule\":true}"}, {"id": 18, "name": "\u0421\u043e\u044f\u0440\u043a\u0443\u043b\u043e\u0432 \u0423\u043c\u0435\u0434", "email": "umed@agency.com", "password": "$2a$10$CbPWKiVmKuQOG9gf2a9kGuSoxU0R3a/WtD80vHKW5eELgQL7s.6xK", "role": "employee", "avatar_color": "#14b8a6", "telegram_id": "", "telegram_token": "", "permissions": "{\"reports\":false,\"manage_projects\":false,\"assign_tasks\":false,\"manage_team\":false}"}];
+  const projects = [{"id": 2, "name": "\u0421\u0422\u041e999", "color": "#f43f5e", "description": "\u0418\u0442\u0430\u043b\u044c\u044f\u043d\u0441\u043a\u043e\u0435 \u043a\u0430\u0444\u0435", "archived": 0}, {"id": 3, "name": "\u0415\u0432\u0440\u043e\u041c\u0435\u0434", "color": "#22c55e", "description": "\u0424\u0438\u0442\u043d\u0435\u0441-\u043a\u043b\u0443\u0431", "archived": 0}, {"id": 4, "name": "\u0421\u0442\u0440\u043e\u0439 \u0426\u0435\u043d\u0442\u0440", "color": "#f97316", "description": "", "archived": 0}, {"id": 5, "name": "Minds", "color": "#f43f5e", "description": "", "archived": 0}, {"id": 8, "name": "\u0421\u0438\u0442\u0438\u041a\u0430\u0440\u0434", "color": "#6366f1", "description": "", "archived": 0}, {"id": 9, "name": "\u0421\u0438\u0442\u0438 \u0421\u0435\u0440\u0432\u0438\u0441", "color": "#14b8a6", "description": "", "archived": 0}, {"id": 10, "name": "\u0421\u0438\u0451\u043c\u0430 \u041c\u043e\u043b\u043b", "color": "#f43f5e", "description": "", "archived": 0}, {"id": 11, "name": "\u041a\u043e\u0445\u0438 \u041f\u0430\u0440\u0444\u0435\u043d\u043e\u043d", "color": "#06b6d4", "description": "", "archived": 0}, {"id": 12, "name": "\u0410\u043a\u0438\u0430 \u0410\u0432\u0435\u0441\u0442\u043e", "color": "#3b82f6", "description": "", "archived": 0}, {"id": 13, "name": "\u041a\u041e\u0414", "color": "#eab308", "description": "", "archived": 0}, {"id": 14, "name": "\u041c\u0435\u0442\u0430\u043b\u043b\u0413\u0440\u0438\u0434", "color": "#14b8a6", "description": "", "archived": 0}, {"id": 15, "name": "ZSCD", "color": "#22c55e", "description": "", "archived": 0}, {"id": 16, "name": "MindsJunior", "color": "#f97316", "description": "", "archived": 0}, {"id": 17, "name": "\u0422\u0415\u0421\u0424", "color": "#ec4899", "description": "", "archived": 0}, {"id": 18, "name": "\u041f\u0430\u0439\u0432\u0430\u043d\u0434", "color": "#3b82f6", "description": "", "archived": 0}, {"id": 19, "name": "\u041e\u043b\u0443\u0447\u0430 \u0422\u0430\u043a\u0441\u0438", "color": "#f43f5e", "description": "", "archived": 0}, {"id": 20, "name": "\u0427\u0438\u043b\u0442\u0430\u043d", "color": "#6366f1", "description": "", "archived": 0}];
+  let u=0, p=0;
+  users.forEach(user => {
+    try { db.prepare('INSERT OR IGNORE INTO users (id,name,email,password,role,avatar_color,telegram_id,telegram_token,permissions) VALUES (?,?,?,?,?,?,?,?,?)').run(user.id,user.name,user.email,user.password,user.role,user.avatar_color||'#6366f1',user.telegram_id||'',user.telegram_token||'',user.permissions||'{}'); u++; } catch(e){}
+  });
+  projects.forEach(proj => {
+    try { db.prepare('INSERT OR IGNORE INTO projects (id,name,color,description,archived) VALUES (?,?,?,?,?)').run(proj.id,proj.name,proj.color||'#6366f1',proj.description||'',proj.archived||0); p++; } catch(e){}
+  });
+  res.json({ ok:true, users: db.prepare('SELECT COUNT(*) as c FROM users').get().c, projects: db.prepare('SELECT COUNT(*) as c FROM projects').get().c });
 });
 
 // SPA fallback

@@ -117,6 +117,36 @@ function initDB() {
     done_at TEXT,
     UNIQUE(task_id, user_id)
   )`); } catch {}
+  try { db.exec(`CREATE TABLE IF NOT EXISTS schedule (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    day INTEGER NOT NULL,
+    class_id INTEGER NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    title TEXT NOT NULL,
+    comment TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+  // Migration for existing installs that had schedule without comment column
+  try { db.exec("ALTER TABLE schedule ADD COLUMN comment TEXT DEFAULT ''"); } catch { /* already exists */ }
+  try { db.exec("ALTER TABLE projects ADD COLUMN archived INTEGER DEFAULT 0"); } catch {}
+  try { db.exec(`CREATE TABLE IF NOT EXISTS feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    q1 INTEGER, q2 INTEGER, q3 INTEGER, q4 INTEGER, q5 INTEGER,
+    q6 INTEGER, q7 INTEGER, q8 INTEGER, q9 INTEGER, q10 INTEGER,
+    suggestion TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+  try { db.exec(`CREATE TABLE IF NOT EXISTS task_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    user_id INTEGER,
+    user_name TEXT,
+    field TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
 
   const admin = db.prepare("SELECT id FROM users WHERE role = 'admin'").get();
   if (!admin) {

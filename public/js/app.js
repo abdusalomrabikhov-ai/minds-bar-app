@@ -150,6 +150,23 @@ function deadlineFmt(dt, status) {
   return `<span class="task-meta-item ${cls}" style="display:inline-flex;align-items:center;gap:4px">${icon} ${fmtDateShort(dt)}</span>`;
 }
 
+function countdownFmt(dt, status) {
+  if (!dt || status === 'done') return '';
+  const diff = parseDeadline(dt) - Date.now();
+  const abs   = Math.abs(diff);
+  const days  = Math.floor(abs / 864e5);
+  const hours = Math.floor((abs % 864e5) / 36e5);
+  const mins  = Math.floor((abs % 36e5) / 6e4);
+  if (diff < 0) {
+    const txt = days > 0 ? `${days}д ${hours}ч` : hours > 0 ? `${hours}ч ${mins}м` : `${mins}м`;
+    return `<span class="countdown countdown-overdue">Просрочено: ${txt}</span>`;
+  }
+  if (diff > 7 * 864e5) return ''; // дальше недели — не показываем
+  const txt = days > 0 ? `${days}д ${hours}ч` : hours > 0 ? `${hours}ч ${mins}м` : `${mins}м`;
+  const cls  = diff < 864e5 ? 'countdown-urgent' : 'countdown-soon';
+  return `<span class="countdown ${cls}">До дедлайна: ${txt}</span>`;
+}
+
 function recurrenceBadge(r) {
   if (!r || r === 'none') return '';
   const labels = { daily: 'Ежедневно', weekly: 'Еженедельно', monthly: 'Ежемесячно' };
@@ -223,7 +240,13 @@ document.getElementById('login-form').addEventListener('submit', async e => {
     state.user = user;
     localStorage.setItem('tt_token', token);
     localStorage.setItem('tt_user', JSON.stringify(user));
-    initApp();
+    const today = new Date().toDateString();
+    const lastSeen = localStorage.getItem('tt_welcomed_' + user.id);
+    await initApp();
+    if (lastSeen !== today) {
+      localStorage.setItem('tt_welcomed_' + user.id, today);
+      showWelcomeModal();
+    }
   } catch (err) {
     errEl.textContent = err.message;
     errEl.style.display = 'block';
@@ -319,6 +342,21 @@ async function initApp() {
     if (can('manage_projects')) openProjectModal();
   });
 
+  // Keyboard shortcuts
+  document.addEventListener('keydown', e => {
+    const inInput = e.target.matches('input,textarea,select,[contenteditable]');
+    if (e.key === 'Escape') {
+      // Close topmost overlay first
+      const detail = document.getElementById('fb-detail-overlay');
+      if (detail) { detail.remove(); return; }
+      closeWelcomeModal();
+      closeModal();
+    }
+    if (!inInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openTaskModal(); }
+    }
+  });
+
   const saved = (() => { try { return sessionStorage.getItem('mb_page'); } catch { return null; } })();
   if (saved && saved.startsWith('project:')) {
     navigateTo('project', saved.split(':')[1]);
@@ -356,6 +394,56 @@ function renderSidebarProjects() {
   });
 }
 
+async function openArchivedProjects() {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal" style="max-width:520px">
+      <div class="modal-header"><div class="modal-title">Архив проектов</div>
+        <button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-body" id="archive-modal-body">
+        <div style="text-align:center;color:#9ca3af;padding:20px">Загрузка...</div>
+      </div>
+    </div></div>`;
+  try {
+    const archived = await GET('/projects?archived=1');
+    const body = document.getElementById('archive-modal-body');
+    if (!archived.length) {
+      body.innerHTML = '<div class="empty-state" style="padding:30px 0"><h3>Архив пуст</h3><p>Архивированные проекты появятся здесь</p></div>';
+      return;
+    }
+    body.innerHTML = `<div style="display:flex;flex-direction:column;gap:10px;padding-bottom:8px">
+      ${archived.map(p => `
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1.5px solid var(--border);border-radius:10px;background:var(--bg)">
+          <span style="width:12px;height:12px;border-radius:50%;background:${p.color};flex-shrink:0"></span>
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:600;color:var(--text)">${p.name}</div>
+            <div style="font-size:12px;color:var(--text-muted)">${p.task_count||0} задач · ${p.done_count||0} выполнено</div>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="unarchiveProject(${p.id})">Восстановить</button>
+        </div>`).join('')}
+    </div>`;
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function unarchiveProject(id) {
+  try {
+    await PUT(`/projects/${id}/archive`, { archived: false });
+    await loadSharedData();
+    toast('Проект восстановлен', 'success');
+    openArchivedProjects();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function archiveProject(id) {
+  if (!confirm('Архивировать проект? Задачи сохранятся, проект скроется из списка.')) return;
+  try {
+    await PUT(`/projects/${id}/archive`, { archived: true });
+    await loadSharedData();
+    toast('Проект архивирован', 'success');
+    navigateTo('dashboard');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 function setupProjectsToggle() {
   const toggle = document.getElementById('sidebar-projects-toggle');
   const wrapper = document.getElementById('sidebar-projects-wrapper');
@@ -391,6 +479,7 @@ const PAGE_TITLES = {
   mytasks: 'Мои задачи',
   team: 'Команда',
   reports: 'Отчёты',
+  schedule: 'Расписание',
   settings: 'Настройки',
   employee: 'Профиль сотрудника',
   activity: 'Активность',
@@ -440,6 +529,7 @@ function navigateTo(page, projectId = null) {
     case 'settings': renderSettingsPage(); break;
     case 'employee': renderEmployeeProfile(state.currentEmployeeId); break;
     case 'activity': renderActivityPage(); break;
+    case 'schedule': renderSchedulePage(); break;
   }
 }
 
@@ -1008,8 +1098,110 @@ function renderDashboardCharts(tasks) {
   `;
 }
 
+// ─── Employee Dashboard ───────────────────────────────────────────────────────
+async function renderEmployeeDashboard() {
+  const content = document.getElementById('page-content');
+  try {
+    const tasks = await GET('/tasks');
+    const uid = state.user.id;
+    const myTasks = tasks.filter(t =>
+      t.assignee_id === uid || (t.multi_assignees || []).some(a => a.id === uid)
+    );
+
+    const now = new Date();
+    const todayStart = new Date(now); todayStart.setHours(0,0,0,0);
+    const todayEnd   = new Date(now); todayEnd.setHours(23,59,59,999);
+    const weekStart  = new Date(now); weekStart.setDate(weekStart.getDate() - ((weekStart.getDay()+6)%7)); weekStart.setHours(0,0,0,0);
+
+    const overdueMe  = myTasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < todayStart);
+    const todayMe    = myTasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) >= todayStart && parseDeadline(t.deadline) <= todayEnd);
+    const inProgress = myTasks.filter(t => t.status === 'in_progress');
+    const doneWeek   = myTasks.filter(t => t.status === 'done' && new Date(t.updated_at) >= weekStart);
+    const totalActive = myTasks.filter(t => t.status !== 'done').length;
+    const weekPct = (doneWeek.length + totalActive) > 0 ? Math.round(doneWeek.length / (doneWeek.length + totalActive) * 100) : 0;
+
+    const newMe = myTasks.filter(t => t.status === 'new');
+
+    content.innerHTML = `
+      <div class="emp-dash">
+        <!-- Stats row -->
+        <div class="emp-stats-row">
+          <div class="emp-stat-card">
+            <div class="emp-stat-num ${overdueMe.length ? 'emp-stat-danger' : ''}">${overdueMe.length}</div>
+            <div class="emp-stat-lbl">Просрочено</div>
+          </div>
+          <div class="emp-stat-card">
+            <div class="emp-stat-num emp-stat-today">${todayMe.length}</div>
+            <div class="emp-stat-lbl">На сегодня</div>
+          </div>
+          <div class="emp-stat-card">
+            <div class="emp-stat-num">${inProgress.length}</div>
+            <div class="emp-stat-lbl">В работе</div>
+          </div>
+          <div class="emp-stat-card">
+            <div class="emp-stat-num emp-stat-done">${doneWeek.length}</div>
+            <div class="emp-stat-lbl">Выполнено за неделю</div>
+          </div>
+        </div>
+
+        <!-- Weekly progress -->
+        <div class="emp-progress-card">
+          <div class="emp-progress-header">
+            <span class="emp-progress-title">Прогресс недели</span>
+            <span class="emp-progress-pct">${weekPct}%</span>
+          </div>
+          <div class="emp-progress-bar-bg">
+            <div class="emp-progress-bar-fill" style="width:${weekPct}%"></div>
+          </div>
+          <div class="emp-progress-sub">${doneWeek.length} выполнено · ${totalActive} активных · всего ${myTasks.length}</div>
+        </div>
+
+        <!-- Today's tasks -->
+        ${overdueMe.length + todayMe.length > 0 ? `
+        <div class="section-header" style="margin-top:24px">
+          <div class="section-title" style="display:flex;align-items:center;gap:6px">
+            ${svgI(SVG_PATHS.warning,15)} Требуют внимания
+          </div>
+        </div>
+        ${overdueMe.length ? `<div style="font-size:12px;font-weight:700;color:#dc2626;margin:8px 0 4px;padding:0 24px">Просрочены</div>
+          <div class="tasks-list" style="padding:0 24px">${overdueMe.map(t=>taskCard(t,'overdue')).join('')}</div>` : ''}
+        ${todayMe.length ? `<div style="font-size:12px;font-weight:700;color:#d97706;margin:8px 0 4px;padding:0 24px">На сегодня</div>
+          <div class="tasks-list" style="padding:0 24px">${todayMe.map(t=>taskCard(t,'today')).join('')}</div>` : ''}
+        ` : ''}
+
+        <!-- In progress -->
+        ${inProgress.length ? `
+        <div class="section-header" style="margin-top:16px">
+          <div class="section-title" style="display:flex;align-items:center;gap:6px">${svgI(SVG_PATHS.repeat,15)} В работе</div>
+        </div>
+        <div class="tasks-list" style="padding:0 24px">${inProgress.map(t=>taskCard(t)).join('')}</div>
+        ` : ''}
+
+        <!-- New tasks -->
+        ${newMe.length ? `
+        <div class="section-header" style="margin-top:16px">
+          <div class="section-title" style="display:flex;align-items:center;gap:6px">${svgI(SVG_PATHS.clip,15)} Новые задачи</div>
+          <button class="btn btn-outline btn-sm" onclick="navigateTo('mytasks')">Все мои задачи →</button>
+        </div>
+        <div class="tasks-list" style="padding:0 24px">${newMe.slice(0,5).map(t=>taskCard(t)).join('')}</div>
+        ${newMe.length > 5 ? `<div style="padding:8px 24px"><button class="btn btn-outline btn-sm" onclick="navigateTo('mytasks')">Ещё ${newMe.length-5} задач →</button></div>` : ''}
+        ` : ''}
+
+        ${myTasks.length === 0 ? `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.check,44)}</div><h3>Задач нет</h3><p>Руководитель ещё не назначил вам задачи</p></div>` : ''}
+      </div>`;
+
+    attachTaskCardListeners();
+  } catch (err) {
+    content.innerHTML = `<div class="empty-state"><h3>Ошибка загрузки</h3><p>${err.message}</p></div>`;
+  }
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 async function renderDashboard() {
+  // Employees without special permissions get a personalized view
+  if (state.user?.role !== 'admin' && !can('reports') && !can('manage_projects') && !can('assign_tasks')) {
+    return renderEmployeeDashboard();
+  }
   dashTasksLimit = 10;
   try {
     const tasks = await GET('/tasks');
@@ -1346,7 +1538,11 @@ async function renderProjectPage(projectId) {
             <div style="font-size:15px;font-weight:700">${project?.name || 'Проект'}</div>
             ${project?.description ? `<div style="font-size:13px;color:#6b7280;margin-top:2px">${project.description}</div>` : ''}
           </div>
-          ${isAdmin ? `<button class="btn btn-outline btn-sm" onclick="openProjectModal(${projectId})" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.edit,13)} Изменить</button>` : ''}
+          ${isAdmin ? `
+            <button class="btn btn-outline btn-sm" onclick="openProjectModal(${projectId})" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.edit,13)} Изменить</button>
+            <button class="btn btn-outline btn-sm" onclick="archiveProject(${projectId})" style="display:inline-flex;align-items:center;gap:5px;color:#9ca3af">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/></svg> Архивировать
+            </button>` : ''}
         </div>
         <div class="progress-bar" style="margin-bottom:6px">
           <div class="progress-fill" style="width:${progress}%;background:${project?.color || '#6366f1'}"></div>
@@ -2040,6 +2236,7 @@ function parseCpDate(raw) {
 // ─── Task Card ────────────────────────────────────────────────────────────────
 function taskCard(t, urgencyLevel = null) {
   const dl = deadlineFmt(t.deadline, t.status);
+  const cd = countdownFmt(t.deadline, t.status);
   const ma = t.multi_assignees;
   const isMulti = ma && ma.length > 0;
 
@@ -2088,6 +2285,7 @@ function taskCard(t, urgencyLevel = null) {
         <div class="task-meta" style="margin-top:6px">
           ${assigneeMetaHtml}
           ${dl}
+          ${cd}
           ${t.creator_name && state.user.role === 'admin' ? `<span class="task-meta-item" style="color:#d1d5db">от ${t.creator_name}</span>` : ''}
         </div>
       </div>
@@ -2156,9 +2354,10 @@ function attachTaskCardListeners() {
 // ─── Task Detail Modal ────────────────────────────────────────────────────────
 async function openTaskDetail(taskId) {
   try {
-    const [tasks, comments] = await Promise.all([
+    const [tasks, comments, history] = await Promise.all([
       GET('/tasks?_force=1'),
-      GET('/tasks/' + taskId + '/comments')
+      GET('/tasks/' + taskId + '/comments'),
+      GET('/tasks/' + taskId + '/history').catch(() => []),
     ]);
     const t = tasks.find(t => String(t.id) === String(taskId));
     if (!t) return;
@@ -2262,7 +2461,7 @@ async function openTaskDetail(taskId) {
                         <span class="comment-author">${c.user_name}</span>
                         <span class="comment-time">${fmtDate(c.created_at)}</span>
                       </div>
-                      <div class="comment-text">${c.text}</div>
+                      <div class="comment-text">${c.text.replace(/@([\wА-ЯЁа-яё]+(?:\s+[\wА-ЯЁа-яё]+)?)/gu, '<span class="comment-mention">@$1</span>')}</div>
                     </div>
                   </div>
                 `; }).join('')}
@@ -2272,6 +2471,25 @@ async function openTaskDetail(taskId) {
               <button class="btn btn-blue btn-sm" onclick="submitComment(${t.id})">Отправить</button>
             </div>
           </div>
+
+          ${history.length > 0 ? `
+          <div class="task-history-section">
+            <div class="task-history-title">${svgI(SVG_PATHS.clock,14)} История изменений</div>
+            <div class="task-history-list">
+              ${history.map(h => {
+                const fieldNames = { status:'Статус', priority:'Приоритет', title:'Название', deadline:'Дедлайн', assignee:'Исполнитель' };
+                return `<div class="task-history-item">
+                  <div class="task-history-dot"></div>
+                  <div class="task-history-body">
+                    <span class="task-history-who">${h.user_name}</span>
+                    изменил <span class="task-history-field">${fieldNames[h.field] || h.field}</span>:
+                    <span class="task-history-old">${h.old_value}</span> → <span class="task-history-new">${h.new_value}</span>
+                    <span class="task-history-time">${fmtDate(h.created_at)}</span>
+                  </div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>` : ''}
         </div>
       </div>
     `);
@@ -3321,11 +3539,12 @@ async function loadReport() {
 }
 
 const PERM_LABELS = {
-  reports:         { icon: svgI(SVG_PATHS.bars, 13),   text: 'Отчёты' },
-  manage_projects: { icon: svgI(SVG_PATHS.folder, 13), text: 'Проекты' },
-  assign_tasks:    { icon: svgI(SVG_PATHS.clip, 13),   text: 'Назначать задачи' },
-  manage_team:     { icon: svgI(SVG_PATHS.users, 13),  text: 'Команда' },
-  view_activity:   { icon: svgI(SVG_PATHS.eye, 13),    text: 'Активность' },
+  reports:          { icon: svgI(SVG_PATHS.bars, 13),   text: 'Отчёты' },
+  manage_projects:  { icon: svgI(SVG_PATHS.folder, 13), text: 'Проекты' },
+  assign_tasks:     { icon: svgI(SVG_PATHS.clip, 13),   text: 'Назначать задачи' },
+  manage_team:      { icon: svgI(SVG_PATHS.users, 13),  text: 'Команда' },
+  view_activity:    { icon: svgI(SVG_PATHS.eye, 13),    text: 'Активность' },
+  manage_schedule:  { icon: svgI(SVG_PATHS.cal, 13),    text: 'Расписание' },
 };
 
 function permTags(perms) {
@@ -3819,6 +4038,777 @@ async function disconnectTelegram() {
     toast('Telegram отключён', 'success');
     renderSettingsPage();
   } catch (err) { toast(err.message, 'error'); }
+}
+
+// ─── Schedule Page ────────────────────────────────────────────────────────────
+const SCHED_DAYS   = ['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'];
+const SCHED_CLASSES = [
+  { id: 0, name: 'Чёрный',     color: '#4b5563', bg: '#f3f4f6', light: '#e5e7eb' },
+  { id: 1, name: 'Зелёный',    color: '#15803d', bg: '#f0fdf4', light: '#bbf7d0' },
+  { id: 2, name: 'Красный',    color: '#b91c1c', bg: '#fef2f2', light: '#fecaca' },
+  { id: 3, name: 'Фиолетовый', color: '#6d28d9', bg: '#f5f3ff', light: '#ddd6fe' },
+];
+const SCHED_START = 8;
+const SCHED_END   = 22;
+const SCHED_HOUR_H = 64;
+
+function timeToMinutes(t) {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function minutesToTime(m) {
+  const h = Math.floor(m / 60).toString().padStart(2, '0');
+  const min = (m % 60).toString().padStart(2, '0');
+  return `${h}:${min}`;
+}
+
+let _schedDrag   = null; // { id, durMin, title, comment }
+let _schedCache  = [];  // last fetched events
+let _schedFilter = { search: '', classes: new Set([0, 1, 2, 3]) };
+
+function _escHtml(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function renderSchedulePage() {
+  const content = document.getElementById('page-content');
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+
+  try { _schedCache = await GET('/schedule'); } catch { _schedCache = []; }
+
+  const canEdit = state.user?.role === 'admin' || can('manage_schedule');
+  const hours = [];
+  for (let h = SCHED_START; h <= SCHED_END; h++) hours.push(h);
+
+  let html = `
+    <div class="sched-page">
+      <div class="sched-toolbar">
+        <div class="sched-filter-bar">
+          <input class="sched-search input" id="sched-search" placeholder="Поиск по названию..." value="${_escHtml(_schedFilter.search)}" oninput="schedFilterSearch(this.value)">
+          <div class="sched-class-filters">
+            ${SCHED_CLASSES.map(c => `
+              <button class="sched-cls-btn ${_schedFilter.classes.has(c.id) ? 'active' : ''}"
+                style="--cls-color:${c.color}"
+                onclick="schedToggleClass(${c.id})">${c.name}</button>
+            `).join('')}
+          </div>
+        </div>
+        <div class="sched-toolbar-right">
+          ${canEdit ? `<button class="btn btn-blue" onclick="openScheduleModal()">＋ Добавить</button>` : ''}
+          <button class="btn btn-outline" onclick="window.print()" title="Экспорт в PDF">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+            Печать / PDF
+          </button>
+        </div>
+      </div>
+      <div class="sched-outer">
+        <div class="sched-scroll-area">
+          <div class="sched-head">
+            <div class="sched-time-stub"></div>
+            ${SCHED_DAYS.map(d => `
+              <div class="sched-day-head">
+                <div class="sched-day-name">${d}</div>
+                <div class="sched-class-labels">
+                  ${SCHED_CLASSES.map(c => `<div class="sched-class-lbl" style="background:${c.color}" title="${c.name}">${c.name[0]}</div>`).join('')}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+          <div class="sched-body">
+            <div class="sched-time-col">
+              ${hours.map(h => `<div class="sched-time-cell">${h}:00</div>`).join('')}
+            </div>
+            ${SCHED_DAYS.map((_, dayIdx) => `
+              <div class="sched-day-group">
+                ${SCHED_CLASSES.map(cls => {
+                  const searchLow = _schedFilter.search.toLowerCase();
+                  const evs = _schedCache.filter(e =>
+                    e.day === dayIdx && e.class_id === cls.id &&
+                    _schedFilter.classes.has(cls.id) &&
+                    (!searchLow || e.title.toLowerCase().includes(searchLow) || (e.comment||'').toLowerCase().includes(searchLow))
+                  );
+                  const evHtml = evs.map(e => {
+                    const startMin = timeToMinutes(e.start_time) - SCHED_START * 60;
+                    const endMin   = timeToMinutes(e.end_time)   - SCHED_START * 60;
+                    const top    = startMin / 60 * SCHED_HOUR_H;
+                    const height = Math.max((endMin - startMin) / 60 * SCHED_HOUR_H - 2, 20);
+                    const durMin = endMin - startMin;
+                    const safeTitle   = _escHtml(e.title);
+                    const safeComment = _escHtml(e.comment);
+                    return `<div class="sched-event" style="top:${top}px;height:${height}px;background:${cls.color}"
+                      data-id="${e.id}"
+                      ${canEdit ? `draggable="true"
+                        ondragstart="schedDragStart(event,${e.id},${durMin})"
+                        ondragend="schedDragEnd(event)"
+                        onclick="openScheduleModal(${e.id})"` : ''}
+                      title="${safeTitle} (${e.start_time}–${e.end_time})">
+                      <div class="sched-event-title">${safeTitle}</div>
+                      <div class="sched-event-time">${e.start_time}–${e.end_time}</div>
+                      ${e.comment ? `<div class="sched-event-comment">${safeComment}</div>` : ''}
+                    </div>`;
+                  }).join('');
+                  const colHidden = !_schedFilter.classes.has(cls.id);
+                  return `<div class="sched-class-col ${colHidden ? 'sched-col-hidden' : ''}" style="background:${cls.bg}"
+                    ${canEdit && !colHidden ? `
+                      ondragover="schedDragOver(event)"
+                      ondragleave="schedDragLeave(event)"
+                      ondrop="schedDrop(event,${dayIdx},${cls.id})"
+                      onclick="schedColClick(event,${dayIdx},${cls.id})"` : ''}>
+                    ${hours.map(h => `<div class="sched-hour-line" style="top:${(h - SCHED_START) * SCHED_HOUR_H}px"></div>`).join('')}
+                    ${evHtml}
+                  </div>`;
+                }).join('')}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+  content.innerHTML = html;
+}
+
+function schedFilterSearch(val) {
+  _schedFilter.search = val;
+  renderSchedulePage();
+}
+
+function schedToggleClass(id) {
+  if (_schedFilter.classes.has(id)) {
+    if (_schedFilter.classes.size > 1) _schedFilter.classes.delete(id);
+  } else {
+    _schedFilter.classes.add(id);
+  }
+  renderSchedulePage();
+}
+
+function schedDragStart(e, id, durMin) {
+  // Store full event data so schedDrop doesn't need a network round-trip
+  const ev = _schedCache.find(x => x.id === id);
+  _schedDrag = { id, durMin, title: ev?.title || '', comment: ev?.comment || '' };
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', String(id));
+  setTimeout(() => e.target.classList.add('sched-dragging'), 0);
+}
+
+function schedDragEnd(e) {
+  e.target.classList.remove('sched-dragging');
+}
+
+function schedDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.add('sched-drop-over');
+}
+
+function schedDragLeave(e) {
+  if (!e.currentTarget.contains(e.relatedTarget)) {
+    e.currentTarget.classList.remove('sched-drop-over');
+  }
+}
+
+async function schedDrop(e, dayIdx, classId) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('sched-drop-over');
+  if (!_schedDrag) return;
+
+  const col = e.currentTarget;
+  const rect = col.getBoundingClientRect();
+  const relY = e.clientY - rect.top;
+  const snapped = Math.round(relY / SCHED_HOUR_H * 60 / 30) * 30;
+  const startTotal = SCHED_START * 60 + Math.max(0, Math.min(snapped, (SCHED_END - SCHED_START) * 60 - _schedDrag.durMin));
+  const endTotal = startTotal + _schedDrag.durMin;
+
+  const drag = _schedDrag;
+  _schedDrag = null;
+
+  try {
+    await PUT(`/schedule/${drag.id}`, {
+      day: dayIdx, class_id: classId,
+      start_time: minutesToTime(startTotal),
+      end_time:   minutesToTime(endTotal),
+      title:   drag.title,
+      comment: drag.comment,
+    });
+    renderSchedulePage();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+function schedColClick(e, dayIdx, classId) {
+  if (e.target.closest('.sched-event')) return;
+  const col = e.currentTarget;
+  const rect = col.getBoundingClientRect();
+  const relY = e.clientY - rect.top;
+  const snapped = Math.round(relY / SCHED_HOUR_H * 60 / 30) * 30;
+  const startMin = SCHED_START * 60 + Math.min(Math.max(snapped, 0), (SCHED_END - SCHED_START) * 60 - 60);
+  openScheduleModal(null, dayIdx, classId, minutesToTime(startMin), minutesToTime(startMin + 60));
+}
+
+function openScheduleModal(eventId = null, defaultDay = 0, defaultClass = 0, defaultStart = '09:00', defaultEnd = '10:00') {
+  if (eventId) {
+    const ev = _schedCache.find(e => e.id === eventId);
+    if (ev) {
+      _showScheduleModal(ev.id, ev.day, ev.class_id, ev.start_time, ev.end_time, ev.title, ev.comment || '');
+    } else {
+      // Cache miss — re-fetch once
+      GET('/schedule').then(all => {
+        _schedCache = all;
+        const fresh = all.find(e => e.id === eventId);
+        if (fresh) _showScheduleModal(fresh.id, fresh.day, fresh.class_id, fresh.start_time, fresh.end_time, fresh.title, fresh.comment || '');
+        else toast('Запись не найдена', 'error');
+      }).catch(err => toast(err.message, 'error'));
+    }
+    return;
+  }
+  _showScheduleModal(null, defaultDay, defaultClass, defaultStart, defaultEnd, '');
+}
+
+function _showScheduleModal(id, day, classId, startTime, endTime, title, comment = '') {
+  const isEdit = !!id;
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="max-width:460px">
+        <div class="modal-header">
+          <div class="modal-title">${isEdit ? 'Редактировать занятость' : 'Добавить занятость'}</div>
+          <button class="modal-close" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="field">
+            <label>Название</label>
+            <input id="sm-title" class="input" value="${title}" placeholder="Название занятости">
+          </div>
+          <div class="form-row">
+            <div class="field">
+              <label>День недели</label>
+              <select id="sm-day" class="input">
+                ${SCHED_DAYS.map((d,i) => `<option value="${i}" ${i===day?'selected':''}>${d}</option>`).join('')}
+              </select>
+            </div>
+            <div class="field">
+              <label>Класс</label>
+              <select id="sm-class" class="input">
+                ${SCHED_CLASSES.map(c => `<option value="${c.id}" ${c.id===classId?'selected':''}>${c.name}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="field">
+              <label>Начало</label>
+              <input id="sm-start" class="input" type="time" value="${startTime}" min="08:00" max="22:00">
+            </div>
+            <div class="field">
+              <label>Конец</label>
+              <input id="sm-end" class="input" type="time" value="${endTime}" min="08:00" max="22:00">
+            </div>
+          </div>
+          <div class="field" style="margin-top:4px">
+            <label>Комментарий</label>
+            <textarea id="sm-comment" class="input" rows="3" placeholder="Дополнительная информация...">${comment}</textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          ${isEdit ? `<button class="btn btn-danger" onclick="deleteScheduleEvent(${id})">Удалить</button>` : ''}
+          <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+          <button class="btn btn-blue" onclick="saveScheduleEvent(${id||'null'})">Сохранить</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function saveScheduleEvent(id) {
+  const title    = document.getElementById('sm-title').value.trim();
+  const day      = parseInt(document.getElementById('sm-day').value);
+  const classId  = parseInt(document.getElementById('sm-class').value);
+  const startTime = document.getElementById('sm-start').value;
+  const endTime   = document.getElementById('sm-end').value;
+  const comment   = document.getElementById('sm-comment').value.trim();
+  if (!title) return toast('Введите название', 'error');
+  if (!startTime || !endTime) return toast('Укажите время', 'error');
+  try {
+    if (id) {
+      await PUT(`/schedule/${id}`, { day, class_id: classId, start_time: startTime, end_time: endTime, title, comment });
+    } else {
+      await POST('/schedule', { day, class_id: classId, start_time: startTime, end_time: endTime, title, comment });
+    }
+    closeModal();
+    renderSchedulePage();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function deleteScheduleEvent(id) {
+  if (!confirm('Удалить эту занятость?')) return;
+  try {
+    await DEL(`/schedule/${id}`);
+    closeModal();
+    renderSchedulePage();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// ─── Feedback Modal ───────────────────────────────────────────────────────────
+const FEEDBACK_QUESTIONS = [
+  'Как вы оцениваете общую атмосферу и психологический климат в коллективе?',
+  'Насколько комфортными вы считаете условия работы (рабочее место, оборудование, окружающая среда)?',
+  'Как вы оцениваете качество коммуникации между сотрудниками и руководством?',
+  'Насколько чётко вам ставятся задачи и обозначаются ожидания по результатам?',
+  'Как вы оцениваете эффективность распределения задач и рабочей нагрузки?',
+  'Насколько вы удовлетворены возможностями для профессионального роста и развития?',
+  'Как вы оцениваете уровень поддержки и помощи со стороны коллег при выполнении задач?',
+  'Насколько своевременно и справедливо, по вашему мнению, оцениваются результаты вашей работы?',
+  'Как вы оцениваете общую эффективность рабочих процессов и организации работы в команде?',
+  'Насколько вы готовы рекомендовать эту компанию как хорошее место для работы?',
+];
+
+function openFeedbackModal() {
+  if (state.user?.role === 'admin') {
+    openFeedbackAdmin();
+  } else {
+    openFeedbackForm();
+  }
+}
+
+function openFeedbackForm() {
+  const scores = new Array(10).fill(null);
+  const root = document.getElementById('modal-root');
+
+  // Render once — never re-render on score click
+  root.innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal fb-modal">
+        <div class="modal-header">
+          <div class="modal-title">Обратная связь руководителю</div>
+          <button class="modal-close" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-body fb-body">
+          <div class="fb-anon-notice">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            Данное обращение является полностью анонимным. Ваши ответы не содержат личных данных и не могут быть привязаны к конкретному сотруднику.
+          </div>
+          <div class="fb-scale-legend">
+            <span>0 — совсем не удовлетворён</span>
+            <span>5 — полностью удовлетворён</span>
+          </div>
+          <div class="fb-questions">
+            ${FEEDBACK_QUESTIONS.map((q, i) => `
+              <div class="fb-question" id="fb-q-wrap-${i}">
+                <div class="fb-q-text"><span class="fb-q-num">${i+1}.</span> ${q}</div>
+                <div class="fb-scale" id="fb-scale-${i}">
+                  ${[0,1,2,3,4,5].map(v => `
+                    <button class="fb-score-btn" data-q="${i}" data-v="${v}"
+                      onclick="fbSetScore(${i},${v})">${v}</button>
+                  `).join('')}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+          <div class="fb-suggestion-section">
+            <label class="fb-suggestion-label">Ваши предложения и пожелания (необязательно)</label>
+            <textarea id="fb-suggestion" class="input fb-textarea" rows="4"
+              placeholder="Напишите свои мысли, предложения по улучшению рабочей среды..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <div class="fb-progress" id="fb-progress">0 / ${FEEDBACK_QUESTIONS.length} вопросов</div>
+          <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+          <button class="btn btn-blue" onclick="submitFeedback()">Отправить анонимно</button>
+        </div>
+      </div>
+    </div>`;
+
+  // Score click: targeted DOM update only — no scroll reset
+  window.fbSetScore = (idx, val) => {
+    scores[idx] = val;
+    // Update button states for this question only
+    const scale = document.getElementById(`fb-scale-${idx}`);
+    scale?.querySelectorAll('.fb-score-btn').forEach(btn => {
+      btn.classList.toggle('active', Number(btn.dataset.v) === val);
+    });
+    // Mark question as answered
+    document.getElementById(`fb-q-wrap-${idx}`)?.classList.add('fb-answered');
+    // Update progress counter
+    const answered = scores.filter(s => s !== null).length;
+    const prog = document.getElementById('fb-progress');
+    if (prog) prog.textContent = `${answered} / ${FEEDBACK_QUESTIONS.length} вопросов`;
+  };
+
+  window.submitFeedback = async () => {
+    if (scores.some(v => v === null))
+      return toast('Пожалуйста, ответьте на все вопросы', 'error');
+    const body = {};
+    scores.forEach((v, i) => { body[`q${i+1}`] = v; });
+    body.suggestion = document.getElementById('fb-suggestion')?.value.trim() || '';
+    try {
+      await POST('/feedback', body);
+      closeModal();
+      toast('Спасибо! Ваш отзыв отправлен анонимно', 'success');
+    } catch (err) { toast(err.message, 'error'); }
+  };
+}
+
+async function openFeedbackAdmin() {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `<div class="modal-overlay"><div class="modal fb-admin-modal">
+    <div class="modal-header"><div class="modal-title">Обратная связь от команды</div>
+    <button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body fb-body"><div style="text-align:center;color:#9ca3af;padding:30px">Загрузка...</div>
+    </div></div></div>`;
+
+  let allRows = [];
+  try { allRows = await GET('/feedback'); } catch (err) { toast(err.message,'error'); return; }
+  window._fbAllRows = allRows; // for detail modal access
+
+  let activePeriod = 'all';
+  window._fbAdminRender = renderAdmin;
+  renderAdmin();
+
+  function getMonths() {
+    const set = new Set(allRows.map(r => r.created_at?.slice(0,7)));
+    return [...set].sort().reverse();
+  }
+
+  function filteredRows() {
+    if (activePeriod === 'all') return allRows;
+    return allRows.filter(r => r.created_at?.startsWith(activePeriod));
+  }
+
+  function rowAvg(row) {
+    const vals = [1,2,3,4,5,6,7,8,9,10].map(i => row[`q${i}`]).filter(v => v != null);
+    return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
+  }
+
+  function scoreColor(v) { return v >= 4 ? '#16a34a' : v >= 3 ? '#d97706' : '#dc2626'; }
+
+  // Per-question line chart: X = Q1..Q10, Y = 0..5, one line per response
+  function buildQuestionsChart(rows) {
+    if (!rows.length) return '<div style="font-size:12px;color:#9ca3af;padding:20px 0">Нет данных</div>';
+    const W = 280, H = 200, padL = 22, padB = 20, padT = 10, padR = 10;
+    const innerW = W - padL - padR, innerH = H - padB - padT;
+    const xs = Array.from({length:10}, (_,i) => padL + i / 9 * innerW);
+    const y  = v => padT + (1 - v/5) * innerH;
+    const COLORS = ['#881337','#1d4ed8','#16a34a','#d97706','#7c3aed','#0891b2','#db2777','#ea580c'];
+    const recent = [...rows].reverse().slice(0,6); // last 6 responses
+
+    // Average line
+    const avgPts = Array.from({length:10}, (_,i) => {
+      const vals = rows.map(r=>r[`q${i+1}`]).filter(v=>v!=null);
+      return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
+    });
+
+    const grid = [0,1,2,3,4,5].map(v => `
+      <line x1="${padL}" y1="${y(v)}" x2="${W-padR}" y2="${y(v)}" stroke="#e5e7eb" stroke-width="0.5"/>
+      <text x="${padL-3}" y="${y(v)+3.5}" text-anchor="end" font-size="8.5" fill="#9ca3af">${v}</text>`).join('');
+
+    const xLabels = xs.map((x,i) => `<text x="${x}" y="${H-4}" text-anchor="middle" font-size="8.5" fill="#9ca3af">В${i+1}</text>`).join('');
+
+    const responseLines = recent.map((r, ri) => {
+      const pts = xs.map((x,i) => `${x},${y(r[`q${i+1}`]??0)}`).join(' ');
+      const color = COLORS[ri % COLORS.length];
+      const dots = xs.map((x,i) => `<circle cx="${x}" cy="${y(r[`q${i+1}`]??0)}" r="2.5" fill="${color}" stroke="white" stroke-width="1"/>`).join('');
+      return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" opacity="0.7"/>
+              ${dots}`;
+    }).join('');
+
+    const avgPtsStr = xs.map((x,i)=>`${x},${y(avgPts[i])}`).join(' ');
+    const avgLine = `<polyline points="${avgPtsStr}" fill="none" stroke="#374151" stroke-width="2" stroke-dasharray="4,3" stroke-linejoin="round" stroke-linecap="round"/>`;
+
+    const legend = recent.map((r,ri) => {
+      const num = rows.length - ri; // number in list
+      return `<span class="fb-chart-legend-item"><svg width="16" height="4"><line x1="0" y1="2" x2="16" y2="2" stroke="${COLORS[ri%COLORS.length]}" stroke-width="2.5"/></svg>Ответ #${num}</span>`;
+    }).join('');
+    const avgLegend = `<span class="fb-chart-legend-item"><svg width="16" height="4"><line x1="0" y1="2" x2="16" y2="2" stroke="#374151" stroke-width="2" stroke-dasharray="4,2"/></svg>Среднее</span>`;
+
+    return `
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block">
+        ${grid}${xLabels}${responseLines}${avgLine}
+      </svg>
+      <div class="fb-chart-legend">${legend}${avgLegend}</div>`;
+  }
+
+  function buildTrendSvg() {
+    const months = getMonths().slice().reverse(); // ascending
+    if (months.length < 2) return '';
+    const W = 500, H = 90, padX = 36, padY = 12;
+    const innerW = W - padX * 2, innerH = H - padY * 2;
+    const pts = months.map((m, i) => {
+      const rows = allRows.filter(r => r.created_at?.startsWith(m));
+      const avg = rows.length
+        ? [1,2,3,4,5,6,7,8,9,10].flatMap(qi => rows.map(r=>r[`q${qi}`])).filter(v=>v!=null)
+            .reduce((a,b,_,arr)=>a+b/arr.length, 0)
+        : 0;
+      const x = padX + (i / (months.length - 1)) * innerW;
+      const y = padY + (1 - avg / 5) * innerH;
+      return { x, y, avg, m };
+    });
+    const polyline = pts.map(p=>`${p.x},${p.y}`).join(' ');
+    const monthNames = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+    const labels = pts.map(p => {
+      const [yr, mo] = p.m.split('-');
+      return `<text x="${p.x}" y="${H-2}" text-anchor="middle" font-size="9" fill="#9ca3af">${monthNames[+mo-1]}</text>`;
+    }).join('');
+    const dots = pts.map(p =>
+      `<circle cx="${p.x}" cy="${p.y}" r="4" fill="${scoreColor(p.avg)}" stroke="white" stroke-width="1.5"/>`
+    ).join('');
+    const yLabels = [0,1,2,3,4,5].map(v => {
+      const y = padY + (1 - v/5)*innerH;
+      return `<text x="${padX-4}" y="${y+3}" text-anchor="end" font-size="9" fill="#9ca3af">${v}</text>
+              <line x1="${padX}" y1="${y}" x2="${W-padX}" y2="${y}" stroke="#e5e7eb" stroke-width="0.5"/>`;
+    }).join('');
+    return `<div class="fb-trend-wrap">
+      <div class="fb-trend-title">Тенденция по месяцам</div>
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px">
+        ${yLabels}
+        <polyline points="${polyline}" fill="none" stroke="#881337" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        ${dots}
+        ${labels}
+      </svg>
+    </div>`;
+  }
+
+  function renderAdmin() {
+    const rows = filteredRows();
+    const months = getMonths();
+    const avg = FEEDBACK_QUESTIONS.map((_, i) => {
+      const vals = rows.map(r => r[`q${i+1}`]).filter(v => v != null);
+      return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
+    });
+
+    const periodBtns = [
+      `<button class="fb-period-btn ${activePeriod==='all'?'active':''}" onclick="window._fbPeriod('all')">Все время</button>`,
+      ...months.map(m => {
+        const [yr, mo] = m.split('-');
+        const mn = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+        return `<button class="fb-period-btn ${activePeriod===m?'active':''}" onclick="window._fbPeriod('${m}')">${mn[+mo-1]} ${yr}</button>`;
+      })
+    ].join('');
+
+    window._fbPeriod = (p) => { activePeriod = p; renderAdmin(); };
+
+    const bodyEl = root.querySelector('.modal-body');
+    if (!bodyEl) return;
+
+    if (!allRows.length) {
+      bodyEl.innerHTML = `<div class="empty-state" style="padding:40px 0"><h3>Ответов пока нет</h3><p>Сотрудники ещё не оставили обратную связь</p></div>`;
+      return;
+    }
+
+    bodyEl.innerHTML = `
+      <!-- Period filter -->
+      <div class="fb-period-bar">${periodBtns}</div>
+      <div class="fb-admin-meta">${svgI(SVG_PATHS.users,13)} Ответов за период: <strong>${rows.length}</strong></div>
+
+      ${buildTrendSvg()}
+
+      <!-- Average scores -->
+      <div class="fb-admin-section-title">Средние оценки</div>
+      <div class="fb-admin-questions">
+        ${avg.map((a, i) => a === null ? '' : `
+          <div class="fb-admin-row">
+            <div class="fb-admin-q">${i+1}. ${FEEDBACK_QUESTIONS[i]}</div>
+            <div class="fb-admin-score-wrap">
+              <div class="fb-admin-bar-bg">
+                <div class="fb-admin-bar-fill" style="width:${a/5*100}%;background:${scoreColor(a)}"></div>
+              </div>
+              <span class="fb-admin-avg" style="color:${scoreColor(a)}">${a.toFixed(1)}</span>
+            </div>
+          </div>`).join('')}
+      </div>
+
+      <!-- Two-column: left = responses list, right = per-question chart -->
+      <div class="fb-two-col">
+        <div class="fb-col-left">
+          <div class="fb-admin-section-title" style="margin-top:4px">
+            Отдельные ответы (${rows.length})
+          </div>
+          ${rows.length === 0 ? `<div style="font-size:13px;color:#9ca3af;padding:8px 0">Нет ответов за этот период</div>` : ''}
+          <div class="fb-responses-list">
+            ${[...rows].reverse().map((r, idx) => {
+              const overall = rowAvg(r);
+              const num = rows.length - idx;
+              return `
+              <div class="fb-response-card fb-response-clickable" onclick="openFeedbackDetail(${r.id})">
+                <div class="fb-response-header">
+                  <span class="fb-response-num">Ответ #${num}</span>
+                  <span class="fb-response-date">${fmtDate(r.created_at)}</span>
+                  <span class="fb-response-overall" style="color:${scoreColor(overall)}">
+                    Общий балл: ${overall.toFixed(1)}
+                  </span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
+                </div>
+                <div class="fb-response-scores">
+                  ${[1,2,3,4,5,6,7,8,9,10].map(qi => {
+                    const v = r[`q${qi}`];
+                    return `<div class="fb-resp-score"
+                      style="background:${v>=4?'#dcfce7':v>=3?'#fef9c3':'#fee2e2'};color:${scoreColor(v)}">
+                      <span class="fb-resp-qi">В${qi}</span>
+                      <span class="fb-resp-qv">${v}</span>
+                    </div>`;
+                  }).join('')}
+                </div>
+                ${r.suggestion?.trim() ? `
+                  <div class="fb-response-comment">
+                    <span class="fb-response-comment-lbl">Комментарий:</span>
+                    ${_escHtml(r.suggestion)}
+                  </div>` : ''}
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+
+        <div class="fb-col-right">
+          <div class="fb-admin-section-title">Визуал по вопросам</div>
+          ${buildQuestionsChart(rows)}
+        </div>
+      </div>`;
+  }
+}
+
+// ─── Feedback Detail Modal ────────────────────────────────────────────────────
+function openFeedbackDetail(rowId) {
+  const allRows = window._fbAllRows || [];
+  const r = allRows.find(x => x.id === rowId);
+  if (!r) return;
+
+  const scores = Array.from({length:10}, (_,i) => r[`q${i+1}`] ?? 0);
+  const overall = scores.reduce((a,b)=>a+b,0)/scores.length;
+  const avgScores = Array.from({length:10}, (_,i) => {
+    const vals = allRows.map(x=>x[`q${i+1}`]).filter(v=>v!=null);
+    return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
+  });
+
+  const sc = v => v>=4?'#16a34a':v>=3?'#d97706':'#dc2626';
+
+  // Mini SVG chart: this response vs average
+  const W=400, H=150, pL=22, pB=18, pT=8, pR=8;
+  const iW=W-pL-pR, iH=H-pB-pT;
+  const xs = Array.from({length:10},(_,i)=>pL+i/9*iW);
+  const yv = v=>pT+(1-v/5)*iH;
+  const grid=[0,1,2,3,4,5].map(v=>`<line x1="${pL}" y1="${yv(v)}" x2="${W-pR}" y2="${yv(v)}" stroke="#e5e7eb" stroke-width="0.5"/>
+    <text x="${pL-3}" y="${yv(v)+3}" text-anchor="end" font-size="8" fill="#9ca3af">${v}</text>`).join('');
+  const xLbls=xs.map((x,i)=>`<text x="${x}" y="${H-2}" text-anchor="middle" font-size="8" fill="#9ca3af">В${i+1}</text>`).join('');
+  const thisLine=`<polyline points="${xs.map((x,i)=>`${x},${yv(scores[i])}`).join(' ')}" fill="none" stroke="#881337" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  const thisDots=xs.map((x,i)=>`<circle cx="${x}" cy="${yv(scores[i])}" r="3" fill="#881337" stroke="white" stroke-width="1.5"/>`).join('');
+  const avgLine=`<polyline points="${xs.map((x,i)=>`${x},${yv(avgScores[i])}`).join(' ')}" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="5,3" stroke-linejoin="round"/>`;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'fb-detail-overlay';
+  overlay.addEventListener('click', e => { if (e.target===overlay) overlay.remove(); });
+  overlay.innerHTML = `
+    <div class="modal fb-detail-modal">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">Детальный просмотр ответа</div>
+          <div style="font-size:12px;color:#9ca3af;margin-top:2px">${fmtDate(r.created_at)} · Общий балл:
+            <span style="font-weight:700;color:${sc(overall)}">${overall.toFixed(1)}</span>
+          </div>
+        </div>
+        <button class="modal-close" onclick="document.getElementById('fb-detail-overlay').remove()">✕</button>
+      </div>
+      <div class="modal-body" style="padding-bottom:20px">
+        <!-- Mini chart -->
+        <div class="fb-detail-chart-wrap">
+          <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">
+            Визуал ответа
+          </div>
+          <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block">
+            ${grid}${xLbls}${avgLine}${thisLine}${thisDots}
+          </svg>
+          <div style="display:flex;gap:14px;margin-top:4px">
+            <span class="fb-chart-legend-item"><svg width="16" height="4"><line x1="0" y1="2" x2="16" y2="2" stroke="#881337" stroke-width="2.5"/></svg>Этот ответ</span>
+            <span class="fb-chart-legend-item"><svg width="16" height="4"><line x1="0" y1="2" x2="16" y2="2" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="4,2"/></svg>Среднее</span>
+          </div>
+        </div>
+
+        <!-- Questions list -->
+        <div style="margin-top:16px;display:flex;flex-direction:column;gap:10px">
+          ${FEEDBACK_QUESTIONS.map((q, i) => {
+            const v = scores[i];
+            const av = avgScores[i];
+            return `<div class="fb-detail-row">
+              <div class="fb-detail-q-header">
+                <span class="fb-detail-q-num">${i+1}.</span>
+                <span class="fb-detail-q-text">${q}</span>
+                <span class="fb-detail-score" style="color:${sc(v)}">${v}</span>
+              </div>
+              <div class="fb-detail-bar-bg">
+                <div class="fb-detail-bar-fill" style="width:${v/5*100}%;background:${sc(v)}"></div>
+                <div class="fb-detail-bar-avg" style="left:${av/5*100}%" title="Среднее: ${av.toFixed(1)}"></div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+
+        ${r.suggestion?.trim() ? `
+          <div class="fb-response-comment" style="margin-top:16px">
+            <span class="fb-response-comment-lbl">Комментарий:</span>
+            ${_escHtml(r.suggestion)}
+          </div>` : ''}
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+}
+
+// ─── Welcome Modal ────────────────────────────────────────────────────────────
+function showWelcomeModal() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'welcome-modal-overlay';
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeWelcomeModal(); });
+  overlay.innerHTML = `
+    <div class="modal welcome-modal">
+      <div class="welcome-body">
+        <h2 class="welcome-title">Добро пожаловать на платформу задач</h2>
+        <p class="welcome-subtitle">Здесь вы получаете задачи, отслеживаете прогресс и выстраиваете эффективную работу — всё в одном месте.</p>
+        <div class="welcome-cards">
+          <div class="welcome-card">
+            <div class="welcome-card-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            </div>
+            <div class="welcome-card-title">Задачи от руководства</div>
+            <div class="welcome-card-desc">Все задачи приходят напрямую от руководителя — ничего не теряется и не забывается</div>
+          </div>
+          <div class="welcome-card">
+            <div class="welcome-card-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+            </div>
+            <div class="welcome-card-title">Проекты и контент-планы</div>
+            <div class="welcome-card-desc">Во вкладке «Проекты» — все ваши проекты с контент-планами, сроками и задачами</div>
+          </div>
+          <div class="welcome-card">
+            <div class="welcome-card-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+            </div>
+            <div class="welcome-card-title">Напоминания в Telegram</div>
+            <div class="welcome-card-desc">Бот уведомит вас о новой задаче и напомнит об истекающих сроках — прямо в мессенджер</div>
+          </div>
+        </div>
+        <div class="welcome-info">
+          <div class="welcome-info-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          </div>
+          <div>
+            <div class="welcome-info-title">Ваша эффективность видна руководителю</div>
+            <div class="welcome-info-desc">Дашборд показывает, сколько задач вы выполняете в срок, а также вашу активность на платформе. Высокие показатели замечаются и поощряются.</div>
+          </div>
+        </div>
+      </div>
+      <div class="welcome-footer">
+        <span class="welcome-footer-text">Готовы начать? Перейдите к своим задачам</span>
+        <button class="welcome-btn" onclick="closeWelcomeModal()">
+          Перейти к задачам
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function closeWelcomeModal() {
+  const overlay = document.getElementById('welcome-modal-overlay');
+  if (overlay) overlay.remove();
 }
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────

@@ -1,4 +1,6 @@
 const cron = require('node-cron');
+const fs   = require('fs');
+const path = require('path');
 const { db } = require('./database');
 const { sendTelegramNotification } = require('./bot');
 
@@ -98,9 +100,31 @@ function checkDeadlines() {
   }
 }
 
+function backupDB() {
+  const src = process.env.DB_PATH || path.join(__dirname, 'teamtask.db');
+  const backupDir = path.join(__dirname, 'backups');
+  try {
+    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir);
+    const date = new Date().toISOString().slice(0, 10);
+    const dst  = path.join(backupDir, `teamtask_${date}.db`);
+    fs.copyFileSync(src, dst);
+    console.log(`✅ Резервная копия БД: backups/teamtask_${date}.db`);
+    // Keep last 7 backups
+    const files = fs.readdirSync(backupDir)
+      .filter(f => f.startsWith('teamtask_') && f.endsWith('.db'))
+      .sort();
+    files.slice(0, Math.max(0, files.length - 7)).forEach(f => {
+      fs.unlinkSync(path.join(backupDir, f));
+    });
+  } catch (e) {
+    console.error('❌ Ошибка резервного копирования:', e.message);
+  }
+}
+
 function startScheduler(sseClients) {
   setSseClients(sseClients);
   cron.schedule('*/30 * * * *', checkDeadlines);
+  cron.schedule('0 2 * * *', backupDB);   // ежедневно в 02:00
   console.log('⏰ Планировщик запущен (проверка каждые 30 минут)');
 }
 
