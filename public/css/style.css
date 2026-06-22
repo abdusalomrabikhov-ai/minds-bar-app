@@ -2146,6 +2146,7 @@ body.dark .be-sb-bronze { background: var(--card-bg); border-color: #fb923c; }
 }
 .sched-event:hover { opacity: 0.85; }
 .sched-event-title { font-size: 10.5px; font-weight: 700; color: white; line-height: 1.3; overflow: hidden; }
+.sched-event-teacher { font-size: 9.5px; color: rgba(255,255,255,0.9); margin-top: 1px; font-style: italic; }
 .sched-event-time { font-size: 9.5px; color: rgba(255,255,255,0.85); margin-top: 2px; }
 .sched-event-comment {
   font-size: 9px; color: rgba(255,255,255,0.7);

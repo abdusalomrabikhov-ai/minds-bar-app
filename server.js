@@ -1016,26 +1016,26 @@ app.post('/api/auth/logout', auth, (req, res) => {
 });
 
 app.post('/api/schedule', auth, requirePerm('manage_schedule'), (req, res) => {
-  const { day, class_id, start_time, end_time, title, comment = '' } = req.body;
+  const { day, class_id, start_time, end_time, title, comment = '', teacher = '' } = req.body;
   if (day === undefined || class_id === undefined || !start_time || !end_time || !title)
     return res.status(400).json({ error: 'Заполните все поля' });
   if (start_time >= end_time)
     return res.status(400).json({ error: 'Время окончания должно быть позже начала' });
   const result = db.prepare(
-    'INSERT INTO schedule (day, class_id, start_time, end_time, title, comment) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(day, class_id, start_time, end_time, title, comment);
+    'INSERT INTO schedule (day, class_id, start_time, end_time, title, comment, teacher) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(day, class_id, start_time, end_time, title, comment, teacher);
   const days = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
   logActivity(req.user.id, 'schedule_created', 'schedule', result.lastInsertRowid, title, `${days[day]} ${start_time}–${end_time}`);
   res.json({ id: result.lastInsertRowid });
 });
 
 app.put('/api/schedule/:id', auth, requirePerm('manage_schedule'), (req, res) => {
-  const { day, class_id, start_time, end_time, title, comment = '' } = req.body;
+  const { day, class_id, start_time, end_time, title, comment = '', teacher = '' } = req.body;
   if (start_time >= end_time)
     return res.status(400).json({ error: 'Время окончания должно быть позже начала' });
   db.prepare(
-    'UPDATE schedule SET day=?, class_id=?, start_time=?, end_time=?, title=?, comment=? WHERE id=?'
-  ).run(day, class_id, start_time, end_time, title, comment, req.params.id);
+    'UPDATE schedule SET day=?, class_id=?, start_time=?, end_time=?, title=?, comment=?, teacher=? WHERE id=?'
+  ).run(day, class_id, start_time, end_time, title, comment, teacher, req.params.id);
   const days = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
   logActivity(req.user.id, 'schedule_updated', 'schedule', parseInt(req.params.id), title, `${days[day]} ${start_time}–${end_time}`);
   res.json({ ok: true });

@@ -1514,8 +1514,8 @@ const CP_MONTHS = ['Январь','Февраль','Март','Апрель','М
 async function renderProjectPage(projectId) {
   cpRestoreTab(projectId);
   const project = state.projects.find(p => String(p.id) === String(projectId));
-  const isAdmin = state.user.role === 'admin';
-  const canEdit = isAdmin || state.user.role === 'manager';
+  const isAdmin = state.user.role === 'admin' || can('manage_projects');
+  const canEdit = isAdmin;
   try {
     // Consolidate duplicate content tasks BEFORE loading, so task list shows merged results
     if (canEdit) await api('POST', `/projects/${projectId}/sync-content-tasks`, {}).catch(() => {});
@@ -1636,8 +1636,8 @@ function renderProjectTasksTab(projectId, allTasks, isAdmin) {
 async function renderProjectContentTab(projectId) {
   const panel = document.getElementById('proj-tab-panel');
   if (!panel) return;
-  const isAdmin = state.user.role === 'admin';
-  const canEdit = state.user.role === 'admin' || state.user.role === 'manager';
+  const isAdmin  = state.user.role === 'admin' || can('manage_projects');
+  const canEdit  = isAdmin;
   panel.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div>';
   try {
     cpRestoreNav();
@@ -4418,6 +4418,7 @@ async function renderSchedulePage() {
                         onclick="openScheduleModal(${e.id})"` : ''}
                       title="${safeTitle} (${e.start_time}–${e.end_time})">
                       <div class="sched-event-title">${safeTitle}</div>
+                      ${e.teacher ? `<div class="sched-event-teacher">${_escHtml(e.teacher)}</div>` : ''}
                       <div class="sched-event-time">${e.start_time}–${e.end_time}</div>
                       ${e.comment ? `<div class="sched-event-comment">${safeComment}</div>` : ''}
                     </div>`;
@@ -4460,7 +4461,7 @@ function schedToggleClass(id) {
 function schedDragStart(e, id, durMin) {
   // Store full event data so schedDrop doesn't need a network round-trip
   const ev = _schedCache.find(x => x.id === id);
-  _schedDrag = { id, durMin, title: ev?.title || '', comment: ev?.comment || '' };
+  _schedDrag = { id, durMin, title: ev?.title || '', comment: ev?.comment || '', teacher: ev?.teacher || '' };
   e.dataTransfer.effectAllowed = 'move';
   e.dataTransfer.setData('text/plain', String(id));
   setTimeout(() => e.target.classList.add('sched-dragging'), 0);
@@ -4504,6 +4505,7 @@ async function schedDrop(e, dayIdx, classId) {
       end_time:   minutesToTime(endTotal),
       title:   drag.title,
       comment: drag.comment,
+      teacher: drag.teacher,
     });
     renderSchedulePage();
   } catch (err) { toast(err.message, 'error'); }
@@ -4523,13 +4525,13 @@ function openScheduleModal(eventId = null, defaultDay = 0, defaultClass = 0, def
   if (eventId) {
     const ev = _schedCache.find(e => e.id === eventId);
     if (ev) {
-      _showScheduleModal(ev.id, ev.day, ev.class_id, ev.start_time, ev.end_time, ev.title, ev.comment || '');
+      _showScheduleModal(ev.id, ev.day, ev.class_id, ev.start_time, ev.end_time, ev.title, ev.comment || '', ev.teacher || '');
     } else {
       // Cache miss — re-fetch once
       GET('/schedule').then(all => {
         _schedCache = all;
         const fresh = all.find(e => e.id === eventId);
-        if (fresh) _showScheduleModal(fresh.id, fresh.day, fresh.class_id, fresh.start_time, fresh.end_time, fresh.title, fresh.comment || '');
+        if (fresh) _showScheduleModal(fresh.id, fresh.day, fresh.class_id, fresh.start_time, fresh.end_time, fresh.title, fresh.comment || '', fresh.teacher || '');
         else toast('Запись не найдена', 'error');
       }).catch(err => toast(err.message, 'error'));
     }
@@ -4538,7 +4540,7 @@ function openScheduleModal(eventId = null, defaultDay = 0, defaultClass = 0, def
   _showScheduleModal(null, defaultDay, defaultClass, defaultStart, defaultEnd, '');
 }
 
-function _showScheduleModal(id, day, classId, startTime, endTime, title, comment = '') {
+function _showScheduleModal(id, day, classId, startTime, endTime, title, comment = '', teacher = '') {
   const isEdit = !!id;
   const root = document.getElementById('modal-root');
   root.innerHTML = `
@@ -4578,8 +4580,12 @@ function _showScheduleModal(id, day, classId, startTime, endTime, title, comment
             </div>
           </div>
           <div class="field" style="margin-top:4px">
+            <label>Преподаватель</label>
+            <input id="sm-teacher" class="input" value="${_escHtml(teacher)}" placeholder="Имя преподавателя">
+          </div>
+          <div class="field" style="margin-top:4px">
             <label>Комментарий</label>
-            <textarea id="sm-comment" class="input" rows="3" placeholder="Дополнительная информация...">${comment}</textarea>
+            <textarea id="sm-comment" class="input" rows="3" placeholder="Дополнительная информация...">${_escHtml(comment)}</textarea>
           </div>
         </div>
         <div class="modal-footer">
@@ -4598,13 +4604,14 @@ async function saveScheduleEvent(id) {
   const startTime = document.getElementById('sm-start').value;
   const endTime   = document.getElementById('sm-end').value;
   const comment   = document.getElementById('sm-comment').value.trim();
+  const teacher   = document.getElementById('sm-teacher')?.value.trim() || '';
   if (!title) return toast('Введите название', 'error');
   if (!startTime || !endTime) return toast('Укажите время', 'error');
   try {
     if (id) {
-      await PUT(`/schedule/${id}`, { day, class_id: classId, start_time: startTime, end_time: endTime, title, comment });
+      await PUT(`/schedule/${id}`, { day, class_id: classId, start_time: startTime, end_time: endTime, title, comment, teacher });
     } else {
-      await POST('/schedule', { day, class_id: classId, start_time: startTime, end_time: endTime, title, comment });
+      await POST('/schedule', { day, class_id: classId, start_time: startTime, end_time: endTime, title, comment, teacher });
     }
     closeModal();
     renderSchedulePage();

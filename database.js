@@ -129,6 +129,7 @@ function initDB() {
   )`); } catch {}
   // Migration for existing installs that had schedule without comment column
   try { db.exec("ALTER TABLE schedule ADD COLUMN comment TEXT DEFAULT ''"); } catch { /* already exists */ }
+  try { db.exec("ALTER TABLE schedule ADD COLUMN teacher TEXT DEFAULT ''"); } catch { /* already exists */ }
   try { db.exec("ALTER TABLE projects ADD COLUMN archived INTEGER DEFAULT 0"); } catch {}
   try { db.exec(`CREATE TABLE IF NOT EXISTS feedback (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
