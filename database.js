@@ -140,6 +140,19 @@ function initDB() {
     created_at TEXT DEFAULT (datetime('now'))
   )`); } catch {}
   try { db.exec("ALTER TABLE feedback ADD COLUMN archived INTEGER DEFAULT 0"); } catch {}
+  try { db.exec(`CREATE TABLE IF NOT EXISTS finance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+    project_name TEXT NOT NULL,
+    service_amount REAL NOT NULL DEFAULT 0,
+    paid_amount REAL NOT NULL DEFAULT 0,
+    status TEXT DEFAULT 'unpaid',
+    payment_type TEXT DEFAULT 'cash',
+    comment TEXT DEFAULT '',
+    month TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
   try { db.exec(`CREATE TABLE IF NOT EXISTS task_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

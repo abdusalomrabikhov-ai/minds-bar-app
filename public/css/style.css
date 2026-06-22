@@ -1901,6 +1901,18 @@ body.dark .gs-result-title { color: #f1f5f9; }
 body.dark .gs-result-item:hover, body.dark .gs-result-item.gs-selected { background: #0f172a; }
 body.dark .gs-esc-hint { background: #0f172a; border-color: #334155; color: #64748b; }
 
+/* ─── Team Search ─────────────────────────────────────────────────────────── */
+.team-search-wrap {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--card-bg); border: 1.5px solid var(--border);
+  border-radius: 10px; padding: 8px 14px; margin-bottom: 18px;
+}
+.team-search-input {
+  flex: 1; border: none; outline: none; font-size: 13.5px;
+  color: var(--text); background: transparent;
+}
+.team-search-input::placeholder { color: #9ca3af; }
+
 /* ─── My Tasks Stats Header ───────────────────────────────────────────────── */
 .dash-stat-cards-header {
   display: flex; justify-content: space-between; align-items: center;
@@ -2081,6 +2093,64 @@ body.dark .gs-esc-hint { background: #0f172a; border-color: #334155; color: #647
 
 body.dark .be-sb-silver { background: var(--card-bg); border-color: #64748b; }
 body.dark .be-sb-bronze { background: var(--card-bg); border-color: #fb923c; }
+
+/* ─── Finance Page ─────────────────────────────────────────────────────────── */
+.fin-page { padding: 0 0 48px; }
+.fin-header { display: flex; align-items: center; justify-content: space-between; padding: 0 24px 18px; gap: 12px; }
+.fin-month-nav { display: flex; align-items: center; gap: 12px; }
+.fin-nav-btn { width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid var(--border); background: var(--card-bg); font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.12s; }
+.fin-nav-btn:hover { border-color: var(--primary); color: var(--primary); }
+.fin-month-title { font-size: 17px; font-weight: 800; color: var(--text); min-width: 140px; text-align: center; }
+
+/* Summary cards */
+.fin-summary { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; padding: 0 24px 20px; }
+.fin-sum-card {
+  background: var(--card-bg); border: 1.5px solid var(--border);
+  border-radius: 12px; padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.fin-sum-lbl { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); }
+.fin-sum-val { font-size: 24px; font-weight: 900; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fin-sum-sub { font-size: 11.5px; color: var(--text-muted); }
+.fin-progress-bar-bg { height: 6px; background: var(--bg); border-radius: 99px; overflow: hidden; margin-top: 6px; border: 1px solid var(--border); }
+.fin-progress-bar-fill { height: 100%; background: #16a34a; border-radius: 99px; }
+
+/* Table */
+.fin-table-wrap { padding: 0 24px; overflow-x: auto; border-radius: 12px; }
+.fin-table {
+  width: 100%; border-collapse: collapse; font-size: 13px;
+  border: 1.5px solid var(--border); border-radius: 12px; overflow: hidden;
+}
+.fin-table thead tr { background: var(--bg); }
+.fin-table th {
+  padding: 10px 14px; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted);
+  text-align: left; border-bottom: 2px solid var(--border);
+  border-right: 1px solid var(--border); white-space: nowrap;
+}
+.fin-table th:last-child { border-right: none; }
+.fin-td {
+  padding: 11px 14px; border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border); vertical-align: middle;
+}
+.fin-td:last-child { border-right: none; }
+.fin-row:hover td { background: var(--bg); }
+.fin-num { color: var(--text-muted); font-size: 12px; width: 36px; text-align: center; }
+.fin-project { font-weight: 600; color: var(--text); min-width: 120px; }
+.fin-money { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 13.5px; }
+.fin-comment { color: var(--text-muted); font-size: 12px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-actions { display: flex; gap: 6px; white-space: nowrap; justify-content: center; }
+.fin-btn-edit, .fin-btn-del { width: 28px; height: 28px; border-radius: 7px; border: 1.5px solid var(--border); background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.12s; color: var(--text-muted); }
+.fin-btn-edit:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
+.fin-btn-del:hover { border-color: #dc2626; color: #dc2626; background: #fef2f2; }
+.fin-status-badge { font-size: 11.5px; font-weight: 700; padding: 3px 10px; border-radius: 20px; white-space: nowrap; display: inline-block; }
+.fin-type-badge { font-size: 11.5px; font-weight: 700; padding: 3px 10px; border-radius: 20px; white-space: nowrap; display: inline-block; }
+.fin-total-row td { background: var(--bg) !important; border-top: 2px solid var(--border); }
+.fin-total-lbl { font-weight: 800; font-size: 12px; text-transform: uppercase; color: var(--text-muted); }
+.fin-total { font-size: 14px; font-weight: 800; white-space: nowrap; }
+
+body.dark .fin-sum-card { background: var(--card-bg); }
+body.dark .fin-table th { background: var(--card-bg); }
 
 /* ─── Schedule Page ───────────────────────────────────────────────────────── */
 .sched-page { padding: 0 0 40px; }

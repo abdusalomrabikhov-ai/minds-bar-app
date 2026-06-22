@@ -936,6 +936,33 @@ app.get('/api/users/last-seen', auth, requirePerm('view_activity'), (req, res) =
   res.json(users);
 });
 
+// ─── Finance ──────────────────────────────────────────────────────────────────
+app.get('/api/finance', auth, requirePerm('manage_finance'), (req, res) => {
+  const month = req.query.month || new Date().toISOString().slice(0, 7);
+  const rows = db.prepare('SELECT * FROM finance WHERE month = ? ORDER BY created_at DESC').all(month);
+  res.json(rows);
+});
+
+app.post('/api/finance', auth, requirePerm('manage_finance'), (req, res) => {
+  const { project_id, project_name, service_amount, paid_amount, status, payment_type, comment, month } = req.body;
+  if (!project_name?.trim()) return res.status(400).json({ error: 'Укажите название проекта' });
+  const result = db.prepare(`INSERT INTO finance (project_id,project_name,service_amount,paid_amount,status,payment_type,comment,month)
+    VALUES (?,?,?,?,?,?,?,?)`).run(project_id||null, project_name.trim(), service_amount||0, paid_amount||0, status||'unpaid', payment_type||'cash', comment||'', month);
+  res.json({ id: result.lastInsertRowid });
+});
+
+app.put('/api/finance/:id', auth, requirePerm('manage_finance'), (req, res) => {
+  const { project_id, project_name, service_amount, paid_amount, status, payment_type, comment, month } = req.body;
+  db.prepare(`UPDATE finance SET project_id=?,project_name=?,service_amount=?,paid_amount=?,status=?,payment_type=?,comment=?,month=?,updated_at=datetime('now') WHERE id=?`)
+    .run(project_id||null, project_name, service_amount||0, paid_amount||0, status, payment_type, comment||'', month, req.params.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/finance/:id', auth, requirePerm('manage_finance'), (req, res) => {
+  db.prepare('DELETE FROM finance WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
 // ─── Feedback (anonymous) ─────────────────────────────────────────────────────
 app.post('/api/feedback', auth, (req, res) => {
   const { q1,q2,q3,q4,q5,q6,q7,q8,q9,q10, suggestion='' } = req.body;

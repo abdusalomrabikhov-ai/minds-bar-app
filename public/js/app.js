@@ -488,6 +488,7 @@ function setupNavigation() {
 }
 
 const PAGE_TITLES = {
+  finance: 'Финансы',
   dashboard: 'Дашборд',
   tasks: 'Все задачи',
   mytasks: 'Мои задачи',
@@ -544,6 +545,7 @@ function navigateTo(page, projectId = null) {
     case 'settings': renderSettingsPage(); break;
     case 'employee': renderEmployeeProfile(state.currentEmployeeId); break;
     case 'activity': renderActivityPage(); break;
+    case 'finance': renderFinancePage(); break;
     case 'best-employee': renderBestEmployeePage(); break;
     case 'schedule': renderSchedulePage(); break;
   }
@@ -2925,16 +2927,184 @@ async function renderActivityPage() {
     `<button class="period-btn${activityDays === p.days ? ' active' : ''}" onclick="setActivityPeriod(${p.days})">${p.label}</button>`
   ).join('');
 
+  const periodLabel = ACTIVITY_PERIODS.find(p => p.days === activityDays)?.label || activityDays + ' дн.';
   document.getElementById('page-content').innerHTML = `
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">${periodBtns}</div>
-    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px">
-      <div id="act-chart-block" style="flex:1;min-width:280px"><div style="color:#94a3b8;font-size:13px">Загрузка...</div></div>
-      <div id="act-users-block" style="width:300px;flex-shrink:0"><div style="color:#94a3b8;font-size:13px">Загрузка...</div></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${periodBtns}</div>
+      <button class="btn btn-outline btn-sm act-print-btn" onclick="printActivityChart()" style="display:inline-flex;align-items:center;gap:6px">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+        Экспорт PDF
+      </button>
     </div>
-    <div id="act-log-block"><div style="color:#94a3b8;font-size:13px">Загрузка...</div></div>
+    <div id="act-print-area">
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px">
+        <div id="act-chart-block" style="flex:1;min-width:280px"><div style="color:#94a3b8;font-size:13px">Загрузка...</div></div>
+        <div id="act-users-block" style="width:300px;flex-shrink:0"><div style="color:#94a3b8;font-size:13px">Загрузка...</div></div>
+      </div>
+      <div id="act-log-block"><div style="color:#94a3b8;font-size:13px">Загрузка...</div></div>
+    </div>
   `;
 
   await loadActivityData(activityDays);
+}
+
+function printActivityChart() {
+  const buckets = Object.values(_actBuckets);
+  if (!buckets.length) { toast('График пуст — нет данных', 'error'); return; }
+
+  const periodLabel = ACTIVITY_PERIODS.find(p => p.days === activityDays)?.label || activityDays + ' дн.';
+  const totalEvents = buckets.reduce((s, b) => s + b.events, 0);
+  const now = new Date().toLocaleString('ru-RU', { day:'2-digit', month:'long', year:'numeric' });
+
+  const W = 1100, BAR_AREA_H = 280, LABEL_H = 24, BOTTOM_H = 110;
+  const H = BAR_AREA_H + LABEL_H + BOTTOM_H;
+  const padL = 40, padR = 20, padT = 10;
+  const innerW = W - padL - padR;
+  const n = buckets.length;
+  const barW = Math.max(8, Math.min(40, innerW / n - 4));
+  const gap = (innerW - barW * n) / (n + 1);
+  const maxEvents = Math.max(...buckets.map(b => b.events), 1);
+
+  // Grid lines
+  const gridLines = [0.25, 0.5, 0.75, 1].map(f => {
+    const y = padT + BAR_AREA_H * (1 - f);
+    const val = Math.round(maxEvents * f);
+    return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="#e2e8f0" stroke-width="0.8"/>
+            <text x="${padL - 4}" y="${y + 4}" text-anchor="end" font-size="9" fill="#94a3b8">${val}</text>`;
+  }).join('');
+
+  // Bars + labels
+  const bars = buckets.map((b, i) => {
+    const x = padL + gap + i * (barW + gap);
+    const barH = Math.max(b.events > 0 ? 12 : 0, Math.round((b.events / maxEvents) * BAR_AREA_H));
+    const barY = padT + BAR_AREA_H - barH;
+    const color = b.events === 0 ? '#e2e8f0' : b.breakdown.length >= 5 ? '#059669' : b.breakdown.length >= 3 ? '#3B82F6' : '#D97706';
+    const countLabel = b.events > 0
+      ? `<text x="${x + barW/2}" y="${barY - 4}" text-anchor="middle" font-size="10" font-weight="700" fill="#1e293b">${b.events}</text>` : '';
+
+    // User names above bar (top 3)
+    const userLabels = b.breakdown.slice(0, 3).map((u, ui) => {
+      const shortName = u.name.split(' ')[0]; // first name only
+      const ly = barY - 18 - ui * 13;
+      return `<text x="${x + barW/2}" y="${ly}" text-anchor="middle" font-size="8.5" fill="${u.color}" font-weight="600">${shortName}</text>`;
+    }).join('');
+
+    return `<g>
+      <rect x="${x}" y="${barY}" width="${barW}" height="${barH}" fill="${color}" rx="3"/>
+      ${countLabel}
+      ${userLabels}
+      <text x="${x + barW/2}" y="${padT + BAR_AREA_H + LABEL_H}" text-anchor="middle" font-size="9" fill="#64748b">${b.period}</text>
+    </g>`;
+  }).join('');
+
+  // User summary table
+  const allUsers = {};
+  buckets.forEach(b => b.breakdown.forEach(u => {
+    if (!allUsers[u.name]) allUsers[u.name] = { name: u.name, color: u.color, events: 0 };
+    allUsers[u.name].events += u.events;
+  }));
+  const sortedUsers = Object.values(allUsers).sort((a, b) => b.events - a.events);
+  const tableRows = sortedUsers.map((u, i) => {
+    const ini = u.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    return `<tr style="background:${i%2===0?'#f8fafc':'white'}">
+      <td style="padding:6px 10px;display:flex;align-items:center;gap:8px">
+        <div style="width:24px;height:24px;border-radius:50%;background:${u.color};color:white;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0">${ini}</div>
+        ${u.name}
+      </td>
+      <td style="padding:6px 14px;font-weight:700;color:#1e293b;text-align:right">${u.events}</td>
+    </tr>`;
+  }).join('');
+
+  const win = window.open('', '_blank', 'width=1200,height=900');
+  win.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="utf-8">
+    <title>График активности · ${periodLabel}</title>
+    <style>
+      * { box-sizing:border-box; margin:0; padding:0; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+      body { font-family:system-ui,sans-serif; font-size:13px; color:#0f172a; background:white; padding:28px; }
+      .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; padding-bottom:14px; border-bottom:2px solid #e2e8f0; }
+      .title { font-size:22px; font-weight:800; }
+      .subtitle { font-size:13px; color:#64748b; margin-top:4px; }
+      .meta { font-size:12px; color:#94a3b8; text-align:right; }
+      .stats { display:flex; gap:24px; margin-bottom:16px; }
+      .stat-box { background:#f8fafc; border:1.5px solid #e2e8f0; border-radius:10px; padding:12px 18px; }
+      .stat-val { font-size:28px; font-weight:900; }
+      .stat-lbl { font-size:11px; color:#64748b; }
+      .legend { display:flex; gap:16px; font-size:11px; color:#64748b; margin-bottom:10px; }
+      .leg-dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:4px; }
+      .section-title { font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#64748b; margin:20px 0 10px; }
+      table { width:100%; border-collapse:collapse; font-size:13px; }
+      th { background:#f1f5f9; padding:8px 10px; text-align:left; font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; }
+      td { border-bottom:1px solid #f1f5f9; }
+      @media print { @page { size:A4 landscape; margin:1cm; } }
+    </style>
+  </head><body>
+    <div class="header">
+      <div>
+        <div class="title">График активности · ${periodLabel}</div>
+        <div class="subtitle">MindsBar — платформа управления задачами</div>
+      </div>
+      <div class="meta">Сгенерирован: ${now}</div>
+    </div>
+
+    <div class="stats">
+      <div class="stat-box"><div class="stat-val">${totalEvents}</div><div class="stat-lbl">событий за период</div></div>
+      <div class="stat-box"><div class="stat-val">${sortedUsers.length}</div><div class="stat-lbl">активных сотрудников</div></div>
+    </div>
+
+    <div class="legend">
+      <span><span class="leg-dot" style="background:#059669"></span>5+ сотрудников</span>
+      <span><span class="leg-dot" style="background:#3B82F6"></span>3–4 сотрудника</span>
+      <span><span class="leg-dot" style="background:#D97706"></span>1–2 сотрудника</span>
+    </div>
+
+    <svg width="100%" viewBox="0 0 ${W} ${H}" style="display:block;border:1.5px solid #e2e8f0;border-radius:10px;background:#fafafa;margin-bottom:20px">
+      ${gridLines}
+      ${bars}
+    </svg>
+
+    <div class="section-title">Активность по сотрудникам</div>
+    <table>
+      <thead><tr><th>Сотрудник</th><th style="text-align:right">Событий</th></tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+    <script>window.onload = () => window.print();<\/script>
+  </body></html>`);
+  win.document.close();
+}
+
+function printActivityReport(periodLabel) {
+  const area = document.getElementById('act-print-area');
+  if (!area) return;
+  const now = new Date().toLocaleString('ru-RU', { day:'2-digit', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit' });
+  const win = window.open('', '_blank', 'width=1100,height=800');
+  win.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="utf-8">
+    <title>Активность · ${periodLabel}</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      body { font-family: system-ui, sans-serif; font-size: 13px; color: #0f172a; padding: 24px; }
+      .print-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #e2e8f0; }
+      .print-title { font-size: 20px; font-weight: 800; }
+      .print-meta { font-size: 12px; color: #64748b; text-align: right; }
+      .act-card, .chart-panel, .act-users-card { background: #f8fafc !important; border: 1.5px solid #e2e8f0; border-radius: 10px; }
+      .act-log-row { border-bottom: 1px solid #f1f5f9; padding: 8px 12px; display: flex; align-items: flex-start; gap: 10px; }
+      .act-log-avatar { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: white; flex-shrink: 0; }
+      .act-log-icon { display: none; }
+      .act-show-more { display: none; }
+      @media print { @page { size: A4 landscape; margin: 1cm; } }
+    </style>
+  </head><body>
+    <div class="print-header">
+      <div>
+        <div class="print-title">Отчёт активности · ${periodLabel}</div>
+      </div>
+      <div class="print-meta">MindsBar<br>${now}</div>
+    </div>
+    ${area.innerHTML}
+    <script>window.onload = () => { window.print(); }<\/script>
+  </body></html>`);
+  win.document.close();
 }
 
 async function setActivityPeriod(days) {
@@ -3637,6 +3807,7 @@ const PERM_LABELS = {
   manage_team:      { icon: svgI(SVG_PATHS.users, 13),  text: 'Команда' },
   view_activity:    { icon: svgI(SVG_PATHS.eye, 13),    text: 'Активность' },
   manage_schedule:  { icon: svgI(SVG_PATHS.cal, 13),    text: 'Расписание' },
+  manage_finance:   { icon: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`, text: 'Финансы' },
 };
 
 function permTags(perms) {
@@ -3863,7 +4034,11 @@ async function renderTeamPage() {
         <div class="section-title">Участники команды (${users.length})</div>
         ${isAdmin ? `<button class="btn btn-blue btn-sm" onclick="openUserModal()">＋ Добавить сотрудника</button>` : ''}
       </div>
-      <div class="team-grid">
+      <div class="team-search-wrap">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#9ca3af;flex-shrink:0"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="team-search" class="team-search-input" placeholder="Поиск по имени или email..." oninput="filterTeamCards(this.value)">
+      </div>
+      <div class="team-grid" id="team-grid">
         ${users.map(u => {
           const rl = roleLabel(u);
           const tags = u.role !== 'admin' ? permTags(u.permissions) : '';
@@ -3871,7 +4046,7 @@ async function renderTeamPage() {
           const pct = s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
           const effColor = pct >= 80 ? '#22c55e' : pct >= 50 ? '#eab308' : pct > 0 ? '#ef4444' : '#d1d5db';
           return `
-          <div class="member-card clickable" onclick="openEmployeeProfile(${u.id})">
+          <div class="member-card clickable" data-name="${(u.name+' '+u.email).toLowerCase()}" onclick="openEmployeeProfile(${u.id})">
             ${avatar(u.name, u.avatar_color, 'avatar-lg', u.avatar_img || '')}
             <div class="member-name">${u.name}</div>
             <div class="member-email">${u.email}</div>
@@ -4370,11 +4545,389 @@ function _renderBestEmployee(data) {
     </div>`;
 }
 
+function filterTeamCards(q) {
+  const ql = q.toLowerCase().trim();
+  document.querySelectorAll('#team-grid .member-card').forEach(card => {
+    card.style.display = !ql || card.dataset.name.includes(ql) ? '' : 'none';
+  });
+}
+
 function filterAssigneeChips(q) {
   const ql = q.toLowerCase().trim();
   document.querySelectorAll('#f-assignees .assignee-chip').forEach(chip => {
     chip.style.display = !ql || chip.dataset.name.includes(ql) ? '' : 'none';
   });
+}
+
+// ─── Finance Page ─────────────────────────────────────────────────────────────
+const FIN_STATUS = { paid: 'Оплачено', unpaid: 'Не оплачено', partial: 'Частично' };
+const FIN_STATUS_COLOR = { paid: '#16a34a', unpaid: '#dc2626', partial: '#d97706' };
+const FIN_TYPE = { cash: 'Наличными', bank: 'Банк', alif: 'Alif', dushanbecity: 'DC' };
+const FIN_TYPE_COLOR = { cash: '#b45309', bank: '#0891b2', alif: '#16a34a', dushanbecity: '#1d4ed8' };
+
+let _finMonth = new Date().toISOString().slice(0, 7);
+
+const fmtMoney = v => {
+  const n = Number(v||0);
+  return n.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' '); // narrow no-break space
+};
+
+async function renderFinancePage() {
+  const content = document.getElementById('page-content');
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  try {
+    const rows = await GET('/finance?month=' + _finMonth);
+    _renderFinance(rows);
+  } catch (err) {
+    content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
+  }
+}
+
+function _renderFinance(rows) {
+  const content = document.getElementById('page-content');
+  const MONTH_NAMES = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const [y,m] = _finMonth.split('-');
+  const monthLabel = MONTH_NAMES[+m-1] + ' ' + y;
+
+  // Month nav — use local date methods to avoid UTC timezone shift
+  const fmtYM = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  const prevMonth = () => fmtYM(new Date(+y, +m-2, 1));
+  const nextMonth = () => fmtYM(new Date(+y, +m,   1));
+
+  // Summary
+  const totalService = rows.reduce((s,r)=>s+(+r.service_amount||0),0);
+  const totalPaid    = rows.reduce((s,r)=>s+(+r.paid_amount||0),0);
+  const totalDebt    = totalService - totalPaid;
+  const paidCount    = rows.filter(r=>r.status==='paid').length;
+  const unpaidCount  = rows.filter(r=>r.status==='unpaid').length;
+  const partialCount = rows.filter(r=>r.status==='partial').length;
+
+  const tableRows = rows.map((r,i) => `
+    <tr class="fin-row">
+      <td class="fin-td fin-num">${i+1}</td>
+      <td class="fin-td fin-project">${_escHtml(r.project_name)}</td>
+      <td class="fin-td fin-money">${fmtMoney(r.service_amount)}</td>
+      <td class="fin-td fin-money" style="color:#16a34a">${fmtMoney(r.paid_amount)}</td>
+      <td class="fin-td fin-money" style="color:${+r.service_amount-+r.paid_amount>0?'#dc2626':'#16a34a'}">${fmtMoney(+r.service_amount-+r.paid_amount)}</td>
+      <td class="fin-td">
+        <span class="fin-status-badge" style="background:${FIN_STATUS_COLOR[r.status]}22;color:${FIN_STATUS_COLOR[r.status]}">${FIN_STATUS[r.status]||r.status}</span>
+      </td>
+      <td class="fin-td">
+        <span class="fin-type-badge" style="background:${FIN_TYPE_COLOR[r.payment_type]||'#64748b'}22;color:${FIN_TYPE_COLOR[r.payment_type]||'#64748b'}">${FIN_TYPE[r.payment_type]||r.payment_type}</span>
+      </td>
+      <td class="fin-td fin-comment">${_escHtml(r.comment||'—')}</td>
+      <td class="fin-td fin-actions">
+        <button class="fin-btn-edit" onclick="openFinanceModal(${r.id})" title="Редактировать">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="fin-btn-del" onclick="deleteFinance(${r.id})" title="Удалить">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+        </button>
+      </td>
+    </tr>`).join('');
+
+  content.innerHTML = `
+    <div class="fin-page">
+      <!-- Header -->
+      <div class="fin-header">
+        <div class="fin-month-nav">
+          <button class="fin-nav-btn" onclick="finSetMonth('${prevMonth()}')">‹</button>
+          <span class="fin-month-title">${monthLabel}</span>
+          <button class="fin-nav-btn" onclick="finSetMonth('${nextMonth()}')">›</button>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-outline" onclick="exportFinanceExcel()" style="display:inline-flex;align-items:center;gap:6px">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            Excel
+          </button>
+          <button class="btn btn-outline" onclick="exportFinancePDF()" style="display:inline-flex;align-items:center;gap:6px">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+            PDF
+          </button>
+          <button class="btn btn-blue" onclick="openFinanceModal()">＋ Добавить запись</button>
+        </div>
+      </div>
+
+      <!-- Summary cards -->
+      <div class="fin-summary">
+        <div class="fin-sum-card">
+          <div class="fin-sum-lbl">Сумма услуг</div>
+          <div class="fin-sum-val">${fmtMoney(totalService)}</div>
+          <div class="fin-sum-sub">${rows.length} записей</div>
+        </div>
+        <div class="fin-sum-card fin-sum-green">
+          <div class="fin-sum-lbl">Оплачено</div>
+          <div class="fin-sum-val" style="color:#16a34a">${fmtMoney(totalPaid)}</div>
+          <div class="fin-sum-sub">${paidCount} полностью · ${partialCount} частично</div>
+        </div>
+        <div class="fin-sum-card fin-sum-red">
+          <div class="fin-sum-lbl">Остаток (задолженность)</div>
+          <div class="fin-sum-val" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</div>
+          <div class="fin-sum-sub">${unpaidCount} не оплачено</div>
+        </div>
+        <div class="fin-sum-card">
+          <div class="fin-sum-lbl">Процент оплаты</div>
+          <div class="fin-sum-val" style="color:${totalService>0&&totalPaid/totalService>=0.8?'#16a34a':'#d97706'}">${totalService>0?Math.round(totalPaid/totalService*100):0}%</div>
+          <div class="fin-progress-bar-bg"><div class="fin-progress-bar-fill" style="width:${totalService>0?Math.round(totalPaid/totalService*100):0}%"></div></div>
+        </div>
+      </div>
+
+      <!-- Table -->
+      ${rows.length === 0
+        ? `<div class="empty-state" style="margin-top:40px"><div class="empty-icon"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="1.5"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div><h3>Нет записей</h3><p>Нажмите «Добавить запись» чтобы начать</p></div>`
+        : `<div class="fin-table-wrap">
+            <table class="fin-table">
+              <thead>
+                <tr>
+                  <th>#</th><th>Проект</th><th>Сумма услуги</th><th>Оплачено</th><th>Остаток</th>
+                  <th>Статус</th><th>Тип оплаты</th><th>Комментарий</th><th></th>
+                </tr>
+              </thead>
+              <tbody>${tableRows}</tbody>
+              <tfoot>
+                <tr class="fin-total-row">
+                  <td colspan="2" class="fin-td fin-total-lbl">ИТОГО</td>
+                  <td class="fin-td fin-money fin-total">${fmtMoney(totalService)}</td>
+                  <td class="fin-td fin-money fin-total" style="color:#16a34a">${fmtMoney(totalPaid)}</td>
+                  <td class="fin-td fin-money fin-total" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</td>
+                  <td colspan="4"></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>`}
+    </div>`;
+}
+
+async function finSetMonth(m) {
+  _finMonth = m;
+  renderFinancePage();
+}
+
+function openFinanceModal(id = null) {
+  let row = null;
+  if (id) {
+    // Find from DOM data or re-fetch
+    const rows = document.querySelectorAll('.fin-row');
+    // We'll just open empty and load via API
+    GET('/finance?month=' + _finMonth).then(all => {
+      row = all.find(r => r.id === id);
+      if (row) _showFinanceModal(row);
+    }).catch(err => toast(err.message, 'error'));
+    return;
+  }
+  _showFinanceModal(null);
+}
+
+function _showFinanceModal(row) {
+  const isEdit = !!row;
+  const proj = state.projects || [];
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header">
+          <div class="modal-title">${isEdit ? 'Редактировать запись' : 'Новая запись'}</div>
+          <button class="modal-close" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="field">
+            <label>Проект</label>
+            <div style="display:flex;gap:8px">
+              <select id="fin-proj-sel" class="input" style="flex:1" onchange="finProjSelect(this)">
+                <option value="">— выбрать из списка —</option>
+                ${proj.map(p=>`<option value="${p.id}|${p.name}" ${row?.project_id===p.id?'selected':''}>${p.name}</option>`).join('')}
+              </select>
+            </div>
+            <input id="fin-proj-name" class="input" style="margin-top:6px" placeholder="Или введите вручную..." value="${_escHtml(row?.project_name||'')}">
+          </div>
+          <div class="form-row">
+            <div class="field">
+              <label>Сумма услуги</label>
+              <input id="fin-service" class="input" type="number" min="0" placeholder="0" value="${row?.service_amount||''}">
+            </div>
+            <div class="field">
+              <label>Сумма оплаты</label>
+              <input id="fin-paid" class="input" type="number" min="0" placeholder="0" value="${row?.paid_amount||''}">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="field">
+              <label>Статус</label>
+              <select id="fin-status" class="input">
+                ${Object.entries(FIN_STATUS).map(([k,v])=>`<option value="${k}" ${(row?.status||'unpaid')===k?'selected':''}>${v}</option>`).join('')}
+              </select>
+            </div>
+            <div class="field">
+              <label>Тип оплаты</label>
+              <select id="fin-type" class="input">
+                ${Object.entries(FIN_TYPE).map(([k,v])=>`<option value="${k}" ${(row?.payment_type||'cash')===k?'selected':''}>${v}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label>Месяц</label>
+            <input id="fin-month" class="input" type="month" value="${row?.month||_finMonth}">
+          </div>
+          <div class="field">
+            <label>Комментарий</label>
+            <textarea id="fin-comment" class="input" rows="2" placeholder="Дополнительная информация...">${row?.comment||''}</textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          ${isEdit ? `<button class="btn btn-danger" onclick="deleteFinance(${row.id})">Удалить</button>` : ''}
+          <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+          <button class="btn btn-blue" onclick="saveFinance(${isEdit?row.id:'null'})">Сохранить</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function finProjSelect(sel) {
+  if (!sel.value) return;
+  const [, name] = sel.value.split('|');
+  const nameInput = document.getElementById('fin-proj-name');
+  if (nameInput) nameInput.value = name;
+}
+
+async function saveFinance(id) {
+  const name = document.getElementById('fin-proj-name').value.trim();
+  if (!name) return toast('Введите название проекта', 'error');
+  const selVal = document.getElementById('fin-proj-sel').value;
+  const projId = selVal ? parseInt(selVal.split('|')[0]) || null : null;
+  const body = {
+    project_id: projId,
+    project_name: name,
+    service_amount: parseFloat(document.getElementById('fin-service').value)||0,
+    paid_amount:    parseFloat(document.getElementById('fin-paid').value)||0,
+    status:       document.getElementById('fin-status').value,
+    payment_type: document.getElementById('fin-type').value,
+    comment:      document.getElementById('fin-comment').value.trim(),
+    month:        document.getElementById('fin-month').value || _finMonth,
+  };
+  try {
+    if (id && id !== 'null') await PUT(`/finance/${id}`, body);
+    else await POST('/finance', body);
+    closeModal();
+    if (body.month !== _finMonth) { _finMonth = body.month; }
+    renderFinancePage();
+    toast('Сохранено', 'success');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function deleteFinance(id) {
+  if (!confirm('Удалить запись?')) return;
+  try {
+    await DEL(`/finance/${id}`);
+    closeModal();
+    renderFinancePage();
+    toast('Удалено', 'success');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function exportFinanceExcel() {
+  try {
+    const rows = await GET('/finance?month=' + _finMonth);
+    if (!rows.length) return toast('Нет данных для экспорта', 'error');
+
+    const MONTH_NAMES = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+    const [y,m] = _finMonth.split('-');
+    const monthLabel = MONTH_NAMES[+m-1] + ' ' + y;
+
+    const data = rows.map((r,i) => ({
+      '№': i+1,
+      'Проект': r.project_name,
+      'Сумма услуги': +r.service_amount || 0,
+      'Оплачено': +r.paid_amount || 0,
+      'Остаток': (+r.service_amount||0) - (+r.paid_amount||0),
+      'Статус': FIN_STATUS[r.status] || r.status,
+      'Тип оплаты': FIN_TYPE[r.payment_type] || r.payment_type,
+      'Комментарий': r.comment || '',
+    }));
+
+    // Add totals row
+    const totSvc  = rows.reduce((s,r)=>s+(+r.service_amount||0),0);
+    const totPaid = rows.reduce((s,r)=>s+(+r.paid_amount||0),0);
+    data.push({ '№':'', 'Проект':'ИТОГО', 'Сумма услуги':totSvc, 'Оплачено':totPaid, 'Остаток':totSvc-totPaid, 'Статус':'', 'Тип оплаты':'', 'Комментарий':'' });
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    // Column widths
+    ws['!cols'] = [{ wch:4 },{ wch:24 },{ wch:16 },{ wch:16 },{ wch:16 },{ wch:16 },{ wch:16 },{ wch:28 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, monthLabel);
+    XLSX.writeFile(wb, `Финансы_${_finMonth}.xlsx`);
+    toast('Excel-файл скачан', 'success');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function exportFinancePDF() {
+  try {
+    const rows = await GET('/finance?month=' + _finMonth);
+    if (!rows.length) return toast('Нет данных для экспорта', 'error');
+
+    const MONTH_NAMES = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+    const [y,m] = _finMonth.split('-');
+    const monthLabel = MONTH_NAMES[+m-1] + ' ' + y;
+    const now = new Date().toLocaleString('ru-RU', { day:'2-digit', month:'long', year:'numeric' });
+
+    const totSvc  = rows.reduce((s,r)=>s+(+r.service_amount||0),0);
+    const totPaid = rows.reduce((s,r)=>s+(+r.paid_amount||0),0);
+    const totDebt = totSvc - totPaid;
+
+    const tableRows = rows.map((r,i) => `
+      <tr style="background:${i%2===0?'#fff':'#f8fafc'}">
+        <td>${i+1}</td>
+        <td><strong>${r.project_name}</strong></td>
+        <td class="num">${fmtMoney(r.service_amount)}</td>
+        <td class="num green">${fmtMoney(r.paid_amount)}</td>
+        <td class="num ${(+r.service_amount-(+r.paid_amount))>0?'red':'green'}">${fmtMoney(+r.service_amount-(+r.paid_amount))}</td>
+        <td><span class="badge" style="background:${FIN_STATUS_COLOR[r.status]}22;color:${FIN_STATUS_COLOR[r.status]}">${FIN_STATUS[r.status]||r.status}</span></td>
+        <td>${FIN_TYPE[r.payment_type]||r.payment_type}</td>
+        <td class="comment">${r.comment||'—'}</td>
+      </tr>`).join('');
+
+    const win = window.open('', '_blank', 'width=1100,height=800');
+    win.document.write(`<!DOCTYPE html><html><head>
+      <meta charset="utf-8">
+      <title>Финансы · ${monthLabel}</title>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+        body{font-family:system-ui,sans-serif;font-size:12px;color:#0f172a;padding:24px}
+        .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #e2e8f0}
+        .title{font-size:20px;font-weight:800}
+        .meta{font-size:11px;color:#64748b;text-align:right}
+        .summary{display:flex;gap:16px;margin-bottom:20px}
+        .sum-card{flex:1;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:12px 16px}
+        .sum-lbl{font-size:10px;font-weight:700;text-transform:uppercase;color:#64748b;margin-bottom:4px}
+        .sum-val{font-size:20px;font-weight:900}
+        table{width:100%;border-collapse:collapse;font-size:12px}
+        th{background:#f1f5f9;padding:9px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;color:#64748b;border:1px solid #e2e8f0}
+        td{padding:9px 10px;border:1px solid #e2e8f0;vertical-align:middle}
+        .num{text-align:right;font-weight:700;white-space:nowrap}
+        .green{color:#16a34a}.red{color:#dc2626}
+        .badge{padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700;display:inline-block}
+        .comment{color:#64748b;max-width:150px}
+        .total-row td{background:#f1f5f9;font-weight:800;border-top:2px solid #94a3b8}
+        @media print{@page{size:A4 landscape;margin:1cm}}
+      </style>
+    </head><body>
+      <div class="header">
+        <div><div class="title">Дебиторская задолженность · ${monthLabel}</div><div style="font-size:12px;color:#64748b;margin-top:3px">MindsBar — Финансовый отчёт</div></div>
+        <div class="meta">${now}</div>
+      </div>
+      <div class="summary">
+        <div class="sum-card"><div class="sum-lbl">Сумма услуг</div><div class="sum-val">${fmtMoney(totSvc)}</div><div style="font-size:11px;color:#64748b">${rows.length} записей</div></div>
+        <div class="sum-card"><div class="sum-lbl">Оплачено</div><div class="sum-val green">${fmtMoney(totPaid)}</div><div style="font-size:11px;color:#64748b">${totSvc>0?Math.round(totPaid/totSvc*100):0}% от суммы</div></div>
+        <div class="sum-card"><div class="sum-lbl">Задолженность</div><div class="sum-val ${totDebt>0?'red':'green'}">${fmtMoney(totDebt)}</div><div style="font-size:11px;color:#64748b">${rows.filter(r=>r.status==='unpaid').length} не оплачено</div></div>
+      </div>
+      <table>
+        <thead><tr><th>#</th><th>Проект</th><th>Сумма услуги</th><th>Оплачено</th><th>Остаток</th><th>Статус</th><th>Тип оплаты</th><th>Комментарий</th></tr></thead>
+        <tbody>${tableRows}</tbody>
+        <tfoot><tr class="total-row"><td colspan="2">ИТОГО</td><td class="num">${fmtMoney(totSvc)}</td><td class="num green">${fmtMoney(totPaid)}</td><td class="num ${totDebt>0?'red':'green'}">${fmtMoney(totDebt)}</td><td colspan="3"></td></tr></tfoot>
+      </table>
+      <script>window.onload=()=>window.print()<\/script>
+    </body></html>`);
+    win.document.close();
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 // ─── Schedule Page ────────────────────────────────────────────────────────────
@@ -4874,20 +5427,23 @@ async function openFeedbackAdmin() {
 
   let allRows = [];
   try { allRows = await GET('/feedback'); } catch (err) { toast(err.message,'error'); return; }
-  window._fbAllRows = allRows; // for detail modal access
+  window._fbAllRows = allRows;
 
   let activePeriod = 'all';
   window._fbAdminRender = renderAdmin;
   renderAdmin();
 
+  // Always read from window._fbAllRows so delete/archive updates reflect immediately
+  function getRows()    { return window._fbAllRows || []; }
   function getMonths() {
-    const set = new Set(allRows.map(r => r.created_at?.slice(0,7)));
+    const set = new Set(getRows().map(r => r.created_at?.slice(0,7)));
     return [...set].sort().reverse();
   }
 
   function filteredRows() {
-    if (activePeriod === 'all') return allRows;
-    return allRows.filter(r => r.created_at?.startsWith(activePeriod));
+    const rows = getRows();
+    if (activePeriod === 'all') return rows;
+    return rows.filter(r => r.created_at?.startsWith(activePeriod));
   }
 
   function rowAvg(row) {
@@ -4949,7 +5505,7 @@ async function openFeedbackAdmin() {
     const W = 500, H = 90, padX = 36, padY = 12;
     const innerW = W - padX * 2, innerH = H - padY * 2;
     const pts = months.map((m, i) => {
-      const rows = allRows.filter(r => r.created_at?.startsWith(m));
+      const rows = getRows().filter(r => r.created_at?.startsWith(m));
       const avg = rows.length
         ? [1,2,3,4,5,6,7,8,9,10].flatMap(qi => rows.map(r=>r[`q${qi}`])).filter(v=>v!=null)
             .reduce((a,b,_,arr)=>a+b/arr.length, 0)
@@ -5005,7 +5561,7 @@ async function openFeedbackAdmin() {
     const bodyEl = root.querySelector('.modal-body');
     if (!bodyEl) return;
 
-    if (!allRows.length) {
+    if (!getRows().length) {
       bodyEl.innerHTML = `<div class="empty-state" style="padding:40px 0"><h3>Ответов пока нет</h3><p>Сотрудники ещё не оставили обратную связь</p></div>`;
       return;
     }
