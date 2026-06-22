@@ -3659,11 +3659,14 @@ async function renderEmployeeProfile(userId) {
       t.assignee_id === userId ||
       (t.multi_assignees || []).some(a => a.id === userId)
     );
-    // For multi-assignee tasks check personal done status; for single-assignee use task status
+    // Task is done for this user if:
+    // 1. Overall task status is 'done' (everyone completed), OR
+    // 2. This user's individual done flag is set in multi_assignees
     const isUserDone = t => {
+      if (t.status === 'done') return true;
       const ma = t.multi_assignees;
       if (ma && ma.length > 0) return ma.find(a => a.id === userId)?.done === 1;
-      return t.status === 'done';
+      return false;
     };
     const total   = tasks.length;
     const done    = tasks.filter(t => isUserDone(t)).length;

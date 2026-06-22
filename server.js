@@ -978,9 +978,9 @@ app.get('/api/best-employee', auth, (req, res) => {
       // - multi-assignee: use ta.done + ta.done_at (this user's individual completion)
       // - single-assignee: use tasks.status + tasks.updated_at
       const enriched = rows.map(t => {
-        const isMulti    = t.my_done !== null && t.my_done !== undefined;
-        const isDone     = isMulti ? t.my_done === 1 : t.status === 'done';
-        const doneAt     = isMulti ? t.my_done_at : (t.status === 'done' ? t.updated_at : null);
+        // Task is done if overall status='done' OR this user's personal done flag is set
+        const isDone     = t.status === 'done' || t.my_done === 1;
+        const doneAt     = t.status === 'done' ? t.updated_at : (t.my_done === 1 ? t.my_done_at : null);
         // Normalize deadline: date-only → end of that day; replace space with T
         const dlRaw      = t.deadline.replace(' ', 'T');
         const dlNorm     = dlRaw.length <= 10 ? dlRaw + 'T23:59:59' : dlRaw;
