@@ -960,9 +960,11 @@ app.get('/api/best-employee', auth, (req, res) => {
   function calcMonth(m) {
     const users = db.prepare("SELECT id, name, avatar_color, avatar_img FROM users WHERE role='employee' ORDER BY name").all();
     return users.map(u => {
-      // All tasks assigned to this user with deadline in month m
+      // Fetch tasks with deadline in month m, include multi-assignee done status for this user
       const rows = db.prepare(`
-        SELECT DISTINCT t.id, t.status, t.deadline, t.updated_at
+        SELECT DISTINCT t.id, t.status, t.deadline, t.updated_at,
+          ta.done     AS my_done,
+          ta.done_at  AS my_done_at
         FROM tasks t
         LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
         WHERE (t.assignee_id = ? OR ta.user_id = ?)
@@ -970,20 +972,36 @@ app.get('/api/best-employee', auth, (req, res) => {
           AND strftime('%Y-%m', t.deadline) = ?
       `).all(u.id, u.id, u.id, m);
 
-      const total       = rows.length;
-      const now = new Date().toISOString();
-      const doneOnTime  = rows.filter(t => t.status === 'done' && t.updated_at <= t.deadline).length;
-      const doneLate    = rows.filter(t => t.status === 'done' && t.updated_at > t.deadline).length;
-      // Only count as overdue if NOT done AND deadline has already passed
-      const overdue     = rows.filter(t => t.status !== 'done' && t.deadline < now).length;
-      const done        = doneOnTime + doneLate;
-      // Score: on-time fully weighted, late partially, overdue penalised
-      const score = total > 0
+      const nowIso = new Date().toISOString();
+
+      // Determine effective completion for each task:
+      // - multi-assignee: use ta.done + ta.done_at (this user's individual completion)
+      // - single-assignee: use tasks.status + tasks.updated_at
+      const enriched = rows.map(t => {
+        const isMulti    = t.my_done !== null && t.my_done !== undefined;
+        const isDone     = isMulti ? t.my_done === 1 : t.status === 'done';
+        const doneAt     = isMulti ? t.my_done_at : (t.status === 'done' ? t.updated_at : null);
+        // Normalize deadline: date-only → end of that day; replace space with T
+        const dlRaw      = t.deadline.replace(' ', 'T');
+        const dlNorm     = dlRaw.length <= 10 ? dlRaw + 'T23:59:59' : dlRaw;
+        const doneNorm   = doneAt ? doneAt.replace(' ', 'T') : null;
+        const onTime     = isDone && doneNorm !== null && doneNorm <= dlNorm;
+        const late       = isDone && doneNorm !== null && doneNorm > dlNorm;
+        const overdue    = !isDone && dlNorm < nowIso;
+        return { ...t, isDone, onTime, late, overdue };
+      });
+
+      const total      = enriched.length;
+      const doneOnTime = enriched.filter(t => t.onTime).length;
+      const doneLate   = enriched.filter(t => t.late).length;
+      const overdue    = enriched.filter(t => t.overdue).length;
+      const done       = doneOnTime + doneLate;
+      const score      = total > 0
         ? Math.round((doneOnTime * 100 + doneLate * 50) / total)
-        : null; // null = no tasks assigned that month
+        : null;
 
       return { ...u, total, done, doneOnTime, doneLate, overdue, score };
-    }).filter(u => u.total > 0) // only include employees with tasks that month
+    }).filter(u => u.total > 0)
       .sort((a, b) => (b.score ?? -1) - (a.score ?? -1) || b.doneOnTime - a.doneOnTime || a.overdue - b.overdue);
   }
 

@@ -3655,12 +3655,21 @@ async function renderEmployeeProfile(userId) {
       return;
     }
 
-    const tasks = allTasks.filter(t => t.assignee_id === userId);
-    const total = tasks.length;
-    const done = tasks.filter(t => t.status === 'done').length;
-    const inProg = tasks.filter(t => t.status === 'in_progress').length;
-    const newCnt = tasks.filter(t => t.status === 'new').length;
-    const overdue = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date()).length;
+    const tasks = allTasks.filter(t =>
+      t.assignee_id === userId ||
+      (t.multi_assignees || []).some(a => a.id === userId)
+    );
+    // For multi-assignee tasks check personal done status; for single-assignee use task status
+    const isUserDone = t => {
+      const ma = t.multi_assignees;
+      if (ma && ma.length > 0) return ma.find(a => a.id === userId)?.done === 1;
+      return t.status === 'done';
+    };
+    const total   = tasks.length;
+    const done    = tasks.filter(t => isUserDone(t)).length;
+    const inProg  = tasks.filter(t => !isUserDone(t) && t.status === 'in_progress').length;
+    const newCnt  = tasks.filter(t => !isUserDone(t) && t.status === 'new').length;
+    const overdue = tasks.filter(t => !isUserDone(t) && t.deadline && parseDeadline(t.deadline) < new Date()).length;
     const pct = total > 0 ? Math.round(done / total * 100) : 0;
     const effColor = pct >= 80 ? '#059669' : pct >= 50 ? '#D97706' : pct > 0 ? '#DC2626' : '#94A3B8';
 
