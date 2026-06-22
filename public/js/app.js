@@ -4566,8 +4566,8 @@ const FIN_TYPE         = { cash: 'Наличными', bank: 'Банк', alif: '
 const FIN_TYPE_COLOR   = { cash: '#b45309', bank: '#0891b2', alif: '#16a34a', dushanbecity: '#1d4ed8' };
 const FIN_CURRENCIES   = ['TJS', 'USD', 'RUB', 'EUR'];
 
-let _finMonth  = new Date().toISOString().slice(0, 7);
-let _finTab    = 'month';   // month | projects | annual
+let _finMonth  = (() => { try { return sessionStorage.getItem('fin_month') || new Date().toISOString().slice(0, 7); } catch { return new Date().toISOString().slice(0, 7); } })();
+let _finTab    = (() => { try { return sessionStorage.getItem('fin_tab') || 'month'; } catch { return 'month'; } })();
 let _finFilter = { status: '', payment_type: '', search: '' };
 
 const fmtMoney = v => {
@@ -4578,6 +4578,11 @@ const fmtMoney = v => {
 async function renderFinancePage() {
   const content = document.getElementById('page-content');
   content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  // One-time cleanup of future auto-copied records
+  if (!window._finCleanedUp) {
+    window._finCleanedUp = true;
+    DEL('/finance/cleanup-future').catch(() => {});
+  }
   try {
     if (_finTab === 'annual') { await _renderFinanceAnnual(); return; }
     if (_finTab === 'projects') { await _renderFinanceProjects(); return; }
@@ -4587,29 +4592,34 @@ async function renderFinancePage() {
     if (_finFilter.search)       params.set('search', _finFilter.search);
     let rows = await GET('/finance?' + params.toString());
 
-    // Auto-copy recurring records from previous month that are missing in current month
+    // Auto-copy recurring records — ONLY for current month or next month, not further
     if (!_finFilter.status && !_finFilter.payment_type && !_finFilter.search) {
-      const [y, m] = _finMonth.split('-');
-      const prevDate  = new Date(+y, +m - 2, 1);
-      const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}`;
-      const prevRows  = await GET('/finance?month=' + prevMonth);
-      const recurring = prevRows.filter(r => r.is_recurring);
-      // Only copy those that don't already exist in current month (match by project_name + is_recurring)
-      const existingRecurNames = new Set(rows.filter(r => r.is_recurring).map(r => r.project_name.toLowerCase()));
-      const toCreate = recurring.filter(r => !existingRecurNames.has(r.project_name.toLowerCase()));
-      if (toCreate.length > 0) {
-        await Promise.all(toCreate.map(r =>
-          POST('/finance', {
-            project_id: r.project_id, project_name: r.project_name,
-            service_amount: r.service_amount, paid_amount: 0,
-            status: 'unpaid', payment_type: r.payment_type,
-            comment: r.comment, month: _finMonth,
-            client_name: r.client_name || '', client_phone: r.client_phone || '',
-            is_recurring: 1,
-          }).catch(() => {})
-        ));
-        rows = await GET('/finance?' + params.toString());
-        toast(`Добавлено ${toCreate.length} повторяющихся записей`, 'success');
+      const now = new Date();
+      const curReal  = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+      const nextReal = (() => { const d=new Date(now.getFullYear(),now.getMonth()+1,1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; })();
+      // Only copy if target month is current or next — never further into the future
+      if (_finMonth <= nextReal) {
+        const [y, m] = _finMonth.split('-');
+        const prevDate  = new Date(+y, +m - 2, 1);
+        const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}`;
+        const prevRows  = await GET('/finance?month=' + prevMonth);
+        const recurring = prevRows.filter(r => r.is_recurring);
+        const existingRecurNames = new Set(rows.filter(r => r.is_recurring).map(r => r.project_name.toLowerCase()));
+        const toCreate = recurring.filter(r => !existingRecurNames.has(r.project_name.toLowerCase()));
+        if (toCreate.length > 0) {
+          await Promise.all(toCreate.map(r =>
+            POST('/finance', {
+              project_id: r.project_id, project_name: r.project_name,
+              service_amount: r.service_amount, paid_amount: 0,
+              status: 'unpaid', payment_type: r.payment_type,
+              comment: r.comment, month: _finMonth,
+              client_name: r.client_name||'', client_phone: r.client_phone||'',
+              is_recurring: 1,
+            }).catch(() => {})
+          ));
+          rows = await GET('/finance?' + params.toString());
+          toast(`Добавлено ${toCreate.length} повторяющихся записей`, 'success');
+        }
       }
     }
 
@@ -4708,6 +4718,7 @@ function _renderFinance(rows) {
           <button class="fin-nav-btn" onclick="finSetMonth('${prevMonth()}')">‹</button>
           <span class="fin-month-title">${monthLabel}</span>
           <button class="fin-nav-btn" onclick="finSetMonth('${nextMonth()}')">›</button>
+          ${_finMonth !== new Date().toISOString().slice(0,7) ? `<button class="btn btn-outline btn-sm" onclick="finSetMonth('${new Date().toISOString().slice(0,7)}')" style="font-size:11px;padding:4px 10px;margin-left:6px">Этот месяц</button>` : ''}
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-outline" onclick="exportFinanceExcel()" style="display:inline-flex;align-items:center;gap:6px" title="Скачать Excel">
@@ -4863,8 +4874,16 @@ function _moveFinTip(el, e) {
   el.style.left = x + 'px'; el.style.top = y + 'px';
 }
 
-async function finSetMonth(m) { _finMonth = m; renderFinancePage(); }
-function finSetTab(t) { _finTab = t; renderFinancePage(); }
+async function finSetMonth(m) {
+  _finMonth = m;
+  try { sessionStorage.setItem('fin_month', m); } catch {}
+  renderFinancePage();
+}
+function finSetTab(t) {
+  _finTab = t;
+  try { sessionStorage.setItem('fin_tab', t); } catch {}
+  renderFinancePage();
+}
 
 function _finLiveSearch(q) {
   _finFilter.search = q;

@@ -1032,6 +1032,16 @@ app.delete('/api/finance/payments/:id', auth, requirePerm('manage_finance'), (re
   res.json({ ok: true });
 });
 
+// Clean up auto-copied recurring records beyond next month
+app.delete('/api/finance/cleanup-future', auth, requirePerm('manage_finance'), (req, res) => {
+  const now = new Date();
+  const nextMonth = new Date(now.getFullYear(), now.getMonth()+1, 1);
+  const nextMonthStr = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth()+1).padStart(2,'0')}`;
+  // Delete auto-created (is_recurring=1, unpaid) records beyond next month
+  const result = db.prepare(`DELETE FROM finance WHERE is_recurring=1 AND status='unpaid' AND paid_amount=0 AND month > ?`).run(nextMonthStr);
+  res.json({ ok: true, deleted: result.changes });
+});
+
 // History
 app.get('/api/finance/:id/history', auth, requirePerm('manage_finance'), (req, res) => {
   res.json(db.prepare('SELECT * FROM finance_history WHERE finance_id=? ORDER BY created_at DESC LIMIT 30').all(req.params.id));
