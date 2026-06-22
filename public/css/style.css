@@ -2094,6 +2094,107 @@ body.dark .gs-esc-hint { background: #0f172a; border-color: #334155; color: #647
 body.dark .be-sb-silver { background: var(--card-bg); border-color: #64748b; }
 body.dark .be-sb-bronze { background: var(--card-bg); border-color: #fb923c; }
 
+/* ─── Ideahast Page ─────────────────────────────────────────────────────────── */
+.ih-page { padding: 0 24px 48px; }
+.ih-header { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:20px; }
+.ih-page-title { font-size:22px; font-weight:900; color:var(--text); }
+.ih-page-sub   { font-size:13px; color:var(--text-muted); margin-top:2px; }
+
+.ih-stats { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:24px; }
+.ih-stat { background:var(--card-bg); border:1.5px solid var(--border); border-radius:12px; padding:14px 16px; text-align:center; }
+.ih-stat-total { border-color:var(--primary-border); background:var(--primary-light); }
+.ih-stat-val { font-size:26px; font-weight:900; color:var(--text); }
+.ih-stat-lbl { font-size:11px; color:var(--text-muted); margin-top:3px; }
+
+.ih-section { margin-bottom:28px; }
+.ih-section-title { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); margin-bottom:14px; }
+
+/* Timeline */
+.ih-timeline { background:var(--card-bg); border:1.5px solid var(--border); border-radius:12px; padding:16px 18px; }
+.ih-bar-row { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+.ih-bar-label { width:140px; flex-shrink:0; font-size:12px; font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:right; }
+.ih-bar-track { flex:1; height:16px; background:var(--bg); border-radius:99px; position:relative; border:1px solid var(--border); overflow:hidden; }
+.ih-bar-fill  { position:absolute; top:0; height:100%; border-radius:99px; transition:width .3s; }
+.ih-bar-status { width:18px; font-size:11px; font-weight:800; flex-shrink:0; }
+.ih-timeline-axis { display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-top:8px; padding:0 150px 0 0; }
+
+/* Project cards */
+.ih-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; }
+.ih-card { border:1.5px solid var(--border); border-radius:14px; overflow:hidden; cursor:pointer; transition:all 0.15s; display:flex; }
+.ih-card:hover { transform:translateY(-2px); box-shadow:var(--shadow-md); border-color:var(--border); }
+.ih-card-color { width:6px; flex-shrink:0; }
+.ih-card-body  { flex:1; padding:14px 16px; }
+.ih-card-top   { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:6px; }
+.ih-card-title { font-size:14px; font-weight:700; color:var(--text); flex:1; }
+.ih-status-badge { font-size:11px; font-weight:700; padding:2px 9px; border-radius:20px; white-space:nowrap; flex-shrink:0; }
+.ih-card-client { font-size:12px; color:var(--text-muted); display:flex; align-items:center; gap:4px; margin-bottom:5px; }
+.ih-card-desc   { font-size:12px; color:var(--text-muted); margin-bottom:8px; line-height:1.4; }
+.ih-card-dates  { display:flex; align-items:center; justify-content:space-between; font-size:11px; color:var(--text-muted); }
+.ih-card-life   { font-weight:700; color:var(--text); }
+
+/* Color picker */
+.ih-color-btn { width:22px; height:22px; border-radius:50%; border:2px solid transparent; cursor:pointer; transition:transform .1s; }
+.ih-color-btn:hover { transform:scale(1.2); }
+.ih-color-btn.selected { border-color:var(--text); transform:scale(1.15); }
+
+/* ─── B2C Finance Page ─────────────────────────────────────────────────────── */
+.b2c-page { padding: 0 24px 48px; }
+.b2c-courses-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; }
+.b2c-courses-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; }
+.b2c-course-card { background:var(--card-bg); border:1.5px solid var(--border); border-radius:14px; padding:18px; cursor:pointer; transition:all 0.15s; }
+.b2c-course-card:hover { border-color:var(--primary); transform:translateY(-2px); box-shadow:var(--shadow-md); }
+.b2c-course-title { font-size:15px; font-weight:800; color:var(--text); margin-bottom:8px; }
+.b2c-course-meta { font-size:12px; color:var(--text-muted); display:flex; align-items:center; gap:5px; margin-bottom:4px; }
+.b2c-course-stats { display:flex; justify-content:space-between; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); font-size:12px; font-weight:600; }
+.b2c-course-finance { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:10px; padding:10px; background:var(--bg); border-radius:8px; }
+.b2c-cf-item { display:flex; flex-direction:column; align-items:center; gap:2px; }
+.b2c-cf-lbl  { font-size:9.5px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em; font-weight:600; }
+.b2c-cf-val  { font-size:13px; font-weight:800; color:var(--text); white-space:nowrap; }
+.b2c-cf-bar  { height:4px; background:var(--border); border-radius:99px; overflow:hidden; margin-top:6px; }
+.b2c-cf-bar-fill { height:100%; background:#16a34a; border-radius:99px; }
+.b2c-course-actions { display:flex; gap:6px; margin-top:10px; }
+
+.b2c-filter-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+.b2c-month-tabs { display:flex; gap:6px; flex-wrap:wrap; }
+.b2c-dashboard { margin-bottom:20px; display:flex; flex-direction:column; gap:12px; }
+.b2c-dash-row  { display:flex; gap:12px; flex-wrap:wrap; }
+.b2c-dash-card { background:var(--card-bg); border:1.5px solid var(--border); border-radius:12px; padding:14px 16px; display:flex; align-items:center; gap:14px; flex:1; min-width:160px; }
+.b2c-dash-wide { flex:1; min-width:0; }
+.b2c-dash-icon { width:40px; height:40px; border-radius:10px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.b2c-dash-val  { font-size:22px; font-weight:900; color:var(--text); }
+.b2c-dash-lbl  { font-size:11px; color:var(--text-muted); margin-top:2px; }
+
+.b2c-course-header { display:flex; align-items:flex-start; gap:16px; margin-bottom:16px; flex-wrap:wrap; }
+.b2c-course-info { flex:1; }
+.b2c-course-title-big { font-size:18px; font-weight:800; color:var(--text); margin-bottom:4px; }
+.b2c-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px; }
+.b2c-stat { background:var(--card-bg); border:1.5px solid var(--border); border-radius:10px; padding:12px 16px; text-align:center; }
+.b2c-stat-val { font-size:22px; font-weight:800; color:var(--text); }
+.b2c-stat-lbl { font-size:11px; color:var(--text-muted); margin-top:2px; }
+
+.b2c-table-wrap { overflow-x:auto; border-radius:12px; border:1.5px solid var(--border); }
+.b2c-table { width:100%; border-collapse:collapse; font-size:13px; }
+.b2c-table thead tr { background:var(--bg); }
+.b2c-table th { padding:9px 12px; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--text-muted); text-align:left; border-bottom:2px solid var(--border); border-right:1px solid var(--border); white-space:nowrap; }
+.b2c-table th:last-child { border-right:none; }
+.b2c-td { padding:8px 12px; border-bottom:1px solid var(--border); border-right:1px solid var(--border); vertical-align:middle; }
+.b2c-td:last-child { border-right:none; }
+.b2c-row:hover td { background:var(--bg); }
+.b2c-num { width:32px; text-align:center; color:var(--text-muted); font-size:12px; }
+.b2c-name { font-weight:600; min-width:140px; }
+.b2c-phone { font-size:12px; color:var(--text-muted); white-space:nowrap; }
+.b2c-amount { text-align:right; font-weight:700; white-space:nowrap; }
+.b2c-date { white-space:nowrap; font-size:12px; color:var(--text-muted); }
+.b2c-comment { font-size:12px; color:var(--text-muted); max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.b2c-actions { display:flex; gap:5px; white-space:nowrap; }
+.b2c-sel {
+  border:none; background:transparent; font-size:12px; font-weight:700;
+  cursor:pointer; padding:3px 6px; border-radius:6px; outline:none;
+  min-width:80px; -webkit-appearance:none; text-align:center;
+}
+.b2c-sel:hover { opacity:0.8; }
+.b2c-sel-receiver { min-width:70px; }
+
 /* ─── Finance Page ─────────────────────────────────────────────────────────── */
 .fin-page { padding: 0 0 48px; }
 .fin-header { display: flex; align-items: center; justify-content: space-between; padding: 0 24px 18px; gap: 12px; }
@@ -2167,6 +2268,10 @@ body.dark .fin-table th { background: var(--card-bg); }
 .fin-pmts-badge { display: inline-block; margin-left: 5px; background: #bae6fd; color: #0369a1; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 8px; cursor: pointer; }
 .fin-recur-dot { font-size: 10px; color: #d97706; margin-left: 3px; }
 .fin-row-recurring { background: #fffbeb !important; }
+.fin-row-b2c  { background: #f5f3ff !important; }
+.fin-row-kids { background: #f0fdf4 !important; }
+body.dark .fin-row-b2c  { background: rgba(99,102,241,0.08) !important; }
+body.dark .fin-row-kids { background: rgba(22,163,74,0.08) !important; }
 body.dark .fin-row-recurring { background: rgba(180,83,9,0.08) !important; }
 
 .fin-chart-wrap {

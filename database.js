@@ -165,6 +165,98 @@ function initDB() {
     new_value TEXT,
     created_at TEXT DEFAULT (datetime('now'))
   )`); } catch {}
+  try { db.exec(`CREATE TABLE IF NOT EXISTS ideahast_projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    color TEXT DEFAULT '#6366f1',
+    status TEXT DEFAULT 'active',
+    start_date TEXT NOT NULL,
+    end_date TEXT DEFAULT '',
+    client TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+  try { db.exec(`CREATE TABLE IF NOT EXISTS finance_activity_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    user_name TEXT,
+    section TEXT NOT NULL,
+    action TEXT NOT NULL,
+    entity_type TEXT DEFAULT '',
+    entity_id INTEGER DEFAULT NULL,
+    entity_title TEXT DEFAULT '',
+    detail TEXT DEFAULT '',
+    amount REAL DEFAULT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+
+  // Generic course tables — used by both B2C and Kids via `section` param
+  try { db.exec(`CREATE TABLE IF NOT EXISTS kids_courses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    teacher TEXT DEFAULT '',
+    teacher_phone TEXT DEFAULT '',
+    start_date TEXT DEFAULT '',
+    end_date TEXT DEFAULT '',
+    archived INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+  try { db.exec(`CREATE TABLE IF NOT EXISTS kids_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_id INTEGER NOT NULL REFERENCES kids_courses(id) ON DELETE CASCADE,
+    student_name TEXT NOT NULL,
+    phone TEXT DEFAULT '',
+    course_amount REAL DEFAULT 0,
+    amount REAL DEFAULT 0,
+    status TEXT DEFAULT 'unpaid',
+    payment_method TEXT DEFAULT 'cash',
+    received_by TEXT DEFAULT '',
+    payment_date TEXT DEFAULT '',
+    comment TEXT DEFAULT '',
+    receipt_img TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+  try { db.exec(`CREATE TABLE IF NOT EXISTS b2c_courses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    teacher TEXT DEFAULT '',
+    teacher_phone TEXT DEFAULT '',
+    start_date TEXT DEFAULT '',
+    end_date TEXT DEFAULT '',
+    archived INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+  try { db.exec("ALTER TABLE b2c_courses ADD COLUMN teacher_phone TEXT DEFAULT ''"); } catch {}
+  try { db.exec(`CREATE TABLE IF NOT EXISTS b2c_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_id INTEGER NOT NULL REFERENCES b2c_courses(id) ON DELETE CASCADE,
+    student_name TEXT NOT NULL,
+    phone TEXT DEFAULT '',
+    course_amount REAL DEFAULT 0,
+    amount REAL DEFAULT 0,
+    status TEXT DEFAULT 'unpaid',
+    payment_method TEXT DEFAULT 'cash',
+    received_by TEXT DEFAULT '',
+    payment_date TEXT DEFAULT '',
+    comment TEXT DEFAULT '',
+    receipt_img TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+  try { db.exec("ALTER TABLE b2c_payments ADD COLUMN course_amount REAL DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE b2c_payments ADD COLUMN receipt_img TEXT DEFAULT ''"); } catch {}
+  try { db.exec(`CREATE TABLE IF NOT EXISTS expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    amount REAL NOT NULL DEFAULT 0,
+    category TEXT DEFAULT 'other',
+    comment TEXT DEFAULT '',
+    month TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
   try { db.exec(`CREATE TABLE IF NOT EXISTS finance (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,

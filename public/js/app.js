@@ -85,10 +85,12 @@ function avatar(name, color, cls = '', imgUrl = '') {
   return `<div class="avatar ${cls}" style="background:${color || '#6366f1'}">${initials(name)}</div>`;
 }
 
+const TZ = 'Asia/Dushanbe';
+
 function fmtDate(dt) {
   if (!dt) return '—';
-  const d = new Date(dt);
-  return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(',', '');
+  const d = new Date(dt.endsWith('Z') || dt.includes('+') ? dt : dt + 'Z');
+  return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: TZ }).replace(',', '');
 }
 
 function taskPlural(n) {
@@ -99,9 +101,9 @@ function taskPlural(n) {
 
 function fmtDateShort(dt) {
   if (!dt) return '—';
-  const d = new Date(dt);
+  const d = new Date(dt.endsWith('Z') || dt.includes('+') ? dt : dt + 'Z');
   const now = new Date();
-  const opts = { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' };
+  const opts = { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: TZ };
   if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
   return d.toLocaleString('ru-RU', opts);
 }
@@ -350,9 +352,26 @@ async function initApp() {
     if (can('manage_projects')) openProjectModal();
   });
 
+  // Browser Back/Forward button support
+  window.addEventListener('popstate', e => {
+    const s = e.state;
+    if (!s) { navigateTo('dashboard', null, false); return; }
+    if (s.employeeId && s.page === 'employee') {
+      state.currentEmployeeId = s.employeeId;
+    }
+    navigateTo(s.page, s.projectId || null, false);
+  });
+
+  // Push initial state so first Back doesn't exit the app
+  try {
+    const initState = { page: state.currentPage || 'dashboard', projectId: null };
+    history.replaceState(initState, '', window.location.pathname);
+  } catch {}
+
   // Keyboard shortcuts
   document.addEventListener('keydown', e => {
     const inInput = e.target.matches('input,textarea,select,[contenteditable]');
+
     if (e.key === 'Escape') {
       const detail = document.getElementById('fb-detail-overlay');
       if (detail) { detail.remove(); return; }
@@ -360,12 +379,42 @@ async function initApp() {
       if (search) { search.remove(); return; }
       closeWelcomeModal();
       closeModal();
+      return;
     }
+
     // Cmd+K / Ctrl+K — global search
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault();
       openGlobalSearch();
+      return;
     }
+
+    // Enter — submit topmost modal (not in textarea or select)
+    if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      if (e.target.matches('textarea')) return; // allow Enter in textarea
+      if (e.target.matches('select')) return;   // allow Enter in select
+
+      // Global search — already handled by its own keydown
+      if (document.getElementById('global-search-overlay')) return;
+
+      // Feedback detail overlay
+      const detail = document.getElementById('fb-detail-overlay');
+      if (detail) {
+        detail.querySelector('.btn-blue')?.click();
+        return;
+      }
+
+      // Regular modal
+      const modalRoot = document.getElementById('modal-root');
+      if (modalRoot && modalRoot.children.length > 0) {
+        // Don't auto-submit from input inside comment fields
+        if (e.target.id === 'comment-input') return;
+        const primaryBtn = modalRoot.querySelector('.btn-blue:not([disabled])');
+        if (primaryBtn) { e.preventDefault(); primaryBtn.click(); }
+        return;
+      }
+    }
+
     if (!inInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
       if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openTaskModal(); }
     }
@@ -488,6 +537,10 @@ function setupNavigation() {
 }
 
 const PAGE_TITLES = {
+  'finance-log': 'Активность финансов',
+  'ideahast': 'Ideahast',
+  'kids': 'Финансы Kids',
+  'b2c': 'Финансы В2С',
   finance: 'Финансы',
   dashboard: 'Дашборд',
   tasks: 'Все задачи',
@@ -501,7 +554,7 @@ const PAGE_TITLES = {
   activity: 'Активность',
 };
 
-function navigateTo(page, projectId = null) {
+function navigateTo(page, projectId = null, pushHistory = true) {
   state.currentPage = page;
   state.currentProjectId = projectId;
   try {
@@ -510,6 +563,13 @@ function navigateTo(page, projectId = null) {
               : page;
     sessionStorage.setItem('mb_page', key);
   } catch {}
+
+  // Push browser history state so Back button works within the app
+  if (pushHistory) {
+    const stateObj = { page, projectId: projectId || null, employeeId: state.currentEmployeeId || null };
+    const url = '/' + (page === 'dashboard' ? '' : page + (projectId ? '/' + projectId : ''));
+    try { history.pushState(stateObj, '', url); } catch {}
+  }
 
 
   document.querySelectorAll('.nav-item, .project-tree-item').forEach(el => el.classList.remove('active'));
@@ -536,7 +596,7 @@ function navigateTo(page, projectId = null) {
       break;
     case 'mytasks':
       myTasksMode = true;
-      tasksFilter = { status: '', priority: '', search: '', assignee_id: String(state.user.id), overdue: false };
+      tasksFilter = { status: '', priority: '', search: '', assignee_id: '', overdue: false };
       renderTasksPage();
       break;
     case 'project': renderProjectPage(projectId); break;
@@ -545,6 +605,10 @@ function navigateTo(page, projectId = null) {
     case 'settings': renderSettingsPage(); break;
     case 'employee': renderEmployeeProfile(state.currentEmployeeId); break;
     case 'activity': renderActivityPage(); break;
+    case 'finance-log': renderFinanceLogPage(); break;
+    case 'ideahast': renderIdeahastPage(); break;
+    case 'kids': renderSectionPage('kids'); break;
+    case 'b2c': renderB2CPage(); break;
     case 'finance': renderFinancePage(); break;
     case 'best-employee': renderBestEmployeePage(); break;
     case 'schedule': renderSchedulePage(); break;
@@ -1448,14 +1512,15 @@ function setTaskFilter(key, val) {
   if (key === 'status') tasksFilter.overdue = false;
   if (key === 'overdue' && val) tasksFilter.status = '';
   tasksFilter[key] = val;
-  if (myTasksMode) tasksFilter.assignee_id = String(state.user.id);
+  if (myTasksMode) tasksFilter.assignee_id = ''; // server already filters by user (assignee OR creator)
   renderTasksPage();
 }
 
 async function loadAndRenderTasks() {
   try {
     if (myTasksMode) {
-      const allUserTasks = await GET('/tasks?assignee_id=' + state.user.id);
+      // Fetch ALL tasks visible to user (includes assigned + created by them)
+      const allUserTasks = await GET('/tasks');
       const summaryEl = document.getElementById('mytasks-summary');
       if (summaryEl) {
         summaryEl.innerHTML = renderMyTasksSummary(allUserTasks);
@@ -1466,7 +1531,8 @@ async function loadAndRenderTasks() {
     let url = '/tasks';
     const params = [];
     if (tasksFilter.status) params.push('status=' + tasksFilter.status);
-    if (tasksFilter.assignee_id) params.push('assignee_id=' + tasksFilter.assignee_id);
+    // In myTasksMode: don't filter by assignee_id — server returns tasks where user is assignee OR creator
+    if (!myTasksMode && tasksFilter.assignee_id) params.push('assignee_id=' + tasksFilter.assignee_id);
     if (params.length) url += '?' + params.join('&');
     let tasks = await GET(url);
     if (tasksFilter.overdue) tasks = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date());
@@ -2334,7 +2400,7 @@ function taskCard(t, urgencyLevel = null) {
           ${assigneeMetaHtml}
           ${dl}
           ${cd}
-          ${t.creator_name && state.user.role === 'admin' ? `<span class="task-meta-item" style="color:#d1d5db">от ${t.creator_name}</span>` : ''}
+          ${t.creator_name && t.created_by !== state.user.id ? `<span class="task-meta-item" style="color:#94a3b8;font-size:11px">от ${t.creator_name}</span>` : ''}
         </div>
       </div>
       <div class="task-card-right">
@@ -2484,6 +2550,14 @@ async function openTaskDetail(taskId) {
               <div class="label">Создана</div>
               <div class="value">${fmtDate(t.created_at)}</div>
             </div>
+            ${t.creator_name ? `
+            <div class="task-detail-meta-item">
+              <div class="label">Постановщик</div>
+              <div class="value" style="display:flex;align-items:center;gap:6px">
+                ${(() => { const cu = state.users?.find(u=>u.id===t.created_by); return avatar(t.creator_name, cu?.avatar_color||'#6366f1', 'avatar-xs', cu?.avatar_img||''); })()}
+                ${t.creator_name}
+              </div>
+            </div>` : ''}
           </div>
 
           ${canEdit && isAdmin ? `
@@ -2698,8 +2772,13 @@ function initCustomDatepicker(inputId, initial) {
 
   function positionDp() {
     const r = trigger.getBoundingClientRect();
-    dp.style.left = r.left + 'px';
-    dp.style.top  = (window.innerHeight - r.bottom < 330) ? (r.top - 342) + 'px' : (r.bottom + 4) + 'px';
+    const dpH = 400; // calendar + time picker height
+    const spaceBelow = window.innerHeight - r.bottom;
+    const spaceAbove = r.top;
+    // Open upward if not enough space below, but enough above
+    const openUp = spaceBelow < dpH && spaceAbove > spaceBelow;
+    dp.style.left = Math.min(r.left, window.innerWidth - 270) + 'px';
+    dp.style.top  = openUp ? Math.max(8, r.top - dpH - 4) + 'px' : (r.bottom + 4) + 'px';
   }
 
   function openDp()  { isOpen=true;  positionDp(); dp.classList.remove('hidden'); trigger.classList.add('open'); renderCal(); }
@@ -3432,7 +3511,7 @@ function renderActivityLog(logs) {
 
   const initials = name => name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
-  const VISIBLE = 15;
+  const VISIBLE = 10;
   const renderRow = log => {
     const color = ACTION_COLOR[log.action] || '#94a3b8';
     const icon  = ACTION_ICON[log.action]  || ACTION_ICON.task_updated;
@@ -3464,15 +3543,15 @@ function renderActivityLog(logs) {
     <div id="act-log-more" style="display:none" class="act-log-list">
       ${hidden.map(renderRow).join('')}
     </div>
-    <button id="act-log-toggle" onclick="
-      const m=document.getElementById('act-log-more');
-      const b=document.getElementById('act-log-toggle');
-      const open=m.style.display==='none';
-      m.style.display=open?'':'none';
-      b.textContent=open?'Скрыть':'Показать ещё ${hidden.length} событий ↓';
-    " style="margin-top:8px;background:none;border:none;color:var(--primary);font-size:12px;font-weight:600;cursor:pointer;padding:4px 0">
-      Показать ещё ${hidden.length} событий ↓
-    </button>` : '';
+    <div style="text-align:center;margin-top:12px">
+      <button id="act-log-toggle" class="btn btn-outline btn-sm" onclick="
+        const m=document.getElementById('act-log-more');
+        const b=document.getElementById('act-log-toggle');
+        const open=m.style.display==='none';
+        m.style.display=open?'':'none';
+        b.textContent=open?'▲ Свернуть':'▼ Показать все (${hidden.length} событий)';
+      ">▼ Показать все (${hidden.length} событий)</button>
+    </div>` : '';
 
   el.innerHTML = `
     <div class="chart-panel">
@@ -3649,13 +3728,12 @@ function renderUserActivityContent(userId, data, days) {
       <div class="chart-title">Лог активности <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light);margin-left:4px">· ${logs.length} событий</span></div>
       ${logs.length === 0
         ? '<div style="color:#94a3b8;font-size:13px;padding:8px 0">Нет активности за выбранный период</div>'
-        : `<div class="act-log-list">
-          ${logs.map(log => {
-            const color = ACTION_COLOR[log.action] || '#94a3b8';
-            const icon  = ACTION_ICON[log.action]  || ACTION_ICON.task_updated;
-            const text  = ACTION_TEXT[log.action]  || log.action;
-            return `
-              <div class="act-log-row">
+        : (() => {
+            const renderUARow = log => {
+              const color = ACTION_COLOR[log.action] || '#94a3b8';
+              const icon  = ACTION_ICON[log.action]  || ACTION_ICON.task_updated;
+              const text  = ACTION_TEXT[log.action]  || log.action;
+              return `<div class="act-log-row">
                 <div class="act-log-body">
                   <div class="act-log-text">
                     ${text}
@@ -3666,8 +3744,22 @@ function renderUserActivityContent(userId, data, days) {
                 </div>
                 <div class="act-log-icon" style="background:${color}1a;color:${color}">${icon}</div>
               </div>`;
-          }).join('')}
-        </div>`}
+            };
+            const vis10  = logs.slice(0, 10);
+            const hidden = logs.slice(10);
+            return `<div class="act-log-list">${vis10.map(renderUARow).join('')}</div>
+              ${hidden.length > 0 ? `
+                <div id="ua-log-more" style="display:none" class="act-log-list">${hidden.map(renderUARow).join('')}</div>
+                <div style="text-align:center;margin-top:10px">
+                  <button class="btn btn-outline btn-sm" id="ua-log-btn" onclick="
+                    const m=document.getElementById('ua-log-more');
+                    const b=document.getElementById('ua-log-btn');
+                    const open=m.style.display==='none';
+                    m.style.display=open?'':'none';
+                    b.textContent=open?'▲ Свернуть':'▼ Показать все (${hidden.length} событий)';
+                  ">▼ Показать все (${hidden.length} событий)</button>
+                </div>` : ''}`;
+          })()}
     </div>
   `;
 }
@@ -3808,6 +3900,10 @@ const PERM_LABELS = {
   view_activity:    { icon: svgI(SVG_PATHS.eye, 13),    text: 'Активность' },
   manage_schedule:  { icon: svgI(SVG_PATHS.cal, 13),    text: 'Расписание' },
   manage_finance:   { icon: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`, text: 'Финансы' },
+  manage_finance_log: { icon: svgI(SVG_PATHS.clip, 13), text: 'Активность финансов' },
+  manage_ideahast:  { icon: svgI(SVG_PATHS.bars, 13), text: 'Анализ проектов' },
+  manage_kids:      { icon: svgI(SVG_PATHS.users, 13), text: 'Финансы Kids' },
+  manage_b2c:       { icon: svgI(SVG_PATHS.users, 13), text: 'Финансы В2С' },
 };
 
 function permTags(perms) {
@@ -4560,6 +4656,19 @@ function filterAssigneeChips(q) {
 }
 
 // ─── Finance Page ─────────────────────────────────────────────────────────────
+const EXP_CATEGORIES = {
+  admin: 'Админ. расходы', salary: 'ЗП', taxi: 'Услуга такси',
+  master: 'Услуга мастера', household: 'Хозтовары', stationery: 'Канцелярские',
+  utilities: 'Коммунальные', equipment: 'Орг. техника', internet: 'Интернет',
+  ads: 'Реклама', subscriptions: 'Подписки', food: 'Питание', other: 'Разное',
+};
+const EXP_CATEGORY_COLORS = {
+  admin:'#6366f1', salary:'#16a34a', taxi:'#f59e0b', master:'#8b5cf6',
+  household:'#06b6d4', stationery:'#3b82f6', utilities:'#0891b2',
+  equipment:'#64748b', internet:'#0ea5e9', ads:'#ec4899',
+  subscriptions:'#d97706', food:'#22c55e', other:'#94a3b8',
+};
+
 const FIN_STATUS       = { paid: 'Оплачено', unpaid: 'Не оплачено', partial: 'Частично' };
 const FIN_STATUS_COLOR = { paid: '#16a34a', unpaid: '#dc2626', partial: '#d97706' };
 const FIN_TYPE         = { cash: 'Наличными', bank: 'Банк', alif: 'Alif', dushanbecity: 'DC' };
@@ -4584,8 +4693,9 @@ async function renderFinancePage() {
     DEL('/finance/cleanup-future').catch(() => {});
   }
   try {
-    if (_finTab === 'annual') { await _renderFinanceAnnual(); return; }
+    if (_finTab === 'annual')   { await _renderFinanceAnnual(); return; }
     if (_finTab === 'projects') { await _renderFinanceProjects(); return; }
+    if (_finTab === 'expenses') { await _renderExpensesPage(); return; }
     const params = new URLSearchParams({ month: _finMonth });
     if (_finFilter.status)       params.set('status', _finFilter.status);
     if (_finFilter.payment_type) params.set('payment_type', _finFilter.payment_type);
@@ -4624,10 +4734,35 @@ async function renderFinancePage() {
     }
 
     _renderFinance(rows);
-    // Load annual chart data async (non-blocking)
-    GET('/finance/annual?year=' + _finMonth.slice(0,4)).then(annual => {
-      const wrap = document.getElementById('fin-chart-svg-wrap');
-      if (wrap) wrap.innerHTML = _buildFinLineChart(annual, _finMonth);
+    // Load section summary async
+    GET('/finance/section-summary?month=' + _finMonth).then(s => {
+      const el = document.getElementById('fin-section-summary');
+      if (!el) return;
+      const block = (title, d, color, page) => {
+        const pct = d.svc>0 ? Math.round(d.paid/d.svc*100) : 0;
+        const debt = d.svc - d.paid;
+        return `<div class="fin-sum-card" style="cursor:pointer;border-left:4px solid ${color}" onclick="navigateTo('${page}')">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-size:12px;font-weight:700;color:${color}">${title}</div>
+            <div style="font-size:11px;color:var(--text-muted)">${d.cnt} записей</div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px">
+            <div><div style="font-size:16px;font-weight:800">${fmtMoney(d.svc)}</div><div style="font-size:10px;color:var(--text-muted)">Сумма</div></div>
+            <div><div style="font-size:16px;font-weight:800;color:#16a34a">${fmtMoney(d.paid)}</div><div style="font-size:10px;color:var(--text-muted)">Оплачено</div></div>
+            <div><div style="font-size:16px;font-weight:800;color:${debt>0?'#dc2626':'#16a34a'}">${fmtMoney(debt)}</div><div style="font-size:10px;color:var(--text-muted)">Долг</div></div>
+          </div>
+          <div class="fin-progress-bar-bg"><div class="fin-progress-bar-fill" style="width:${pct}%;background:${pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626'}"></div></div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:4px;text-align:right">${pct}% собрано</div>
+        </div>`;
+      };
+      const hasData = s.finance.svc>0||s.b2c.svc>0||s.kids.svc>0;
+      el.innerHTML = hasData ? `
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:10px">Сводка по направлениям · ${_finMonth}</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+          ${block('Финансы (Проекты)', s.finance, '#881337', 'finance')}
+          ${block('Финансы В2С', s.b2c, '#6366f1', 'b2c')}
+          ${block('Финансы Kids', s.kids, '#16a34a', 'kids')}
+        </div>` : '';
     }).catch(() => {});
   } catch (err) {
     content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
@@ -4645,8 +4780,8 @@ function _renderFinance(rows) {
   const nextMonth = () => fmtYM(new Date(+y, +m,   1));
 
   const tabs = [
-    { key:'month', label:'По месяцам' },
-    { key:'projects', label:'По проектам' },
+    { key:'month', label:'Доходы' },
+    { key:'expenses', label:'Расходы' }, { key:'projects', label:'По проектам' },
     { key:'annual', label:'Годовой отчёт' },
   ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
 
@@ -4678,12 +4813,13 @@ function _renderFinance(rows) {
   const partialCount = rows.filter(r=>r.status==='partial').length;
 
   const tableRows = rows.map((r,i) => {
+    const isB2C = r.is_b2c === 1 || r.is_b2c === 2;
     const debt = +r.service_amount - +r.paid_amount;
     const pmts = r.payments || [];
-    return `<tr class="fin-row ${r.is_recurring?'fin-row-recurring':''}">
-      <td class="fin-td fin-num" title="${r.is_recurring?'Повторяющаяся запись':''}">${i+1}${r.is_recurring?'<span class="fin-recur-dot">↻</span>':''}</td>
+    return `<tr class="fin-row ${r.is_recurring?'fin-row-recurring':''} ${r.is_b2c===1?'fin-row-b2c':r.is_b2c===2?'fin-row-kids':''}">
+      <td class="fin-td fin-num">${isB2C?`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${r.is_b2c===2?'#16a34a':'#6366f1'}" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>`:i+1}${r.is_recurring?'<span class="fin-recur-dot">↻</span>':''}</td>
       <td class="fin-td fin-project">
-        <div>${_escHtml(r.project_name)}</div>
+        <div>${_escHtml(r.project_name)}${isB2C?` <span style="font-size:10px;background:${r.is_b2c===2?'#dcfce7':'#ede9fe'};color:${r.is_b2c===2?'#16a34a':'#6d28d9'};padding:1px 5px;border-radius:4px;font-weight:600">авто</span>`:''}</div>
         ${r.client_name?`<div style="font-size:11px;color:var(--text-muted)">${_escHtml(r.client_name)}${r.client_phone?' · '+_escHtml(r.client_phone):''}</div>`:''}
       </td>
       <td class="fin-td fin-money">${fmtMoney(r.service_amount)}</td>
@@ -4696,6 +4832,7 @@ function _renderFinance(rows) {
       <td class="fin-td"><span class="fin-type-badge" style="background:${FIN_TYPE_COLOR[r.payment_type]||'#64748b'}22;color:${FIN_TYPE_COLOR[r.payment_type]||'#64748b'}">${FIN_TYPE[r.payment_type]||r.payment_type}</span></td>
       <td class="fin-td fin-comment">${_escHtml(r.comment||'—')}</td>
       <td class="fin-td fin-actions">
+        ${isB2C ? `<button class="btn btn-outline btn-sm" onclick="navigateTo('${r.is_b2c===2?'kids':'b2c'}')" style="font-size:11px;padding:3px 8px;white-space:nowrap">Открыть →</button>` : `
         <button class="fin-btn-edit" onclick="openFinanceModal(${r.id})" title="Редактировать">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         </button>
@@ -4704,7 +4841,7 @@ function _renderFinance(rows) {
         </button>
         <button class="fin-btn-del" onclick="deleteFinance(${r.id})" title="Удалить">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
-        </button>
+        </button>`}
       </td>
     </tr>`;
   }).join('');
@@ -4780,24 +4917,15 @@ function _renderFinance(rows) {
             </table>
           </div>`}
 
-      <!-- Annual line chart — after table -->
-      <div class="fin-chart-wrap" id="fin-annual-chart-block" style="margin-top:20px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted)">Динамика по месяцам · ${y} год</div>
-          <div style="display:flex;gap:16px;font-size:11px;color:var(--text-muted)">
-            <span><svg width="20" height="4"><line x1="0" y1="2" x2="20" y2="2" stroke="#881337" stroke-width="2"/></svg> Сумма услуги</span>
-            <span><svg width="20" height="4"><line x1="0" y1="2" x2="20" y2="2" stroke="#16a34a" stroke-width="2"/></svg> Оплачено</span>
-          </div>
-        </div>
-        <div id="fin-chart-svg-wrap" style="width:100%">
-          <div style="color:#9ca3af;font-size:12px;padding:20px 0;text-align:center">Загрузка...</div>
-        </div>
+      <!-- Section summary blocks (replaces chart) -->
+      <div id="fin-section-summary" style="margin-top:20px">
+        <div style="color:#9ca3af;font-size:12px;padding:10px 0;text-align:center">Загрузка сводки...</div>
       </div>
     </div>`;
 }
 
 function _buildFinLineChart(annualData, currentMonth) {
-  const MONTHS     = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const MONTHS     = ['Янв','Фев','Мар','Апр','Май','Июнь','Июль','Авг','Сен','Окт','Ноя','Дек'];
   const MONTHS_FULL= ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   const year = currentMonth.slice(0,4);
   const W = 600, H = 180, pL = 36, pB = 28, pT = 16, pR = 16;
@@ -4905,14 +5033,185 @@ function _finLiveSearch(q) {
   }
 }
 
+async function _renderExpensesPage() {
+  const content = document.getElementById('page-content');
+  const MONTH_NAMES = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const [y,m] = _finMonth.split('-');
+  const fmtYM = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  const prevMonth = () => fmtYM(new Date(+y, +m-2, 1));
+  const nextMonth = () => fmtYM(new Date(+y, +m, 1));
+  const monthLabel = MONTH_NAMES[+m-1] + ' ' + y;
+  const tabs = [
+    { key:'month', label:'Доходы' }, { key:'expenses', label:'Расходы' },
+    { key:'projects', label:'По проектам' }, { key:'annual', label:'Годовой отчёт' },
+  ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
+
+  const [expenses, finRows] = await Promise.all([
+    GET('/expenses?month=' + _finMonth),
+    GET('/finance?month=' + _finMonth).catch(()=>[])
+  ]);
+
+  const totalExp = expenses.reduce((s,e)=>s+(+e.amount||0),0);
+  const totalInc = finRows.reduce((s,r)=>s+(+r.service_amount||0),0);
+  const totalPaid = finRows.reduce((s,r)=>s+(+r.paid_amount||0),0);
+  const balance = totalPaid - totalExp;
+
+  const rows = expenses.map((e,i) => `
+    <tr class="fin-row">
+      <td class="fin-td fin-num">${i+1}</td>
+      <td class="fin-td fin-project">${_escHtml(e.title)}</td>
+      <td class="fin-td fin-money" style="color:#dc2626">${fmtMoney(e.amount)}</td>
+      <td class="fin-td">
+        <span class="fin-type-badge" style="background:${EXP_CATEGORY_COLORS[e.category]||'#94a3b8'}22;color:${EXP_CATEGORY_COLORS[e.category]||'#94a3b8'}">${EXP_CATEGORIES[e.category]||e.category}</span>
+      </td>
+      <td class="fin-td fin-comment">${_escHtml(e.comment||'—')}</td>
+      <td class="fin-td fin-actions">
+        <button class="fin-btn-edit" onclick="openExpenseModal(${e.id})" title="Редактировать">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="fin-btn-del" onclick="deleteExpense(${e.id})" title="Удалить">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+        </button>
+      </td>
+    </tr>`).join('');
+
+  content.innerHTML = `<div class="fin-page">
+    <div class="fin-tabs-bar">${tabs}</div>
+    <div class="fin-header">
+      <div class="fin-month-nav">
+        <button class="fin-nav-btn" onclick="finSetMonth('${prevMonth()}')">‹</button>
+        <span class="fin-month-title">${monthLabel}</span>
+        <button class="fin-nav-btn" onclick="finSetMonth('${nextMonth()}')">›</button>
+        ${_finMonth !== new Date().toISOString().slice(0,7) ? `<button class="btn btn-outline btn-sm" onclick="finSetMonth('${new Date().toISOString().slice(0,7)}')" style="font-size:11px;padding:4px 10px;margin-left:6px">Этот месяц</button>` : ''}
+      </div>
+      <button class="btn btn-blue" onclick="openExpenseModal()">＋ Добавить расход</button>
+    </div>
+
+    <!-- Balance summary -->
+    <div class="fin-summary" style="grid-template-columns:repeat(3,1fr)">
+      <div class="fin-sum-card">
+        <div class="fin-sum-lbl">Доходы (оплачено)</div>
+        <div class="fin-sum-val" style="color:#16a34a">${fmtMoney(totalPaid)}</div>
+        <div class="fin-sum-sub">Услуги: ${fmtMoney(totalInc)}</div>
+      </div>
+      <div class="fin-sum-card">
+        <div class="fin-sum-lbl">Расходы</div>
+        <div class="fin-sum-val" style="color:#dc2626">${fmtMoney(totalExp)}</div>
+        <div class="fin-sum-sub">${expenses.length} позиций</div>
+      </div>
+      <div class="fin-sum-card" style="border-color:${balance>=0?'#bbf7d0':'#fecaca'}">
+        <div class="fin-sum-lbl">Баланс (Доходы − Расходы)</div>
+        <div class="fin-sum-val" style="color:${balance>=0?'#16a34a':'#dc2626'}">${balance>=0?'+':''}${fmtMoney(balance)}</div>
+        <div class="fin-sum-sub">${balance>=0?'Прибыль':'Убыток'}</div>
+      </div>
+    </div>
+
+    <!-- Expenses table -->
+    ${expenses.length === 0
+      ? `<div class="empty-state" style="margin-top:40px"><div class="empty-icon"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="1.5"><polyline points="23 7 13.5 15.5 8.5 10.5 1 17"/><polyline points="17 7 23 7 23 13"/></svg></div><h3>Нет расходов</h3><p>Нажмите «Добавить расход» чтобы начать</p></div>`
+      : `<div class="fin-table-wrap">
+          <table class="fin-table">
+            <thead><tr><th>#</th><th>Название</th><th>Сумма</th><th>Категория</th><th>Комментарий</th><th style="width:70px"></th></tr></thead>
+            <tbody>${rows}</tbody>
+            <tfoot><tr class="fin-total-row">
+              <td colspan="2" class="fin-td fin-total-lbl">ИТОГО</td>
+              <td class="fin-td fin-money fin-total" style="color:#dc2626">${fmtMoney(totalExp)}</td>
+              <td colspan="3"></td>
+            </tr></tfoot>
+          </table>
+        </div>`}
+  </div>`;
+}
+
+function openExpenseModal(id = null) {
+  let exp = null;
+  if (id) {
+    GET('/expenses?month=' + _finMonth).then(all => {
+      exp = all.find(e => e.id === id);
+      if (exp) _showExpenseModal(exp);
+    });
+    return;
+  }
+  _showExpenseModal(null);
+}
+
+function _showExpenseModal(exp) {
+  const isEdit = !!exp;
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="max-width:460px">
+        <div class="modal-header">
+          <div class="modal-title">${isEdit?'Редактировать расход':'Новый расход'}</div>
+          <button class="modal-close" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="field"><label>Название расхода</label>
+            <input id="exp-title" class="input" value="${_escHtml(exp?.title||'')}" placeholder="Название...">
+          </div>
+          <div class="form-row">
+            <div class="field"><label>Сумма</label>
+              <input id="exp-amount" class="input" type="number" min="0" value="${exp?.amount||''}" placeholder="0">
+            </div>
+            <div class="field"><label>Месяц</label>
+              <input id="exp-month" class="input" type="month" value="${exp?.month||_finMonth}">
+            </div>
+          </div>
+          <div class="field"><label>Категория</label>
+            <select id="exp-category" class="input">
+              ${Object.entries(EXP_CATEGORIES).map(([k,v])=>`<option value="${k}" ${(exp?.category||'other')===k?'selected':''}>${v}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field"><label>Комментарий</label>
+            <textarea id="exp-comment" class="input" rows="2" placeholder="Необязательно...">${_escHtml(exp?.comment||'')}</textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          ${isEdit?`<button class="btn btn-danger" onclick="deleteExpense(${exp.id})">Удалить</button>`:''}
+          <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+          <button class="btn btn-blue" onclick="saveExpense(${isEdit?exp.id:'null'})">Сохранить</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function saveExpense(id) {
+  const title = document.getElementById('exp-title').value.trim();
+  if (!title) return toast('Введите название', 'error');
+  const body = {
+    title, amount: parseFloat(document.getElementById('exp-amount').value)||0,
+    category: document.getElementById('exp-category').value,
+    comment: document.getElementById('exp-comment').value.trim(),
+    month: document.getElementById('exp-month').value || _finMonth,
+  };
+  try {
+    if (id && id !== 'null') await PUT(`/expenses/${id}`, body);
+    else await POST('/expenses', body);
+    closeModal();
+    if (body.month !== _finMonth) _finMonth = body.month;
+    renderFinancePage();
+    toast('Сохранено', 'success');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function deleteExpense(id) {
+  if (!confirm('Удалить расход?')) return;
+  try {
+    await DEL(`/expenses/${id}`);
+    closeModal();
+    renderFinancePage();
+    toast('Удалено', 'success');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 async function _renderFinanceProjects() {
   const content = document.getElementById('page-content');
   const data = await GET('/finance/by-project');
   const total = data.reduce((s,r)=>s+(+r.total_service||0),0);
   const paid  = data.reduce((s,r)=>s+(+r.total_paid||0),0);
   const tabs = [
-    { key:'month', label:'По месяцам' },
-    { key:'projects', label:'По проектам' },
+    { key:'month', label:'Доходы' },
+    { key:'expenses', label:'Расходы' }, { key:'projects', label:'По проектам' },
     { key:'annual', label:'Годовой отчёт' },
   ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
   content.innerHTML = `<div class="fin-page">
@@ -4961,30 +5260,28 @@ async function _renderFinanceProjects() {
 async function _renderFinanceAnnual() {
   const content = document.getElementById('page-content');
   const year = _finMonth.slice(0,4);
-  const data  = await GET('/finance/annual?year=' + year);
-  const MONTH_NAMES = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  // Combined data from all 3 sections
+  const data = await GET('/finance/annual-combined?year=' + year);
+  const MONTH_NAMES = ['Янв','Фев','Мар','Апр','Май','Июнь','Июль','Авг','Сен','Окт','Ноя','Дек'];
   const tabs = [
     { key:'month', label:'По месяцам' },
     { key:'projects', label:'По проектам' },
     { key:'annual', label:'Годовой отчёт' },
   ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
 
-  // SVG line chart
-  const W=700,H=180,pL=40,pB=24,pT=16,pR=16;
-  const iW=W-pL-pR, iH=H-pB-pT;
-  const maxV = Math.max(...data.map(r=>+r.total_service||0), 1);
   const months12 = Array.from({length:12},(_,i)=>String(i+1).padStart(2,'0'));
-  const pts = months12.map((mo,i) => {
-    const r = data.find(d=>d.month===`${year}-${mo}`)||{total_service:0,total_paid:0};
-    return { x: pL+i/11*iW, svc:+r.total_service||0, paid:+r.total_paid||0, mo };
-  });
-  const line = (key,color) => `<polyline points="${pts.map(p=>`${p.x},${pT+(1-p[key]/maxV)*iH}`).join(' ')}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
-  const dots = (key,color) => pts.map(p=>`<circle cx="${p.x}" cy="${pT+(1-p[key]/maxV)*iH}" r="3.5" fill="${color}" stroke="white" stroke-width="1.5"/>`).join('');
-  const grid = [0.25,0.5,0.75,1].map(f=>`<line x1="${pL}" y1="${pT+(1-f)*iH}" x2="${W-pR}" y2="${pT+(1-f)*iH}" stroke="#e2e8f0" stroke-width="0.8"/>`).join('');
-  const labels = pts.map(p=>`<text x="${p.x}" y="${H-4}" text-anchor="middle" font-size="9" fill="#94a3b8">${MONTH_NAMES[+p.mo-1]}</text>`).join('');
-
-  const totSvc  = data.reduce((s,r)=>s+(+r.total_service||0),0);
+  const totSvc  = data.reduce((s,r)=>s+(+r.total_svc||0),0);
   const totPaid = data.reduce((s,r)=>s+(+r.total_paid||0),0);
+
+  // SVG combined line chart
+  const W=700,H=200,pL=40,pB=24,pT=16,pR=16;
+  const iW=W-pL-pR, iH=H-pB-pT;
+  const maxV = Math.max(...data.map(r=>Math.max(+r.total_svc||0,+r.total_paid||0)), 1);
+  const pts = data.map((r,i) => ({ x: pL+i/11*iW, svc:+r.total_svc||0, paid:+r.total_paid||0, fsvc:+r.fin_svc||0, bsvc:+r.b2c_svc||0, ksvc:+r.kids_svc||0 }));
+  const polyline = (key,color,w=2) => `<polyline points="${pts.map(p=>`${p.x},${pT+(1-p[key]/maxV)*iH}`).join(' ')}" fill="none" stroke="${color}" stroke-width="${w}" stroke-linejoin="round" stroke-linecap="round"/>`;
+  const dots2 = (key,color) => pts.map(p=>`<circle cx="${p.x}" cy="${pT+(1-p[key]/maxV)*iH}" r="3" fill="${color}" stroke="white" stroke-width="1.5"/>`).join('');
+  const grid = [0.25,0.5,0.75,1].map(f=>`<line x1="${pL}" y1="${pT+(1-f)*iH}" x2="${W-pR}" y2="${pT+(1-f)*iH}" stroke="#e2e8f0" stroke-width="0.8"/>`).join('');
+  const labels = pts.map((p,i)=>`<text x="${p.x}" y="${H-4}" text-anchor="middle" font-size="9" fill="#94a3b8">${MONTH_NAMES[i]}</text>`).join('');
 
   content.innerHTML = `<div class="fin-page">
     <div class="fin-tabs-bar">${tabs}</div>
@@ -5001,26 +5298,28 @@ async function _renderFinanceAnnual() {
         <div class="fin-sum-card"><div class="fin-sum-lbl">Задолженность</div><div class="fin-sum-val" style="color:${(totSvc-totPaid)>0?'#dc2626':'#16a34a'}">${fmtMoney(totSvc-totPaid)}</div></div>
       </div>
       <div class="chart-panel" style="margin-bottom:20px">
-        <div class="chart-title">Динамика по месяцам</div>
+        <div class="chart-title">Динамика по месяцам (все разделы)</div>
         <div style="display:flex;gap:14px;font-size:11px;color:var(--text-muted);margin-bottom:8px">
-          <span><svg width="20" height="4"><line x1="0" y1="2" x2="20" y2="2" stroke="#881337" stroke-width="2"/></svg> Сумма услуг</span>
+          <span><svg width="20" height="4"><line x1="0" y1="2" x2="20" y2="2" stroke="#0f172a" stroke-width="2"/></svg> Общая сумма</span>
           <span><svg width="20" height="4"><line x1="0" y1="2" x2="20" y2="2" stroke="#16a34a" stroke-width="2"/></svg> Оплачено</span>
         </div>
-        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px">${grid}${line('svc','#881337')}${line('paid','#16a34a')}${dots('svc','#881337')}${dots('paid','#16a34a')}${labels}</svg>
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px">${grid}${polyline('svc','#881337')}${polyline('paid','#16a34a')}${dots2('svc','#881337')}${dots2('paid','#16a34a')}${labels}</svg>
       </div>
       <div class="fin-table-wrap" style="margin-top:0">
         <table class="fin-table">
-          <thead><tr><th>Месяц</th><th>Записей</th><th>Сумма услуг</th><th>Оплачено</th><th>Остаток</th><th>%</th></tr></thead>
+          <thead><tr><th>Месяц</th><th>Финансы</th><th>В2С</th><th>Kids</th><th>Итого сумма</th><th>Оплачено</th><th>Остаток</th><th>%</th></tr></thead>
           <tbody>
-            ${months12.map(mo=>{
-              const r = data.find(d=>d.month===`${year}-${mo}`)||null;
-              if (!r) return `<tr class="fin-row"><td class="fin-td" style="color:var(--text-muted)">${MONTH_NAMES[+mo-1]}</td><td class="fin-td" style="text-align:center;color:var(--text-muted)">—</td><td colspan="4" class="fin-td" style="color:var(--text-muted)">Нет записей</td></tr>`;
-              const debt=+r.total_service-+r.total_paid;
-              const pct=r.total_service>0?Math.round(r.total_paid/r.total_service*100):0;
+            ${data.map((r,i)=>{
+              const hasData = r.total_svc>0||r.total_paid>0;
+              if (!hasData) return `<tr class="fin-row"><td class="fin-td" style="color:var(--text-muted)">${MONTH_NAMES[i]}</td><td colspan="7" class="fin-td" style="color:var(--text-muted)">Нет данных</td></tr>`;
+              const debt=r.total_svc-r.total_paid;
+              const pct=r.total_svc>0?Math.round(r.total_paid/r.total_svc*100):0;
               return `<tr class="fin-row" style="cursor:pointer" onclick="finSetTab('month');finSetMonth('${r.month}')">
-                <td class="fin-td fin-project">${MONTH_NAMES[+mo-1]} ${year}</td>
-                <td class="fin-td" style="text-align:center">${r.count}</td>
-                <td class="fin-td fin-money">${fmtMoney(r.total_service)}</td>
+                <td class="fin-td fin-project">${MONTH_NAMES[i]} ${year}</td>
+                <td class="fin-td fin-money" style="font-size:12px">${r.fin_svc>0?fmtMoney(r.fin_svc):'—'}</td>
+                <td class="fin-td fin-money" style="font-size:12px;color:#6366f1">${r.b2c_svc>0?fmtMoney(r.b2c_svc):'—'}</td>
+                <td class="fin-td fin-money" style="font-size:12px;color:#16a34a">${r.kids_svc>0?fmtMoney(r.kids_svc):'—'}</td>
+                <td class="fin-td fin-money">${fmtMoney(r.total_svc)}</td>
                 <td class="fin-td fin-money" style="color:#16a34a">${fmtMoney(r.total_paid)}</td>
                 <td class="fin-td fin-money" style="color:${debt>0?'#dc2626':'#16a34a'}">${fmtMoney(debt)}</td>
                 <td class="fin-td"><span style="font-weight:700;color:${pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626'}">${pct}%</span></td>
@@ -5432,6 +5731,1116 @@ async function exportFinancePDF() {
     </body></html>`);
     win.document.close();
   } catch (err) { toast(err.message, 'error'); }
+}
+
+// ─── Finance Activity Log Page ────────────────────────────────────────────────
+const FL_SECTIONS = { finance:'Финансы', b2c:'Финансы В2С', kids:'Финансы Kids' };
+const FL_ACTIONS  = {
+  create_record:'Добавил запись', update_record:'Изменил запись', delete_record:'Удалил запись',
+  add_payment:'Добавил платёж',
+  create_expense:'Добавил расход', update_expense:'Изменил расход', delete_expense:'Удалил расход',
+  add_student:'Добавил студента', update_student:'Изменил студента', delete_student:'Удалил студента',
+  delete_course:'Удалил курс',
+};
+const FL_SECTION_COLOR = { finance:'#881337', b2c:'#6366f1', kids:'#16a34a' };
+let _flSection = '', _flDays = 30;
+
+let _flShowAll = false;
+
+async function renderFinanceLogPage() {
+  const content = document.getElementById('page-content');
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  try {
+    const params = new URLSearchParams({ days: _flDays, limit: 500 });
+    if (_flSection) params.set('section', _flSection);
+    const allLogs = (await GET('/finance-log?' + params.toString()))
+      .filter(l => l.entity_title?.trim() || l.detail?.trim()); // skip empty entries
+
+    const sectionTabs = [
+      { key:'', label:'Все разделы' },
+      ...Object.entries(FL_SECTIONS).map(([k,v])=>({ key:k, label:v }))
+    ].map(t=>`<button class="fin-tab ${_flSection===t.key?'active':''}" onclick="_flSection='${t.key}';_flShowAll=false;renderFinanceLogPage()">${t.label}</button>`).join('');
+
+    const dayBtns = [7,14,30,90].map(d=>`<button class="period-btn ${_flDays===d?'active':''}" onclick="_flDays=${d};_flShowAll=false;renderFinanceLogPage()">${d} дней</button>`).join('');
+
+    // Stats — only additions count as income (not deletions, not updates)
+    const incLogs = allLogs.filter(l => !l.action.includes('expense') && !l.action.includes('delete') && (l.action.includes('create') || l.action.includes('add')));
+    const expLogs = allLogs.filter(l => l.action.includes('expense') && !l.action.includes('delete'));
+    const totalIncome  = incLogs.reduce((s,l)=>s+(+l.amount||0),0);
+    const totalExpense = expLogs.reduce((s,l)=>s+(+l.amount||0),0);
+    const uniqueUsers  = new Set(allLogs.map(l=>l.user_name)).size;
+
+    // Show 10 or all
+    const logs = _flShowAll ? allLogs : allLogs.slice(0, 10);
+
+    const logRow = (l,i) => `<tr class="fin-row">
+      <td class="fin-td fin-num">${i+1}</td>
+      <td class="fin-td" style="white-space:nowrap;font-size:12px">${fmtDate(l.created_at)}</td>
+      <td class="fin-td" style="font-weight:600;display:flex;align-items:center;gap:6px">
+        ${(() => { const u=state.users?.find(x=>x.id===l.user_id); return avatar(l.user_name||'?', u?.avatar_color||'#6366f1','avatar-xs',u?.avatar_img||''); })()}
+        ${l.user_name||'—'}
+      </td>
+      <td class="fin-td"><span class="fin-status-badge" style="background:${FL_SECTION_COLOR[l.section]||'#94a3b8'}18;color:${FL_SECTION_COLOR[l.section]||'#94a3b8'}">${FL_SECTIONS[l.section]||l.section}</span></td>
+      <td class="fin-td" style="font-size:12.5px">${FL_ACTIONS[l.action]||l.action}</td>
+      <td class="fin-td fin-project" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_escHtml(l.entity_title||'—')}</td>
+      <td class="fin-td fin-money" style="color:${l.action.includes('expense')?'#dc2626':l.amount>0?'#16a34a':'var(--text-muted)'}">
+        ${l.amount!=null?`${l.action.includes('expense')?'-':''}${fmtMoney(l.amount)}`:'—'}
+      </td>
+      <td class="fin-td fin-comment" style="max-width:200px">${_escHtml(l.detail||'—')}</td>
+    </tr>`;
+
+    content.innerHTML = `
+      <div style="padding:0 24px 48px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:20px">
+          <div style="display:flex;gap:6px;flex-wrap:wrap">${sectionTabs}</div>
+          <div style="margin-left:auto;display:flex;gap:6px">${dayBtns}</div>
+        </div>
+
+        <!-- Stats: 4 blocks -->
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px">
+          <div class="fin-sum-card"><div class="fin-sum-lbl">Всего операций</div><div class="fin-sum-val">${allLogs.length}</div></div>
+          <div class="fin-sum-card"><div class="fin-sum-lbl">Сотрудников</div><div class="fin-sum-val">${uniqueUsers}</div></div>
+          <div class="fin-sum-card" style="border-color:#bbf7d0">
+            <div class="fin-sum-lbl">Доходы (внесено)</div>
+            <div class="fin-sum-val" style="color:#16a34a">+${fmtMoney(totalIncome)}</div>
+          </div>
+          <div class="fin-sum-card" style="border-color:#fecaca">
+            <div class="fin-sum-lbl">Расходы (внесено)</div>
+            <div class="fin-sum-val" style="color:#dc2626">-${fmtMoney(totalExpense)}</div>
+          </div>
+        </div>
+
+        ${allLogs.length===0
+          ? `<div class="empty-state"><h3>Нет данных</h3><p>Операций за выбранный период не найдено</p></div>`
+          : `<div class="fin-table-wrap">
+              <table class="fin-table">
+                <thead><tr>
+                  <th>#</th><th>Дата и время</th><th>Сотрудник</th><th>Раздел</th>
+                  <th>Действие</th><th>Объект</th><th>Сумма</th><th>Детали</th>
+                </tr></thead>
+                <tbody>${logs.map(logRow).join('')}</tbody>
+              </table>
+            </div>
+            ${allLogs.length > 10 ? `
+              <div style="text-align:center;margin-top:14px">
+                <button class="btn btn-outline" onclick="_flShowAll=!_flShowAll;renderFinanceLogPage()">
+                  ${_flShowAll ? `▲ Свернуть (показать 10)` : `▼ Показать все (${allLogs.length} записей)`}
+                </button>
+              </div>` : ''}`}
+      </div>`;
+  } catch(err) { content.innerHTML=`<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`; }
+}
+
+// ─── Ideahast Page ────────────────────────────────────────────────────────────
+const IH_STATUS = { active:'Действующий', pause:'На паузе', done:'Завершён' };
+const IH_STATUS_COLOR = { active:'#16a34a', pause:'#d97706', done:'#6366f1' };
+const IH_COLORS = ['#6366f1','#8b5cf6','#ec4899','#f43f5e','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#06b6d4','#881337'];
+
+async function renderIdeahastPage() {
+  const content = document.getElementById('page-content');
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  try {
+    const projects = await GET('/ideahast');
+
+    // Stats
+    const total   = projects.length;
+    const active  = projects.filter(p=>p.status==='active').length;
+    const pause   = projects.filter(p=>p.status==='pause').length;
+    const done    = projects.filter(p=>p.status==='done').length;
+
+    // Avg lifetime (for completed projects)
+    const lifetimes = projects.filter(p=>p.end_date).map(p=>{
+      const ms = new Date(p.end_date) - new Date(p.start_date);
+      return ms/(1000*60*60*24*30); // months
+    });
+    const avgLife = lifetimes.length ? (lifetimes.reduce((a,b)=>a+b,0)/lifetimes.length).toFixed(1) : '—';
+
+    // Timeline SVG chart
+    const now = new Date();
+    const timelineHtml = _buildIhTimeline(projects);
+
+    // Status donut
+    const donutSlices = [
+      { key:'active', label:'Действующие', v:active, c:'#16a34a' },
+      { key:'pause',  label:'На паузе',    v:pause,  c:'#d97706' },
+      { key:'done',   label:'Завершённые', v:done,   c:'#6366f1' },
+    ].filter(s=>s.v>0);
+
+    content.innerHTML = `
+      <div class="ih-page">
+        <!-- Header -->
+        <div class="ih-header">
+          <div class="ih-title-wrap">
+            <div class="ih-page-title">Ideahast</div>
+            <div class="ih-page-sub">Анализ портфеля проектов</div>
+          </div>
+          <button class="btn btn-blue" onclick="openIhModal()">＋ Добавить проект</button>
+        </div>
+
+        <!-- Stats row -->
+        <div class="ih-stats">
+          <div class="ih-stat ih-stat-total">
+            <div class="ih-stat-val">${total}</div>
+            <div class="ih-stat-lbl">Всего проектов</div>
+          </div>
+          <div class="ih-stat" style="border-color:#bbf7d0">
+            <div class="ih-stat-val" style="color:#16a34a">${active}</div>
+            <div class="ih-stat-lbl">Действующих</div>
+          </div>
+          <div class="ih-stat" style="border-color:#fed7aa">
+            <div class="ih-stat-val" style="color:#d97706">${pause}</div>
+            <div class="ih-stat-lbl">На паузе</div>
+          </div>
+          <div class="ih-stat" style="border-color:#ddd6fe">
+            <div class="ih-stat-val" style="color:#6366f1">${done}</div>
+            <div class="ih-stat-lbl">Завершённых</div>
+          </div>
+          <div class="ih-stat">
+            <div class="ih-stat-val">${avgLife}</div>
+            <div class="ih-stat-lbl">Ср. срок (мес)</div>
+          </div>
+        </div>
+
+        ${total === 0 ? `<div class="empty-state" style="margin-top:40px"><div class="empty-icon">${svgI(SVG_PATHS.bars,44)}</div><h3>Нет проектов</h3><p>Добавьте первый проект для анализа</p></div>` : `
+        <!-- Timeline chart -->
+        <div class="ih-section">
+          <div class="ih-section-title">Временная шкала проектов</div>
+          ${timelineHtml}
+        </div>
+
+        <!-- Project blocks -->
+        <div class="ih-section">
+          <div class="ih-section-title">Все проекты (${total})</div>
+          <div class="ih-grid">
+            ${projects.map(p => {
+              const start = p.start_date ? p.start_date : '—';
+              const end   = p.end_date   ? p.end_date   : 'сейчас';
+              const msLife = p.end_date
+                ? new Date(p.end_date) - new Date(p.start_date)
+                : Date.now() - new Date(p.start_date);
+              const lifeMonths = Math.max(0, Math.floor(msLife/(1000*60*60*24*30)));
+              return `
+              <div class="ih-card" onclick="openIhModal(${p.id})">
+                <div class="ih-card-color" style="background:${p.color}"></div>
+                <div class="ih-card-body">
+                  <div class="ih-card-top">
+                    <div class="ih-card-title">${_escHtml(p.title)}</div>
+                    <span class="ih-status-badge" style="background:${IH_STATUS_COLOR[p.status]}18;color:${IH_STATUS_COLOR[p.status]}">${IH_STATUS[p.status]||p.status}</span>
+                  </div>
+                  ${p.client?`<div class="ih-card-client">${svgI(SVG_PATHS.user,11)} ${_escHtml(p.client)}</div>`:''}
+                  ${p.description?`<div class="ih-card-desc">${_escHtml(p.description)}</div>`:''}
+                  <div class="ih-card-dates">
+                    <span>${svgI(SVG_PATHS.cal,12)} ${start} — ${end}</span>
+                    <span class="ih-card-life">${lifeMonths} мес.</span>
+                  </div>
+                </div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`}
+      </div>`;
+  } catch (err) { content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`; }
+}
+
+function _buildIhTimeline(projects) {
+  if (!projects.length) return '';
+  const sorted = [...projects].sort((a,b)=>a.start_date.localeCompare(b.start_date));
+  const minDate = new Date(sorted[0].start_date);
+  const maxDate = new Date(Math.max(...sorted.map(p=>p.end_date ? new Date(p.end_date) : new Date())));
+  const totalMs = maxDate - minDate || 1;
+  const W = 100; // percent
+
+  const bars = sorted.map((p,i) => {
+    const s = (new Date(p.start_date) - minDate) / totalMs * 100;
+    const e = p.end_date ? (new Date(p.end_date) - minDate) / totalMs * 100 : 100;
+    const w = Math.max(e - s, 1);
+    return `<div class="ih-bar-row">
+      <div class="ih-bar-label" title="${p.title}">${_escHtml(p.title.length>22?p.title.slice(0,20)+'…':p.title)}</div>
+      <div class="ih-bar-track">
+        <div class="ih-bar-fill" style="left:${s.toFixed(1)}%;width:${w.toFixed(1)}%;background:${p.color};opacity:${p.status==='done'?0.6:1}" title="${p.title}: ${p.start_date} — ${p.end_date||'сейчас'}"></div>
+      </div>
+      <span class="ih-bar-status" style="color:${IH_STATUS_COLOR[p.status]}">${IH_STATUS[p.status]?.charAt(0)}</span>
+    </div>`;
+  }).join('');
+
+  const startLbl = minDate.toLocaleString('ru-RU',{month:'short',year:'numeric',timeZone:TZ});
+  const endLbl   = maxDate.toLocaleString('ru-RU',{month:'short',year:'numeric',timeZone:TZ});
+  return `<div class="ih-timeline">
+    ${bars}
+    <div class="ih-timeline-axis"><span>${startLbl}</span><span>${endLbl}</span></div>
+  </div>`;
+}
+
+function openIhModal(id=null) {
+  GET('/ideahast').then(projects => {
+    const p = id ? projects.find(x=>x.id===id) : null;
+    const root = document.getElementById('modal-root');
+    root.innerHTML = `
+      <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+        <div class="modal" style="max-width:480px">
+          <div class="modal-header">
+            <div class="modal-title">${p?'Редактировать проект':'Добавить проект'}</div>
+            <button class="modal-close" onclick="closeModal()">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="field"><label>Название проекта</label>
+              <input id="ih-title" class="input" value="${_escHtml(p?.title||'')}" placeholder="Название...">
+            </div>
+            <div class="field"><label>Клиент</label>
+              <input id="ih-client" class="input" value="${_escHtml(p?.client||'')}" placeholder="Название клиента...">
+            </div>
+            <div class="field"><label>Описание</label>
+              <textarea id="ih-desc" class="input" rows="2">${_escHtml(p?.description||'')}</textarea>
+            </div>
+            <div class="form-row">
+              <div class="field"><label>Статус</label>
+                <select id="ih-status" class="input">
+                  ${Object.entries(IH_STATUS).map(([k,v])=>`<option value="${k}" ${(p?.status||'active')===k?'selected':''}>${v}</option>`).join('')}
+                </select>
+              </div>
+              <div class="field"><label>Цвет</label>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+                  ${IH_COLORS.map(c=>`<button type="button" class="ih-color-btn ${(p?.color||'#6366f1')===c?'selected':''}" style="background:${c}" data-color="${c}" onclick="ihSelectColor(this,'${c}')"></button>`).join('')}
+                </div>
+                <input type="hidden" id="ih-color" value="${p?.color||'#6366f1'}">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="field"><label>Дата начала</label>
+                <input id="ih-start" class="input" type="date" value="${p?.start_date||''}">
+              </div>
+              <div class="field"><label>Дата окончания</label>
+                <input id="ih-end" class="input" type="date" value="${p?.end_date||''}">
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            ${p?`<button class="btn btn-danger" onclick="deleteIhProject(${p.id})">Удалить</button>`:''}
+            <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+            <button class="btn btn-blue" onclick="saveIhProject(${p?p.id:'null'})">${p?'Сохранить':'Добавить'}</button>
+          </div>
+        </div>
+      </div>`;
+  });
+}
+
+function ihSelectColor(btn, color) {
+  document.querySelectorAll('.ih-color-btn').forEach(b=>b.classList.remove('selected'));
+  btn.classList.add('selected');
+  document.getElementById('ih-color').value = color;
+}
+
+async function saveIhProject(id) {
+  const title = document.getElementById('ih-title').value.trim();
+  const start = document.getElementById('ih-start').value;
+  if (!title) return toast('Введите название','error');
+  if (!start)  return toast('Укажите дату начала','error');
+  const body = { title, description:document.getElementById('ih-desc').value.trim(), color:document.getElementById('ih-color').value, status:document.getElementById('ih-status').value, start_date:start, end_date:document.getElementById('ih-end').value, client:document.getElementById('ih-client').value.trim() };
+  try {
+    if (id && id!=='null') await PUT(`/ideahast/${id}`, body);
+    else await POST('/ideahast', body);
+    closeModal(); renderIdeahastPage(); toast('Сохранено','success');
+  } catch (err) { toast(err.message,'error'); }
+}
+
+async function deleteIhProject(id) {
+  if (!confirm('Удалить проект?')) return;
+  await DEL(`/ideahast/${id}`); closeModal(); renderIdeahastPage(); toast('Удалено','success');
+}
+
+// ─── B2C Finance Page ─────────────────────────────────────────────────────────
+const B2C_STATUS = { paid:'Оплатил', hybrid:'Гибрид', unpaid:'Не оплатил', partial:'Частично' };
+const B2C_STATUS_COLOR = { paid:'#16a34a', hybrid:'#d97706', unpaid:'#dc2626', partial:'#9333ea' };
+const B2C_METHOD = { cash:'Наличка', alif:'Alif', dc:'DC' };
+const B2C_METHOD_COLOR = { cash:'#d97706', alif:'#3b82f6', dc:'#6d28d9' };
+
+let _b2cCourseId    = (() => { try { const v = sessionStorage.getItem('b2c_course_id'); return v ? parseInt(v) : null; } catch { return null; } })();
+let _b2cSearch      = '';
+let _b2cMonthFilter = ''; // default = все месяцы
+
+// Kids section state (mirrors B2C)
+let _kidsCourseId    = (() => { try { const v = sessionStorage.getItem('kids_course_id'); return v ? parseInt(v) : null; } catch { return null; } })();
+let _kidsSearch      = '';
+let _kidsMonthFilter = '';
+
+// Generic section helpers
+const _secState = {
+  b2c:  { get courseId()  { return _b2cCourseId; },  set courseId(v)  { _b2cCourseId=v; try{v?sessionStorage.setItem('b2c_course_id',v):sessionStorage.removeItem('b2c_course_id')}catch{} },
+           get search()    { return _b2cSearch; },    set search(v)    { _b2cSearch=v; },
+           get monthFilter(){ return _b2cMonthFilter; },set monthFilter(v){ _b2cMonthFilter=v; },
+           label:'Финансы В2С', api:'b2c' },
+  kids: { get courseId()  { return _kidsCourseId; }, set courseId(v)  { _kidsCourseId=v; try{v?sessionStorage.setItem('kids_course_id',v):sessionStorage.removeItem('kids_course_id')}catch{} },
+           get search()    { return _kidsSearch; },   set search(v)    { _kidsSearch=v; },
+           get monthFilter(){ return _kidsMonthFilter; },set monthFilter(v){ _kidsMonthFilter=v; },
+           label:'Финансы Kids', api:'kids' },
+};
+
+// Generic section page — works for both 'b2c' and 'kids'
+async function renderSectionPage(sec) {
+  const s = _secState[sec];
+  if (!s) return;
+  if (s.courseId) { await renderSectionCourse(sec, s.courseId); return; }
+  // Temporarily redirect to B2C-style render with sec context
+  _currentSec = sec;
+  await _renderGenericCoursePage(sec);
+}
+
+let _currentSec = 'b2c';
+
+async function _renderGenericCoursePage(sec) {
+  const s = _secState[sec];
+  const content = document.getElementById('page-content');
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  try {
+    const courses = await GET(`/${s.api}/courses`);
+    const now = new Date();
+    const statsSource = s.monthFilter ? courses.filter(c=>(c.start_date||'').startsWith(s.monthFilter)) : courses;
+    const totalCourses   = statsSource.length;
+    const activeCourses  = statsSource.filter(c=>!c.end_date||new Date(c.end_date)>=now).length;
+    const doneCourses    = statsSource.filter(c=>c.end_date&&new Date(c.end_date)<now).length;
+    const totalStudents  = statsSource.reduce((sum,c)=>sum+(+c.student_count||0),0);
+    const totalCollected = statsSource.reduce((sum,c)=>sum+(+c.total_collected||0),0);
+    const totalPaid      = statsSource.reduce((sum,c)=>sum+(+c.total_paid||0),0);
+    const totalDebt      = totalCollected - totalPaid;
+    const paidPct        = totalCollected>0?Math.round(totalPaid/totalCollected*100):0;
+
+    const MONTH_NAMES = ['Янв','Фев','Мар','Апр','Май','Июнь','Июль','Авг','Сен','Окт','Ноя','Дек'];
+    const curM = now.toISOString().slice(0,7);
+    const monthSet = new Set([curM]);
+    courses.forEach(c=>{ if(c.start_date) monthSet.add(c.start_date.slice(0,7)); });
+    const monthTabs = [...monthSet].sort().map(m=>{
+      const [y,mo]=m.split('-');
+      const isCur=m===curM, isActive=m===s.monthFilter;
+      return `<button class="fin-tab ${isActive?'active':''} ${isCur&&!isActive?'be-month-tab-current':''}"
+        onclick="_secState['${sec}'].monthFilter='${m}';renderSectionPage('${sec}')">
+        ${MONTH_NAMES[+mo-1]} ${y}${isCur?'<span class="be-tab-now">сейчас</span>':''}
+      </button>`;
+    }).join('') + `<button class="fin-tab ${s.monthFilter===''?'active':''}" onclick="_secState['${sec}'].monthFilter='';renderSectionPage('${sec}')">Все</button>`;
+
+    const filteredCourses = s.monthFilter
+      ? courses.filter(c=>(c.start_date||'').startsWith(s.monthFilter) || !s.monthFilter.trim())
+      : courses;
+    const searchFilt = s.search.toLowerCase();
+
+    content.innerHTML = `<div class="b2c-page">
+      ${totalCourses>0?`
+      <div class="b2c-dashboard">
+        <div class="b2c-dash-row">
+          <div class="b2c-dash-card"><div class="b2c-dash-icon" style="background:#ede9fe;color:#6d28d9">${svgI(SVG_PATHS.clip,18)}</div><div class="b2c-dash-info"><div class="b2c-dash-val">${totalCourses}</div><div class="b2c-dash-lbl">Всего курсов</div></div></div>
+          <div class="b2c-dash-card"><div class="b2c-dash-icon" style="background:#dcfce7;color:#16a34a">${svgI(SVG_PATHS.check,18)}</div><div class="b2c-dash-info"><div class="b2c-dash-val" style="color:#16a34a">${activeCourses}</div><div class="b2c-dash-lbl">Активных</div></div></div>
+          <div class="b2c-dash-card"><div class="b2c-dash-icon" style="background:#f3f4f6;color:#6b7280">${svgI(SVG_PATHS.cal,18)}</div><div class="b2c-dash-info"><div class="b2c-dash-val">${doneCourses}</div><div class="b2c-dash-lbl">Завершённых</div></div></div>
+          <div class="b2c-dash-card"><div class="b2c-dash-icon" style="background:#dbeafe;color:#1d4ed8">${svgI(SVG_PATHS.users,18)}</div><div class="b2c-dash-info"><div class="b2c-dash-val" style="color:#1d4ed8">${totalStudents}</div><div class="b2c-dash-lbl">Студентов</div></div></div>
+        </div>
+        <div class="b2c-dash-row">
+          <div class="b2c-dash-card b2c-dash-wide"><div class="b2c-dash-icon" style="background:#fef9c3;color:#b45309">${svgI(SVG_PATHS.bars,18)}</div>
+            <div class="b2c-dash-info" style="flex:1">
+              <div style="display:flex;justify-content:space-between;align-items:baseline">
+                <div><div class="b2c-dash-val">${fmtMoney(totalCollected)}</div><div class="b2c-dash-lbl">Сумма курсов</div></div>
+                <div style="text-align:right"><div class="b2c-dash-val" style="color:#16a34a">${fmtMoney(totalPaid)}</div><div class="b2c-dash-lbl">Оплачено</div></div>
+                <div style="text-align:right"><div class="b2c-dash-val" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</div><div class="b2c-dash-lbl">Долг</div></div>
+                <div style="text-align:right"><div class="b2c-dash-val" style="color:${paidPct>=80?'#16a34a':paidPct>=50?'#d97706':'#dc2626'}">${paidPct}%</div><div class="b2c-dash-lbl">Собрано</div></div>
+              </div>
+              <div class="fin-progress-bar-bg" style="margin-top:10px"><div class="fin-progress-bar-fill" style="width:${paidPct}%;background:${paidPct>=80?'#16a34a':paidPct>=50?'#d97706':'#dc2626'}"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>` : ''}
+      <div class="b2c-filter-bar">
+        <div class="fin-search-wrap" style="max-width:240px">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input class="fin-search-input" placeholder="Поиск по курсу или преподавателю..." value="${_escHtml(s.search)}"
+            oninput="_secState['${sec}'].search=this.value;document.querySelectorAll('.b2c-course-card').forEach(c=>{c.style.display=!this.value||c.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none'})">
+        </div>
+        <div class="b2c-month-tabs">${monthTabs}</div>
+      </div>
+      <div class="b2c-courses-header">
+        <div class="section-title" style="display:flex;align-items:center;gap:8px">${svgI(SVG_PATHS.users,16)} Курсы (${filteredCourses.length})</div>
+        <button class="btn btn-blue" onclick="openSecCourseModal('${sec}')">＋ Создать курс</button>
+      </div>
+      ${filteredCourses.length===0
+        ? `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.users,44)}</div><h3>Нет курсов</h3><p>Создайте первый курс чтобы начать работу</p></div>`
+        : `<div class="b2c-courses-grid">
+            ${filteredCourses.filter(c=>!searchFilt||c.title.toLowerCase().includes(searchFilt)||(c.teacher||'').toLowerCase().includes(searchFilt)).map(c=>`
+              <div class="b2c-course-card" onclick="secOpenCourse('${sec}',${c.id})">
+                <div class="b2c-course-title">${_escHtml(c.title)}</div>
+                ${c.teacher?`<div class="b2c-course-meta">${svgI(SVG_PATHS.user,12)} ${_escHtml(c.teacher)}${c.teacher_phone?' · '+_escHtml(c.teacher_phone):''}</div>`:''}
+                ${(c.start_date||c.end_date)?`<div class="b2c-course-meta">${svgI(SVG_PATHS.cal,12)} ${c.start_date||''}${c.end_date?' — '+c.end_date:''}</div>`:''}
+                <div class="b2c-course-stats"><span>${c.student_count||0} студентов</span></div>
+                <div class="b2c-course-finance">
+                  <div class="b2c-cf-item"><span class="b2c-cf-lbl">Сумма</span><span class="b2c-cf-val">${fmtMoney(c.total_collected||0)}</span></div>
+                  <div class="b2c-cf-item"><span class="b2c-cf-lbl">Оплачено</span><span class="b2c-cf-val" style="color:#16a34a">${fmtMoney(c.total_paid||0)}</span></div>
+                  <div class="b2c-cf-item"><span class="b2c-cf-lbl">Долг</span><span class="b2c-cf-val" style="color:${((+c.total_collected||0)-(+c.total_paid||0))>0?'#dc2626':'#16a34a'}">${fmtMoney(Math.max(0,(+c.total_collected||0)-(+c.total_paid||0)))}</span></div>
+                </div>
+                ${(+c.total_collected||0)>0?`<div class="b2c-cf-bar"><div class="b2c-cf-bar-fill" style="width:${Math.round((+c.total_paid||0)/(+c.total_collected||1)*100)}%"></div></div>`:''}
+                <div class="b2c-course-actions" onclick="event.stopPropagation()">
+                  <button class="fin-btn-edit" onclick="openSecCourseModal('${sec}',${c.id})" title="Редактировать">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </button>
+                  <button class="fin-btn-del" onclick="deleteSecCourse('${sec}',${c.id})" title="Удалить">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+                  </button>
+                </div>
+              </div>`).join('')}
+          </div>`}
+    </div>`;
+  } catch(err) { content.innerHTML=`<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`; }
+}
+
+function secOpenCourse(sec, id) {
+  _secState[sec].courseId = id;
+  renderSectionPage(sec);
+}
+
+// Generic course detail — mirrors B2C course but uses sec API
+async function renderSectionCourse(sec, courseId) {
+  // Re-use B2C logic with sec-specific API prefix
+  const s = _secState[sec];
+  const content = document.getElementById('page-content');
+  try {
+    const [courses, payments] = await Promise.all([GET(`/${s.api}/courses`), GET(`/${s.api}/courses/${courseId}/payments`)]);
+    const course = courses.find(c=>c.id===courseId);
+    if (!course) { s.courseId=null; renderSectionPage(sec); return; }
+    const totalSvc=payments.reduce((a,p)=>a+(+p.course_amount||0),0);
+    const totalPaid=payments.reduce((a,p)=>a+(+p.amount||0),0);
+    const totalDebt=totalSvc-totalPaid;
+    const paidCount=payments.filter(p=>p.status==='paid').length;
+    const unpaidCount=payments.filter(p=>p.status==='unpaid').length;
+    const employees=state.users?.map(u=>u.name)||[];
+    const tableRows=payments.map((p,i)=>`<tr class="b2c-row">
+      <td class="b2c-td b2c-num">${i+1}</td>
+      <td class="b2c-td b2c-name">${_escHtml(p.student_name)}</td>
+      <td class="b2c-td"><span class="fin-status-badge" style="background:${B2C_STATUS_COLOR[p.status]||'#94a3b8'}22;color:${B2C_STATUS_COLOR[p.status]||'#94a3b8'}">${B2C_STATUS[p.status]||p.status}</span></td>
+      <td class="b2c-td b2c-phone">${_escHtml(p.phone||'—')}</td>
+      <td class="b2c-td b2c-amount">${fmtMoney(p.course_amount||0)}</td>
+      <td class="b2c-td b2c-amount" style="color:#16a34a">${fmtMoney(p.amount)}</td>
+      <td class="b2c-td b2c-amount" style="color:${(+p.course_amount-(+p.amount))>0?'#dc2626':'#16a34a'}">${fmtMoney(Math.max(0,(+p.course_amount||0)-(+p.amount||0)))}</td>
+      <td class="b2c-td"><span class="fin-type-badge" style="background:${B2C_METHOD_COLOR[p.payment_method]||'#94a3b8'}22;color:${B2C_METHOD_COLOR[p.payment_method]||'#94a3b8'}">${B2C_METHOD[p.payment_method]||p.payment_method}</span></td>
+      <td class="b2c-td" style="font-size:12.5px;font-weight:600">${p.received_by?p.received_by.split(' ')[0]:'—'}</td>
+      <td class="b2c-td b2c-date">${p.payment_date||'—'}</td>
+      <td class="b2c-td b2c-comment">${_escHtml(p.comment||'—')}</td>
+      <td class="b2c-td b2c-actions">
+        <button class="fin-btn-edit" onclick="openSecPaymentModal('${sec}',${courseId},${p.id})"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+        <button class="fin-btn-del" onclick="deleteSecPayment('${sec}',${p.id},${courseId})"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg></button>
+      </td></tr>`).join('');
+    content.innerHTML=`<div class="b2c-page">
+      <div class="b2c-course-header">
+        <button class="btn btn-outline btn-sm" onclick="_secState['${sec}'].courseId=null;renderSectionPage('${sec}')" style="display:inline-flex;align-items:center;gap:5px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg> Все курсы</button>
+        <div class="b2c-course-info"><div class="b2c-course-title-big">${_escHtml(course.title)}</div>
+          <div style="display:flex;gap:16px;font-size:12px;color:var(--text-muted)">
+            ${course.teacher?`<span>${svgI(SVG_PATHS.user,12)} ${_escHtml(course.teacher)}</span>`:''}
+            ${course.start_date?`<span>${svgI(SVG_PATHS.cal,12)} ${course.start_date}${course.end_date?' — '+course.end_date:''}</span>`:''}
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-outline btn-sm" onclick="exportSecExcel('${sec}',${courseId})">Excel</button>
+          <button class="btn btn-blue" onclick="openSecPaymentModal('${sec}',${courseId})">＋ Добавить студента</button>
+        </div>
+      </div>
+      <div class="b2c-stats" style="grid-template-columns:repeat(6,1fr)">
+        <div class="b2c-stat"><div class="b2c-stat-val">${payments.length}</div><div class="b2c-stat-lbl">Студентов</div></div>
+        <div class="b2c-stat"><div class="b2c-stat-val" style="color:#16a34a">${paidCount}</div><div class="b2c-stat-lbl">Оплатили</div></div>
+        <div class="b2c-stat"><div class="b2c-stat-val" style="color:#dc2626">${unpaidCount}</div><div class="b2c-stat-lbl">Не оплатили</div></div>
+        <div class="b2c-stat"><div class="b2c-stat-val">${fmtMoney(totalSvc)}</div><div class="b2c-stat-lbl">Сумма курсов</div></div>
+        <div class="b2c-stat"><div class="b2c-stat-val" style="color:#16a34a">${fmtMoney(totalPaid)}</div><div class="b2c-stat-lbl">Итого оплачено</div></div>
+        <div class="b2c-stat" style="border-color:${totalDebt>0?'#fecaca':'#bbf7d0'}"><div class="b2c-stat-val" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</div><div class="b2c-stat-lbl">Долг</div></div>
+      </div>
+      <div class="b2c-table-wrap"><table class="b2c-table">
+        <thead><tr><th>№</th><th>ФИО</th><th>Статус</th><th>Контакты</th><th>Сумма курса</th><th>Оплачено</th><th>Остаток</th><th>Способ оплаты</th><th>Принимал</th><th>Дата</th><th>Комментарий</th><th></th></tr></thead>
+        <tbody id="sec-tbody">${tableRows}</tbody>
+        ${payments.length>0?`<tfoot><tr class="fin-total-row">
+          <td colspan="4" class="fin-td fin-total-lbl">ИТОГО</td>
+          <td class="fin-td fin-money fin-total">${fmtMoney(totalSvc)}</td>
+          <td class="fin-td fin-money fin-total" style="color:#16a34a">${fmtMoney(totalPaid)}</td>
+          <td class="fin-td fin-money fin-total" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</td>
+          <td colspan="4"></td></tr></tfoot>`:''}
+      </table>${payments.length===0?`<div style="text-align:center;padding:32px;color:#9ca3af">Добавьте первого студента</div>`:''}</div>
+    </div>`;
+  } catch(err){ content.innerHTML=`<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`; }
+}
+
+// Generic CRUD wrappers
+function openSecCourseModal(sec, id=null) {
+  GET(`/${_secState[sec].api}/courses`).then(courses=>{
+    const c=id?courses.find(x=>x.id===id):null;
+    const root=document.getElementById('modal-root');
+    root.innerHTML=`<div class="modal-overlay" style="align-items:flex-start;padding-top:6vh" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="max-width:480px;max-height:85vh;overflow-y:auto">
+        <div class="modal-header"><div class="modal-title">${c?'Редактировать курс':'Создать курс'}</div><button class="modal-close" onclick="closeModal()">✕</button></div>
+        <div class="modal-body">
+          <div class="field"><label>Название курса</label><input id="sc-title" class="input" value="${_escHtml(c?.title||'')}" placeholder="Название..."></div>
+          <div class="form-row">
+            <div class="field"><label>Преподаватель</label><input id="sc-teacher" class="input" value="${_escHtml(c?.teacher||'')}" placeholder="ФИО..."></div>
+            <div class="field"><label>Телефон</label><input id="sc-phone" class="input" value="${_escHtml(c?.teacher_phone||'')}" placeholder="+992..."></div>
+          </div>
+          <div class="form-row">
+            <div class="field"><label>Дата начала</label><div class="cdp-wrap"><button type="button" class="cdp-trigger" id="cdp-trig-sc-start">${svgI(SVG_PATHS.cal,13,'style="color:var(--text-muted);flex-shrink:0"')}<span class="cdp-trigger-text"></span><span class="cdp-chevron">${svgI('<polyline points="6 9 12 15 18 9"/>',12)}</span></button><div class="cdp-dropdown hidden" id="cdp-drop-sc-start"></div><input type="hidden" id="sc-start"></div></div>
+            <div class="field"><label>Дата конца</label><div class="cdp-wrap"><button type="button" class="cdp-trigger" id="cdp-trig-sc-end">${svgI(SVG_PATHS.cal,13,'style="color:var(--text-muted);flex-shrink:0"')}<span class="cdp-trigger-text"></span><span class="cdp-chevron">${svgI('<polyline points="6 9 12 15 18 9"/>',12)}</span></button><div class="cdp-dropdown hidden" id="cdp-drop-sc-end"></div><input type="hidden" id="sc-end"></div></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          ${c?`<button class="btn btn-danger" onclick="deleteSecCourse('${sec}',${c.id})">Удалить</button>`:''}
+          <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+          <button class="btn btn-blue" onclick="saveSecCourse('${sec}',${c?c.id:'null'})">${c?'Сохранить':'Создать курс'}</button>
+        </div>
+      </div></div>`;
+    setTimeout(()=>{ initCustomDatepicker('sc-start',c?.start_date||''); initCustomDatepicker('sc-end',c?.end_date||''); },0);
+  });
+}
+async function saveSecCourse(sec,id) {
+  const title=document.getElementById('sc-title').value.trim();
+  if(!title) return toast('Введите название','error');
+  const body={title, teacher:document.getElementById('sc-teacher').value.trim(), teacher_phone:document.getElementById('sc-phone').value.trim(), start_date:document.getElementById('sc-start').value, end_date:document.getElementById('sc-end').value};
+  const api=_secState[sec].api;
+  try { if(id&&id!=='null') await PUT(`/${api}/courses/${id}`,body); else { const r=await POST(`/${api}/courses`,body); _secState[sec].courseId=r.id; } closeModal(); renderSectionPage(sec); toast('Сохранено','success'); } catch(err){ toast(err.message,'error'); }
+}
+async function deleteSecCourse(sec,id) {
+  if(!confirm('Удалить курс и всех студентов?')) return;
+  await DEL(`/${_secState[sec].api}/courses/${id}`); _secState[sec].courseId=null; closeModal(); renderSectionPage(sec); toast('Удалено','success');
+}
+function openSecPaymentModal(sec,courseId,paymentId=null) {
+  const employees=state.users?.map(u=>u.name)||[];
+  const api=_secState[sec].api;
+  window._secReceipt='';
+  GET(`/${api}/courses/${courseId}/payments`).then(payments=>{
+    const p=paymentId?payments.find(x=>x.id===paymentId):null;
+    if(p?.receipt_img) window._secReceipt=p.receipt_img;
+    const root=document.getElementById('modal-root');
+    root.innerHTML=`<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-header"><div class="modal-title">${p?'Редактировать':'Добавить студента'}</div><button class="modal-close" onclick="closeModal()">✕</button></div>
+        <div class="modal-body">
+          <div class="form-row"><div class="field"><label>ФИО студента</label><input id="sp-name" class="input" value="${_escHtml(p?.student_name||'')}" placeholder="Иванов Иван..."></div><div class="field"><label>Контакт</label><input id="sp-phone" class="input" value="${_escHtml(p?.phone||'')}" placeholder="+992..."></div></div>
+          <div class="form-row"><div class="field"><label>Сумма курса</label><input id="sp-camount" class="input" type="number" value="${p?.course_amount||''}" oninput="b2cAutoStatus2()"></div><div class="field"><label>Сумма оплаты</label><input id="sp-amount" class="input" type="number" value="${p?.amount||''}" oninput="b2cAutoStatus2()"></div></div>
+          <div class="field"><label>Статус <span style="font-size:11px;color:var(--text-muted)">(авто)</span></label><div class="input" style="background:var(--bg);cursor:default;display:flex;align-items:center;gap:8px"><span id="sp-status-preview" style="font-weight:700"></span><span style="font-size:11px;color:var(--text-muted)">рассчитывается по суммам</span></div></div>
+          <div class="form-row"><div class="field"><label>Способ оплаты</label><select id="sp-method" class="input">${Object.entries(B2C_METHOD).map(([k,v])=>`<option value="${k}" ${(p?.payment_method||'cash')===k?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label>Дата оплаты</label><input id="sp-date" class="input" type="date" value="${p?.payment_date||''}"></div></div>
+          <div class="field"><label>Принимал оплату</label><select id="sp-receiver" class="input"><option value="">—</option>${employees.map(n=>`<option value="${n}" ${p?.received_by===n?'selected':''}>${n}</option>`).join('')}</select></div>
+          <div class="field"><label>Скриншот чека <span style="font-size:11px;color:var(--text-muted)">(макс. 1 МБ)</span></label>
+            ${p?.receipt_img?`<div style="margin-bottom:8px"><img src="${p.receipt_img}" style="max-width:100%;max-height:120px;border-radius:8px;border:1.5px solid var(--border)"></div>`:''}
+            <input type="file" id="sp-receipt" accept="image/*" style="display:none" onchange="secLoadReceipt(this)">
+            <label for="sp-receipt" class="btn btn-outline btn-sm" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg> Загрузить чек</label>
+            <img id="sp-receipt-preview" src="" style="display:none;max-width:100%;max-height:120px;border-radius:8px;border:1.5px solid var(--border);margin-top:8px">
+          </div>
+          <div class="field"><label>Комментарий</label><textarea id="sp-comment" class="input" rows="2">${_escHtml(p?.comment||'')}</textarea></div>
+        </div>
+        <div class="modal-footer">
+          ${p?`<button class="btn btn-danger" onclick="deleteSecPayment('${sec}',${p.id},${courseId})">Удалить</button>`:''}
+          <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+          <button class="btn btn-blue" onclick="saveSecPayment('${sec}',${courseId},${p?p.id:'null'})">${p?'Сохранить':'Добавить'}</button>
+        </div>
+      </div></div>`;
+    setTimeout(()=>b2cAutoStatus2(),0);
+  });
+}
+function b2cAutoStatus2() {
+  const ca=parseFloat(document.getElementById('sp-camount')?.value)||0;
+  const pa=parseFloat(document.getElementById('sp-amount')?.value)||0;
+  const st=pa<=0?'unpaid':pa>=ca?'paid':'hybrid';
+  const el=document.getElementById('sp-status-preview');
+  if(el){el.textContent=B2C_STATUS[st];el.style.color=B2C_STATUS_COLOR[st];}
+}
+function secLoadReceipt(input){
+  const file=input.files[0]; if(!file) return;
+  if(file.size>1024*1024) return toast('Файл превышает 1 МБ','error');
+  const reader=new FileReader();
+  reader.onload=e=>{ window._secReceipt=e.target.result; const p=document.getElementById('sp-receipt-preview'); if(p){p.src=e.target.result;p.style.display='block';} };
+  reader.readAsDataURL(file);
+}
+async function saveSecPayment(sec,courseId,id){
+  const name=document.getElementById('sp-name').value.trim();
+  if(!name) return toast('Введите ФИО','error');
+  const api=_secState[sec].api;
+  const body={student_name:name,phone:document.getElementById('sp-phone').value.trim(),course_amount:parseFloat(document.getElementById('sp-camount').value)||0,amount:parseFloat(document.getElementById('sp-amount').value)||0,payment_method:document.getElementById('sp-method').value,received_by:document.getElementById('sp-receiver').value,payment_date:document.getElementById('sp-date').value,comment:document.getElementById('sp-comment').value.trim(),receipt_img:window._secReceipt||''};
+  try{ if(id&&id!=='null') await PUT(`/${api}/payments/${id}`,body); else await POST(`/${api}/courses/${courseId}/payments`,body); closeModal(); renderSectionCourse(sec,courseId); toast('Сохранено','success'); } catch(err){toast(err.message,'error');}
+}
+async function deleteSecPayment(sec,id,courseId){
+  if(!confirm('Удалить студента?')) return;
+  await DEL(`/${_secState[sec].api}/payments/${id}`); closeModal(); renderSectionCourse(sec,courseId); toast('Удалено','success');
+}
+async function exportSecExcel(sec,courseId){
+  const s=_secState[sec];
+  const [courses,payments]=await Promise.all([GET(`/${s.api}/courses`),GET(`/${s.api}/courses/${courseId}/payments`)]);
+  const course=courses.find(c=>c.id===courseId);
+  const data=payments.map((p,i)=>({'№':i+1,'ФИО':p.student_name,'Статус':B2C_STATUS[p.status]||p.status,'Контакт':p.phone,'Сумма курса':+p.course_amount,'Оплачено':+p.amount,'Остаток':(+p.course_amount||0)-(+p.amount||0),'Способ оплаты':B2C_METHOD[p.payment_method]||p.payment_method,'Принимал':p.received_by,'Дата':p.payment_date,'Комментарий':p.comment}));
+  const ws=XLSX.utils.json_to_sheet(data); ws['!cols']=[{wch:4},{wch:24},{wch:12},{wch:14},{wch:12},{wch:12},{wch:12},{wch:12},{wch:14},{wch:10},{wch:24}];
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,course?.title||'Курс');
+  XLSX.writeFile(wb,`${s.label}_${course?.title||courseId}.xlsx`); toast('Excel скачан','success');
+}
+
+async function renderB2CPage() {
+  const content = document.getElementById('page-content');
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  if (_b2cCourseId) { await renderB2CCourse(_b2cCourseId); return; }
+  try {
+    const courses = await GET('/b2c/courses');
+
+    // Stats filtered by selected month
+    const now = new Date();
+    const statsSource = _b2cMonthFilter
+      ? courses.filter(c => (c.start_date||'').startsWith(_b2cMonthFilter))
+      : courses;
+    const totalCourses  = statsSource.length;
+    const activeCourses = statsSource.filter(c => !c.end_date || new Date(c.end_date) >= now).length;
+    const doneCourses   = statsSource.filter(c => c.end_date && new Date(c.end_date) < now).length;
+    const totalStudents = statsSource.reduce((s,c)=>s+(+c.student_count||0),0);
+    const totalCollected= statsSource.reduce((s,c)=>s+(+c.total_collected||0),0);
+    const totalPaid     = statsSource.reduce((s,c)=>s+(+c.total_paid||0),0);
+    const totalDebt     = totalCollected - totalPaid;
+    const paidPct       = totalCollected > 0 ? Math.round(totalPaid/totalCollected*100) : 0;
+
+    content.innerHTML = `
+      <div class="b2c-page">
+        <!-- Dashboard -->
+        ${totalCourses > 0 ? `
+        <div class="b2c-dashboard">
+          <div class="b2c-dash-row">
+            <div class="b2c-dash-card">
+              <div class="b2c-dash-icon" style="background:#ede9fe;color:#6d28d9">${svgI(SVG_PATHS.clip,18)}</div>
+              <div class="b2c-dash-info"><div class="b2c-dash-val">${totalCourses}</div><div class="b2c-dash-lbl">Всего курсов</div></div>
+            </div>
+            <div class="b2c-dash-card">
+              <div class="b2c-dash-icon" style="background:#dcfce7;color:#16a34a">${svgI(SVG_PATHS.check,18)}</div>
+              <div class="b2c-dash-info"><div class="b2c-dash-val" style="color:#16a34a">${activeCourses}</div><div class="b2c-dash-lbl">Активных</div></div>
+            </div>
+            <div class="b2c-dash-card">
+              <div class="b2c-dash-icon" style="background:#f3f4f6;color:#6b7280">${svgI(SVG_PATHS.cal,18)}</div>
+              <div class="b2c-dash-info"><div class="b2c-dash-val">${doneCourses}</div><div class="b2c-dash-lbl">Завершённых</div></div>
+            </div>
+            <div class="b2c-dash-card">
+              <div class="b2c-dash-icon" style="background:#dbeafe;color:#1d4ed8">${svgI(SVG_PATHS.users,18)}</div>
+              <div class="b2c-dash-info"><div class="b2c-dash-val" style="color:#1d4ed8">${totalStudents}</div><div class="b2c-dash-lbl">Студентов</div></div>
+            </div>
+          </div>
+          <div class="b2c-dash-row">
+            <div class="b2c-dash-card b2c-dash-wide">
+              <div class="b2c-dash-icon" style="background:#fef9c3;color:#b45309">${svgI(SVG_PATHS.bars,18)}</div>
+              <div class="b2c-dash-info" style="flex:1">
+                <div style="display:flex;justify-content:space-between;align-items:baseline">
+                  <div><div class="b2c-dash-val">${fmtMoney(totalCollected)}</div><div class="b2c-dash-lbl">Сумма курсов</div></div>
+                  <div style="text-align:right"><div class="b2c-dash-val" style="color:#16a34a">${fmtMoney(totalPaid)}</div><div class="b2c-dash-lbl">Оплачено</div></div>
+                  <div style="text-align:right"><div class="b2c-dash-val" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</div><div class="b2c-dash-lbl">Долг</div></div>
+                  <div style="text-align:right"><div class="b2c-dash-val" style="color:${paidPct>=80?'#16a34a':paidPct>=50?'#d97706':'#dc2626'}">${paidPct}%</div><div class="b2c-dash-lbl">Собрано</div></div>
+                </div>
+                <div class="fin-progress-bar-bg" style="margin-top:10px">
+                  <div class="fin-progress-bar-fill" style="width:${paidPct}%;background:${paidPct>=80?'#16a34a':paidPct>=50?'#d97706':'#dc2626'}"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        ` : ''}
+
+        <!-- Search + Month filter -->
+        <div class="b2c-filter-bar">
+          <div class="fin-search-wrap" style="max-width:240px">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input class="fin-search-input" id="b2c-search-input" placeholder="Поиск по курсу или преподавателю..." value="${_b2cSearch}" oninput="b2cFilterSearch(this.value)">
+          </div>
+          <div class="b2c-month-tabs" id="b2c-month-tabs">
+            ${(() => {
+              const MONTH_NAMES = ['Янв','Фев','Мар','Апр','Май','Июнь','Июль','Авг','Сен','Окт','Ноя','Дек'];
+              const now = new Date();
+              const curM = now.toISOString().slice(0,7);
+              // Get unique months from courses (start_date) + current month
+              const months = new Set([curM]);
+              courses.forEach(c => { if (c.start_date) months.add(c.start_date.slice(0,7)); });
+              return [...months].sort().map(m => {
+                const [y,mo] = m.split('-');
+                const isCur = m === curM;
+                const isActive = m === _b2cMonthFilter;
+                return `<button class="fin-tab ${isActive?'active':''} ${isCur&&!isActive?'be-month-tab-current':''}"
+                  onclick="_b2cMonthFilter='${m}';renderB2CPage()">
+                  ${MONTH_NAMES[+mo-1]} ${y}${isCur?'<span class="be-tab-now">сейчас</span>':''}
+                </button>`;
+              }).join('') + `<button class="fin-tab ${_b2cMonthFilter===''?'active':''}" onclick="_b2cMonthFilter='';renderB2CPage()">Все</button>`;
+            })()}
+          </div>
+        </div>
+
+        <div class="b2c-courses-header">
+          <div class="section-title" style="display:flex;align-items:center;gap:8px">
+            ${svgI(SVG_PATHS.users,16)} Курсы (${totalCourses})
+          </div>
+          <button class="btn btn-blue" onclick="openB2CCourseModal()">＋ Создать курс</button>
+        </div>
+        ${totalCourses === 0
+          ? `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.users,44)}</div><h3>Нет курсов</h3><p>Создайте первый курс чтобы начать работу</p></div>`
+          : `<div class="b2c-courses-grid">
+              ${courses.filter(c => {
+                const matchSearch = !_b2cSearch || c.title.toLowerCase().includes(_b2cSearch.toLowerCase()) || (c.teacher||'').toLowerCase().includes(_b2cSearch.toLowerCase());
+                const matchMonth  = !_b2cMonthFilter || (c.start_date||'').startsWith(_b2cMonthFilter);
+                return matchSearch && matchMonth;
+              }).map(c => `
+                <div class="b2c-course-card" onclick="b2cOpenCourse(${c.id})">
+                  <div class="b2c-course-title">${_escHtml(c.title)}</div>
+                  ${c.teacher?`<div class="b2c-course-meta">${svgI(SVG_PATHS.user,12)} ${_escHtml(c.teacher)}${c.teacher_phone?' · '+_escHtml(c.teacher_phone):''}</div>`:''}
+                  ${(c.start_date||c.end_date)?`<div class="b2c-course-meta">${svgI(SVG_PATHS.cal,12)} ${c.start_date||''}${c.end_date?' — '+c.end_date:''}</div>`:''}
+                  <div class="b2c-course-stats">
+                    <span>${c.student_count||0} студентов</span>
+                  </div>
+                  <div class="b2c-course-finance">
+                    <div class="b2c-cf-item">
+                      <span class="b2c-cf-lbl">Сумма</span>
+                      <span class="b2c-cf-val">${fmtMoney(c.total_collected||0)}</span>
+                    </div>
+                    <div class="b2c-cf-item">
+                      <span class="b2c-cf-lbl">Оплачено</span>
+                      <span class="b2c-cf-val" style="color:#16a34a">${fmtMoney(c.total_paid||0)}</span>
+                    </div>
+                    <div class="b2c-cf-item">
+                      <span class="b2c-cf-lbl">Долг</span>
+                      <span class="b2c-cf-val" style="color:${((+c.total_collected||0)-(+c.total_paid||0))>0?'#dc2626':'#16a34a'}">${fmtMoney(Math.max(0,(+c.total_collected||0)-(+c.total_paid||0)))}</span>
+                    </div>
+                  </div>
+                  ${(+c.total_collected||0)>0?`<div class="b2c-cf-bar"><div class="b2c-cf-bar-fill" style="width:${Math.round((+c.total_paid||0)/(+c.total_collected||1)*100)}%"></div></div>`:''}
+
+                  <div class="b2c-course-actions" onclick="event.stopPropagation()">
+                    <button class="fin-btn-edit" onclick="openB2CCourseModal(${c.id})" title="Редактировать">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    <button class="fin-btn-del" onclick="deleteB2CCourse(${c.id})" title="Удалить">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+                    </button>
+                  </div>
+                </div>`).join('')}
+            </div>`}
+      </div>`;
+  } catch (err) { content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`; }
+}
+
+async function renderB2CCourse(courseId) {
+  const content = document.getElementById('page-content');
+  try {
+    const [courses, payments] = await Promise.all([
+      GET('/b2c/courses'),
+      GET(`/b2c/courses/${courseId}/payments`)
+    ]);
+    const course = courses.find(c => c.id === courseId);
+    if (!course) { _b2cCourseId = null; renderB2CPage(); return; }
+
+    const totalSvc    = payments.reduce((s,p)=>s+(+p.course_amount||0),0); // сумма курсов
+    const totalPaid   = payments.reduce((s,p)=>s+(+p.amount||0),0);        // итого оплачено
+    const totalDebt   = totalSvc - totalPaid;
+    const paidCount   = payments.filter(p=>p.status==='paid').length;
+    const unpaidCount = payments.filter(p=>p.status==='unpaid').length;
+    const employees = state.users?.map(u=>u.name)||[];
+
+    const tableRows = payments.map((p,i) => `
+      <tr class="b2c-row" id="b2c-row-${p.id}">
+        <td class="b2c-td b2c-num">${i+1}</td>
+        <td class="b2c-td b2c-name">${_escHtml(p.student_name)}</td>
+        <td class="b2c-td">
+          <span class="fin-status-badge" style="background:${B2C_STATUS_COLOR[p.status]||'#94a3b8'}22;color:${B2C_STATUS_COLOR[p.status]||'#94a3b8'}">${B2C_STATUS[p.status]||p.status}</span>
+        </td>
+        <td class="b2c-td b2c-phone">${_escHtml(p.phone||'—')}</td>
+        <td class="b2c-td b2c-amount">${fmtMoney(p.course_amount||0)}</td>
+        <td class="b2c-td b2c-amount" style="color:#16a34a">${fmtMoney(p.amount)}</td>
+        <td class="b2c-td b2c-amount" style="color:${(+p.course_amount-(+p.amount))>0?'#dc2626':'#16a34a'}">${fmtMoney(Math.max(0,(+p.course_amount||0)-(+p.amount||0)))}</td>
+        <td class="b2c-td">
+          <span class="fin-type-badge" style="background:${B2C_METHOD_COLOR[p.payment_method]||'#94a3b8'}22;color:${B2C_METHOD_COLOR[p.payment_method]||'#94a3b8'}">${B2C_METHOD[p.payment_method]||p.payment_method}</span>
+        </td>
+        <td class="b2c-td" style="font-size:12.5px;font-weight:600">${p.received_by ? p.received_by.split(' ')[0] : '—'}</td>
+        <td class="b2c-td b2c-date">${p.payment_date||'—'}</td>
+        <td class="b2c-td b2c-comment">${_escHtml(p.comment||'—')}</td>
+        <td class="b2c-td b2c-actions">
+          <button class="fin-btn-edit" onclick="openB2CPaymentModal(${courseId},${p.id})" title="Редактировать">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="fin-btn-del" onclick="deleteB2CPayment(${p.id},${courseId})" title="Удалить">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+          </button>
+        </td>
+      </tr>`).join('');
+
+    content.innerHTML = `
+      <div class="b2c-page">
+        <div class="b2c-course-header">
+          <button class="btn btn-outline btn-sm" onclick="_b2cCourseId=null;try{sessionStorage.removeItem('b2c_course_id')}catch{};renderB2CPage()" style="display:inline-flex;align-items:center;gap:5px">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg> Все курсы
+          </button>
+          <div class="b2c-course-info">
+            <div class="b2c-course-title-big">${_escHtml(course.title)}</div>
+            <div style="display:flex;gap:16px;font-size:12px;color:var(--text-muted)">
+              ${course.teacher?`<span>${svgI(SVG_PATHS.user,12)} ${_escHtml(course.teacher)}</span>`:''}
+              ${course.start_date?`<span>${svgI(SVG_PATHS.cal,12)} ${course.start_date}${course.end_date?' — '+course.end_date:''}</span>`:''}
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn-outline btn-sm" onclick="exportB2CExcel(${courseId})" title="Excel">Excel</button>
+            <button class="btn btn-blue" onclick="openB2CPaymentModal(${courseId})">＋ Добавить студента</button>
+          </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="b2c-stats" style="grid-template-columns:repeat(6,1fr)">
+          <div class="b2c-stat"><div class="b2c-stat-val">${payments.length}</div><div class="b2c-stat-lbl">Студентов</div></div>
+          <div class="b2c-stat"><div class="b2c-stat-val" style="color:#16a34a">${paidCount}</div><div class="b2c-stat-lbl">Оплатили</div></div>
+          <div class="b2c-stat"><div class="b2c-stat-val" style="color:#dc2626">${unpaidCount}</div><div class="b2c-stat-lbl">Не оплатили</div></div>
+          <div class="b2c-stat"><div class="b2c-stat-val">${fmtMoney(totalSvc)}</div><div class="b2c-stat-lbl">Сумма курсов</div></div>
+          <div class="b2c-stat"><div class="b2c-stat-val" style="color:#16a34a">${fmtMoney(totalPaid)}</div><div class="b2c-stat-lbl">Итого оплачено</div></div>
+          <div class="b2c-stat" style="border-color:${totalDebt>0?'#fecaca':'#bbf7d0'}"><div class="b2c-stat-val" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</div><div class="b2c-stat-lbl">Долг</div></div>
+        </div>
+
+        <!-- Table -->
+        <div class="b2c-table-wrap">
+          <table class="b2c-table">
+            <thead>
+              <tr>
+                <th>№</th><th>ФИО</th><th>Статус</th><th>Контакты</th>
+                <th>Сумма курса</th><th>Оплачено</th><th>Остаток</th>
+                <th>Способ оплаты</th><th>Принимал</th>
+                <th>Дата</th><th>Комментарий</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="b2c-tbody">${tableRows}</tbody>
+            ${payments.length>0?`<tfoot><tr class="fin-total-row">
+              <td colspan="4" class="fin-td fin-total-lbl">ИТОГО</td>
+              <td class="fin-td fin-money fin-total">${fmtMoney(totalSvc)}</td>
+              <td class="fin-td fin-money fin-total" style="color:#16a34a">${fmtMoney(totalPaid)}</td>
+              <td class="fin-td fin-money fin-total" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</td>
+              <td colspan="4"></td>
+            </tr></tfoot>`:''}
+          </table>
+          ${payments.length===0?`<div style="text-align:center;padding:32px;color:#9ca3af">Добавьте первого студента</div>`:''}
+        </div>
+      </div>`;
+  } catch (err) { content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`; }
+}
+
+function b2cFilterSearch(q) {
+  _b2cSearch = q;
+  document.querySelectorAll('.b2c-course-card').forEach(card => {
+    card.style.display = !q || card.textContent.toLowerCase().includes(q.toLowerCase()) ? '' : 'none';
+  });
+}
+
+function b2cOpenCourse(id) {
+  _b2cCourseId = id;
+  try { sessionStorage.setItem('b2c_course_id', id); } catch {}
+  renderB2CPage();
+}
+
+async function b2cUpdateField(paymentId, field, value, selectEl) {
+  // Inline update — change color immediately
+  if (field === 'status') {
+    selectEl.style.color = B2C_STATUS_COLOR[value]||'#374151';
+    selectEl.style.background = (B2C_STATUS_COLOR[value]||'#374151') + '18';
+  }
+  if (field === 'payment_method') {
+    selectEl.style.color = B2C_METHOD_COLOR[value]||'#374151';
+    selectEl.style.background = (B2C_METHOD_COLOR[value]||'#374151') + '18';
+  }
+  // Get current row data
+  const rows = await GET(`/b2c/courses/${_b2cCourseId}/payments`).catch(()=>[]);
+  const p = rows.find(r=>r.id===paymentId);
+  if (!p) return;
+  await PUT(`/b2c/payments/${paymentId}`, { ...p, [field]: value }).catch(err=>toast(err.message,'error'));
+}
+
+function openB2CCourseModal(id=null) {
+  GET('/b2c/courses').then(courses => {
+    const c = id ? courses.find(x=>x.id===id) : null;
+    const root = document.getElementById('modal-root');
+    root.innerHTML = `
+      <div class="modal-overlay" style="align-items:flex-start;padding-top:6vh" onclick="if(event.target===this)closeModal()">
+        <div class="modal" style="max-width:480px;max-height:85vh;overflow-y:auto">
+          <div class="modal-header">
+            <div class="modal-title">${c?'Редактировать курс':'Создать курс'}</div>
+            <button class="modal-close" onclick="closeModal()">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="field"><label>Название курса</label>
+              <input id="b2c-course-title" class="input" value="${_escHtml(c?.title||'')}" placeholder="Название...">
+            </div>
+            <div class="form-row">
+              <div class="field"><label>Преподаватель курса</label>
+                <input id="b2c-course-teacher" class="input" value="${_escHtml(c?.teacher||'')}" placeholder="ФИО преподавателя...">
+              </div>
+              <div class="field"><label>Телефон преподавателя</label>
+                <input id="b2c-course-teacher-phone" class="input" value="${_escHtml(c?.teacher_phone||'')}" placeholder="+992...">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="field"><label>Дата начала</label>
+                <div class="cdp-wrap">
+                  <button type="button" class="cdp-trigger" id="cdp-trig-b2c-start">
+                    ${svgI(SVG_PATHS.cal,13,'style="color:var(--text-muted);flex-shrink:0"')}
+                    <span class="cdp-trigger-text"></span>
+                    <span class="cdp-chevron">${svgI('<polyline points="6 9 12 15 18 9"/>',12)}</span>
+                  </button>
+                  <div class="cdp-dropdown hidden" id="cdp-drop-b2c-start"></div>
+                  <input type="hidden" id="b2c-start">
+                </div>
+              </div>
+              <div class="field"><label>Дата конца</label>
+                <div class="cdp-wrap">
+                  <button type="button" class="cdp-trigger" id="cdp-trig-b2c-end">
+                    ${svgI(SVG_PATHS.cal,13,'style="color:var(--text-muted);flex-shrink:0"')}
+                    <span class="cdp-trigger-text"></span>
+                    <span class="cdp-chevron">${svgI('<polyline points="6 9 12 15 18 9"/>',12)}</span>
+                  </button>
+                  <div class="cdp-dropdown hidden" id="cdp-drop-b2c-end"></div>
+                  <input type="hidden" id="b2c-end">
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            ${c?`<button class="btn btn-danger" onclick="deleteB2CCourse(${c.id})">Удалить</button>`:''}
+            <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+            <button class="btn btn-blue" onclick="saveB2CCourse(${c?c.id:'null'})">${c?'Сохранить':'Создать курс'}</button>
+          </div>
+        </div>
+      </div>`;
+    _initB2CCourseDates(c?.start_date||'', c?.end_date||'');
+  });
+}
+
+function _initB2CCourseDates(startVal, endVal) {
+  setTimeout(() => {
+    initCustomDatepicker('b2c-start', startVal || '');
+    initCustomDatepicker('b2c-end',   endVal   || '');
+  }, 0);
+}
+
+async function saveB2CCourse(id) {
+  const title = document.getElementById('b2c-course-title').value.trim();
+  if (!title) return toast('Введите название', 'error');
+  const body = { title, teacher: document.getElementById('b2c-course-teacher').value.trim(), teacher_phone: document.getElementById('b2c-course-teacher-phone').value.trim(), start_date: document.getElementById('b2c-start').value, end_date: document.getElementById('b2c-end').value };
+  try {
+    if (id && id!=='null') await PUT(`/b2c/courses/${id}`, body);
+    else { const r = await POST('/b2c/courses', body); _b2cCourseId = r.id; }
+    closeModal(); renderB2CPage(); toast('Сохранено','success');
+  } catch (err) { toast(err.message,'error'); }
+}
+
+async function deleteB2CCourse(id) {
+  if (!confirm('Удалить курс и всех студентов?')) return;
+  await DEL(`/b2c/courses/${id}`); _b2cCourseId=null; closeModal(); renderB2CPage(); toast('Удалено','success');
+}
+
+function openB2CPaymentModal(courseId, paymentId=null) {
+  const employees = state.users?.map(u=>u.name)||[];
+  window._b2cReceipt = '';
+  GET(`/b2c/courses/${courseId}/payments`).then(payments => {
+    const p = paymentId ? payments.find(x=>x.id===paymentId) : null;
+    if (p?.receipt_img) window._b2cReceipt = p.receipt_img;
+    const root = document.getElementById('modal-root');
+    setTimeout(() => b2cAutoStatus(), 50);
+    root.innerHTML = `
+      <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+        <div class="modal" style="max-width:480px">
+          <div class="modal-header">
+            <div class="modal-title">${p?'Редактировать':'Добавить студента'}</div>
+            <button class="modal-close" onclick="closeModal()">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-row">
+              <div class="field"><label>ФИО студента</label>
+                <input id="b2c-name" class="input" value="${_escHtml(p?.student_name||'')}" placeholder="Иванов Иван...">
+              </div>
+              <div class="field"><label>Контакт (телефон)</label>
+                <input id="b2c-phone" class="input" value="${_escHtml(p?.phone||'')}" placeholder="+992...">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="field"><label>Сумма курса</label>
+                <input id="b2c-course-amount" class="input" type="number" value="${p?.course_amount||''}" placeholder="0" oninput="b2cAutoStatus()">
+              </div>
+              <div class="field"><label>Сумма оплаты</label>
+                <input id="b2c-amount" class="input" type="number" value="${p?.amount||''}" placeholder="0" oninput="b2cAutoStatus()">
+              </div>
+            </div>
+            <div class="field" style="margin-top:-4px">
+              <label>Статус оплаты <span style="font-size:11px;color:var(--text-muted)">(авто)</span></label>
+              <div class="input" style="background:var(--bg);cursor:default;display:flex;align-items:center;gap:8px">
+                <span id="b2c-status-preview" style="font-weight:700"></span>
+                <span style="font-size:11px;color:var(--text-muted)">рассчитывается по суммам</span>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="field"><label>Способ оплаты</label>
+                <select id="b2c-method" class="input">
+                  ${Object.entries(B2C_METHOD).map(([k,v])=>`<option value="${k}" ${(p?.payment_method||'cash')===k?'selected':''}>${v}</option>`).join('')}
+                </select>
+              </div>
+              <div class="field"><label>Дата оплаты</label>
+                <input id="b2c-date" class="input" type="date" value="${p?.payment_date||''}">
+              </div>
+            </div>
+            <div class="field"><label>Принимал оплату</label>
+              <select id="b2c-receiver" class="input">
+                <option value="">—</option>
+                ${employees.map(n=>`<option value="${n}" ${p?.received_by===n?'selected':''}>${n}</option>`).join('')}
+              </select>
+            </div>
+            <div class="field"><label>Скриншот чека <span style="font-size:11px;color:var(--text-muted)">(макс. 1 МБ)</span></label>
+              ${p?.receipt_img ? `<div style="margin-bottom:8px"><img src="${p.receipt_img}" style="max-width:100%;max-height:120px;border-radius:8px;border:1.5px solid var(--border)"><button class="btn btn-outline btn-sm" style="margin-top:4px;color:#dc2626" onclick="document.getElementById('b2c-receipt-preview').src='';window._b2cReceipt=''">Удалить</button></div>` : ''}
+              <input type="file" id="b2c-receipt" accept="image/*" style="display:none" onchange="b2cLoadReceipt(this)">
+              <label for="b2c-receipt" class="btn btn-outline btn-sm" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                Загрузить скриншот
+              </label>
+              <img id="b2c-receipt-preview" src="" style="display:none;max-width:100%;max-height:120px;border-radius:8px;border:1.5px solid var(--border);margin-top:8px">
+            </div>
+            <div class="field"><label>Комментарий</label>
+              <textarea id="b2c-comment" class="input" rows="2">${_escHtml(p?.comment||'')}</textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            ${p?`<button class="btn btn-danger" onclick="deleteB2CPayment(${p.id},${courseId})">Удалить</button>`:''}
+            <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+            <button class="btn btn-blue" onclick="saveB2CPayment(${courseId},${p?p.id:'null'})">${p?'Сохранить':'Добавить'}</button>
+          </div>
+        </div>
+      </div>`;
+  });
+}
+
+function b2cAutoStatus() {
+  const ca = parseFloat(document.getElementById('b2c-course-amount')?.value)||0;
+  const pa = parseFloat(document.getElementById('b2c-amount')?.value)||0;
+  const st = pa<=0?'unpaid': pa>=ca?'paid':'hybrid';
+  const el = document.getElementById('b2c-status-preview');
+  if (el) { el.textContent = B2C_STATUS[st]; el.style.color = B2C_STATUS_COLOR[st]; }
+}
+
+function b2cLoadReceipt(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 1024*1024) return toast('Файл превышает 1 МБ','error');
+  const reader = new FileReader();
+  reader.onload = e => {
+    window._b2cReceipt = e.target.result;
+    const prev = document.getElementById('b2c-receipt-preview');
+    if (prev) { prev.src = e.target.result; prev.style.display = 'block'; }
+  };
+  reader.readAsDataURL(file);
+}
+
+async function saveB2CPayment(courseId, id) {
+  const name = document.getElementById('b2c-name').value.trim();
+  if (!name) return toast('Введите ФИО','error');
+  const body = { student_name:name, phone:document.getElementById('b2c-phone').value.trim(), course_amount:parseFloat(document.getElementById('b2c-course-amount').value)||0, amount:parseFloat(document.getElementById('b2c-amount').value)||0, payment_method:document.getElementById('b2c-method').value, received_by:document.getElementById('b2c-receiver').value, payment_date:document.getElementById('b2c-date').value, comment:document.getElementById('b2c-comment').value.trim(), receipt_img:window._b2cReceipt||'' };
+  try {
+    if (id && id!=='null') await PUT(`/b2c/payments/${id}`, body);
+    else await POST(`/b2c/courses/${courseId}/payments`, body);
+    closeModal(); renderB2CCourse(courseId); toast('Сохранено','success');
+  } catch (err) { toast(err.message,'error'); }
+}
+
+async function deleteB2CPayment(id, courseId) {
+  if (!confirm('Удалить студента?')) return;
+  await DEL(`/b2c/payments/${id}`); closeModal(); renderB2CCourse(courseId); toast('Удалено','success');
+}
+
+async function exportB2CExcel(courseId) {
+  const [courses, payments] = await Promise.all([GET('/b2c/courses'), GET(`/b2c/courses/${courseId}/payments`)]);
+  const course = courses.find(c=>c.id===courseId);
+  const data = payments.map((p,i)=>({ '№':i+1, 'ФИО':p.student_name, 'Статус':B2C_STATUS[p.status]||p.status, 'Контакт':p.phone, 'Сумма':+p.amount, 'Способ оплаты':B2C_METHOD[p.payment_method]||p.payment_method, 'Принимал':p.received_by, 'Дата':p.payment_date, 'Комментарий':p.comment }));
+  const ws = XLSX.utils.json_to_sheet(data);
+  ws['!cols']=[{wch:4},{wch:24},{wch:12},{wch:14},{wch:10},{wch:12},{wch:14},{wch:10},{wch:24}];
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, course?.title||'Курс');
+  XLSX.writeFile(wb, `B2C_${course?.title||courseId}.xlsx`); toast('Excel скачан','success');
 }
 
 // ─── Schedule Page ────────────────────────────────────────────────────────────
@@ -6019,7 +7428,7 @@ async function openFeedbackAdmin() {
       return { x, y, avg, m };
     });
     const polyline = pts.map(p=>`${p.x},${p.y}`).join(' ');
-    const monthNames = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+    const monthNames = ['Янв','Фев','Мар','Апр','Май','Июнь','Июль','Авг','Сен','Окт','Ноя','Дек'];
     const labels = pts.map(p => {
       const [yr, mo] = p.m.split('-');
       return `<text x="${p.x}" y="${H-2}" text-anchor="middle" font-size="9" fill="#9ca3af">${monthNames[+mo-1]}</text>`;
@@ -6055,7 +7464,7 @@ async function openFeedbackAdmin() {
       `<button class="fb-period-btn ${activePeriod==='all'?'active':''}" onclick="window._fbPeriod('all')">Все время</button>`,
       ...months.map(m => {
         const [yr, mo] = m.split('-');
-        const mn = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+        const mn = ['Янв','Фев','Мар','Апр','Май','Июнь','Июль','Авг','Сен','Окт','Ноя','Дек'];
         return `<button class="fb-period-btn ${activePeriod===m?'active':''}" onclick="window._fbPeriod('${m}')">${mn[+mo-1]} ${yr}</button>`;
       })
     ].join('');

@@ -412,8 +412,9 @@ app.get('/api/tasks', auth, (req, res) => {
 
   const userPerms = JSON.parse(req.user.permissions || '{}');
   if (req.user.role !== 'admin' && !userPerms.manage_team) {
-    where += ' AND (t.assignee_id = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = ?))';
-    params.push(req.user.id, req.user.id);
+    // Show tasks where user is assignee OR creator
+    where += ' AND (t.assignee_id = ? OR t.created_by = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = ?))';
+    params.push(req.user.id, req.user.id, req.user.id);
   }
   if (project_id) { where += ' AND t.project_id = ?'; params.push(project_id); }
   if (assignee_id) {
@@ -936,22 +937,250 @@ app.get('/api/users/last-seen', auth, requirePerm('view_activity'), (req, res) =
   res.json(users);
 });
 
-// ─── Finance ──────────────────────────────────────────────────────────────────
+// ─── Ideahast ─────────────────────────────────────────────────────────────────
+app.get('/api/ideahast', auth, requirePerm('manage_ideahast'), (req, res) => {
+  res.json(db.prepare('SELECT * FROM ideahast_projects ORDER BY start_date DESC').all());
+});
+app.post('/api/ideahast', auth, requirePerm('manage_ideahast'), (req, res) => {
+  const { title, description='', color='#6366f1', status='active', start_date, end_date='', client='' } = req.body;
+  if (!title?.trim() || !start_date) return res.status(400).json({ error: 'Введите название и дату начала' });
+  const r = db.prepare('INSERT INTO ideahast_projects (title,description,color,status,start_date,end_date,client) VALUES (?,?,?,?,?,?,?)').run(title.trim(), description, color, status, start_date, end_date, client);
+  res.json({ id: r.lastInsertRowid });
+});
+app.put('/api/ideahast/:id', auth, requirePerm('manage_ideahast'), (req, res) => {
+  const { title, description='', color='#6366f1', status='active', start_date, end_date='', client='' } = req.body;
+  db.prepare("UPDATE ideahast_projects SET title=?,description=?,color=?,status=?,start_date=?,end_date=?,client=?,updated_at=datetime('now') WHERE id=?").run(title, description, color, status, start_date, end_date||'', client, req.params.id);
+  res.json({ ok: true });
+});
+app.delete('/api/ideahast/:id', auth, requirePerm('manage_ideahast'), (req, res) => {
+  db.prepare('DELETE FROM ideahast_projects WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ─── Finance Activity Log ──────────────────────────────────────────────────────
+function logFinance(userId, userName, section, action, entityType='', entityId=null, entityTitle='', detail='', amount=null) {
+  // Skip empty/garbage entries
+  if (!entityTitle?.trim() && !detail?.trim()) return;
+  if (action.includes('delete') && (!amount || +amount <= 0) && !entityTitle?.trim()) return;
+  try {
+    db.prepare('INSERT INTO finance_activity_log (user_id,user_name,section,action,entity_type,entity_id,entity_title,detail,amount) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run(userId, userName||'', section, action, entityType, entityId, entityTitle?.trim()||'', detail?.trim()||'', amount);
+  } catch {}
+}
+
+app.get('/api/finance-log', auth, requirePerm('manage_finance_log'), (req, res) => {
+  const { section, days=30, limit=200 } = req.query;
+  let where = `WHERE created_at >= datetime('now', '-${Math.min(+days,365)} days')`;
+  const params = [];
+  if (section) { where += ' AND section=?'; params.push(section); }
+  const rows = db.prepare(`SELECT * FROM finance_activity_log ${where} ORDER BY created_at DESC LIMIT ?`).all(...params, Math.min(+limit, 500));
+  res.json(rows);
+});
+
+// ─── Kids Courses & Payments (same structure as B2C) ──────────────────────────
+function kidsAuth(req, res, next) {
+  if (req.user.role === 'admin') return next();
+  const p = JSON.parse(req.user.permissions||'{}');
+  if (p.manage_kids) return next();
+  return res.status(403).json({ error: 'Нет доступа' });
+}
+app.get('/api/kids/courses', auth, kidsAuth, (req, res) => {
+  const courses = db.prepare(`SELECT c.*, COUNT(p.id) as student_count,
+    COALESCE(SUM(p.course_amount),0) as total_collected, COALESCE(SUM(p.amount),0) as total_paid
+    FROM kids_courses c LEFT JOIN kids_payments p ON p.course_id=c.id
+    WHERE c.archived=0 GROUP BY c.id ORDER BY c.created_at DESC`).all();
+  res.json(courses);
+});
+app.post('/api/kids/courses', auth, kidsAuth, (req, res) => {
+  const { title, teacher='', teacher_phone='', start_date='', end_date='' } = req.body;
+  if (!title?.trim()) return res.status(400).json({ error: 'Введите название' });
+  const r = db.prepare('INSERT INTO kids_courses (title,teacher,teacher_phone,start_date,end_date) VALUES (?,?,?,?,?)').run(title.trim(), teacher, teacher_phone, start_date, end_date);
+  res.json({ id: r.lastInsertRowid });
+});
+app.put('/api/kids/courses/:id', auth, kidsAuth, (req, res) => {
+  const { title, teacher='', teacher_phone='', start_date='', end_date='' } = req.body;
+  db.prepare('UPDATE kids_courses SET title=?,teacher=?,teacher_phone=?,start_date=?,end_date=? WHERE id=?').run(title, teacher, teacher_phone, start_date, end_date, req.params.id);
+  res.json({ ok: true });
+});
+app.delete('/api/kids/courses/:id', auth, kidsAuth, (req, res) => {
+  const kc = db.prepare('SELECT title FROM kids_courses WHERE id=?').get(req.params.id);
+  db.prepare('DELETE FROM kids_payments WHERE course_id=?').run(req.params.id);
+  db.prepare('DELETE FROM kids_courses WHERE id=?').run(req.params.id);
+  const _un = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
+  logFinance(req.user.id, _un, 'kids', 'delete_course', 'course', +req.params.id, kc?.title||'', `Удалён курс Kids: ${kc?.title||''}`);
+  res.json({ ok: true });
+});
+app.get('/api/kids/courses/:id/payments', auth, kidsAuth, (req, res) => {
+  res.json(db.prepare('SELECT * FROM kids_payments WHERE course_id=? ORDER BY created_at ASC').all(req.params.id));
+});
+app.post('/api/kids/courses/:id/payments', auth, kidsAuth, (req, res) => {
+  const { student_name, phone='', course_amount=0, amount=0, payment_method='cash', received_by='', payment_date='', comment='', receipt_img='' } = req.body;
+  if (!student_name?.trim()) return res.status(400).json({ error: 'Введите ФИО' });
+  const ca=+course_amount||0, pa=+amount||0;
+  const status = pa<=0?'unpaid': pa>=ca?'paid':'hybrid';
+  const r = db.prepare('INSERT INTO kids_payments (course_id,student_name,phone,course_amount,amount,status,payment_method,received_by,payment_date,comment,receipt_img) VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(req.params.id, student_name.trim(), phone, ca, pa, status, payment_method, received_by, payment_date, comment, receipt_img);
+  const _un1=db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
+  const _c1=db.prepare('SELECT title FROM kids_courses WHERE id=?').get(req.params.id);
+  logFinance(req.user.id,_un1,'kids','add_student','payment',r.lastInsertRowid,student_name,'Курс: '+(_c1?.title||'')+', Сумма: '+ca+', Оплачено: '+pa+', '+payment_method,pa);
+  res.json({ id: r.lastInsertRowid });
+});
+app.put('/api/kids/payments/:id', auth, kidsAuth, (req, res) => {
+  const { student_name, phone='', course_amount=0, amount=0, payment_method='cash', received_by='', payment_date='', comment='', receipt_img='' } = req.body;
+  const ca=+course_amount||0, pa=+amount||0;
+  const status = pa<=0?'unpaid': pa>=ca?'paid':'hybrid';
+  db.prepare("UPDATE kids_payments SET student_name=?,phone=?,course_amount=?,amount=?,status=?,payment_method=?,received_by=?,payment_date=?,comment=?,receipt_img=?,updated_at=datetime('now') WHERE id=?").run(student_name, phone, ca, pa, status, payment_method, received_by, payment_date, comment, receipt_img, req.params.id);
+  res.json({ ok: true });
+});
+app.delete('/api/kids/payments/:id', auth, kidsAuth, (req, res) => {
+  const kp = db.prepare('SELECT p.student_name, p.amount, c.title FROM kids_payments p JOIN kids_courses c ON c.id=p.course_id WHERE p.id=?').get(req.params.id);
+  db.prepare('DELETE FROM kids_payments WHERE id=?').run(req.params.id);
+  const _un = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
+  if (kp) logFinance(req.user.id, _un, 'kids', 'delete_student', 'payment', +req.params.id, kp.student_name, `Удалён студент из курса "${kp.title}", сумма: ${kp.amount}`, +kp.amount||0);
+  res.json({ ok: true });
+});
+
+// ─── B2C Courses & Payments ───────────────────────────────────────────────────
+app.get('/api/b2c/courses', auth, requirePerm('manage_b2c'), (req, res) => {
+  const courses = db.prepare(`
+    SELECT c.*, COUNT(p.id) as student_count,
+      COALESCE(SUM(p.course_amount),0) as total_collected,
+      COALESCE(SUM(p.amount),0)        as total_paid
+    FROM b2c_courses c LEFT JOIN b2c_payments p ON p.course_id=c.id
+    WHERE c.archived=0 GROUP BY c.id ORDER BY c.created_at DESC`).all();
+  res.json(courses);
+});
+app.post('/api/b2c/courses', auth, requirePerm('manage_b2c'), (req, res) => {
+  const { title, teacher='', teacher_phone='', start_date='', end_date='' } = req.body;
+  if (!title?.trim()) return res.status(400).json({ error: 'Введите название' });
+  const r = db.prepare('INSERT INTO b2c_courses (title,teacher,teacher_phone,start_date,end_date) VALUES (?,?,?,?,?)').run(title.trim(), teacher, teacher_phone, start_date, end_date);
+  res.json({ id: r.lastInsertRowid });
+});
+app.put('/api/b2c/courses/:id', auth, requirePerm('manage_b2c'), (req, res) => {
+  const { title, teacher='', teacher_phone='', start_date='', end_date='' } = req.body;
+  db.prepare('UPDATE b2c_courses SET title=?,teacher=?,teacher_phone=?,start_date=?,end_date=? WHERE id=?').run(title, teacher, teacher_phone, start_date, end_date, req.params.id);
+  res.json({ ok: true });
+});
+app.delete('/api/b2c/courses/:id', auth, requirePerm('manage_b2c'), (req, res) => {
+  const bc = db.prepare('SELECT title FROM b2c_courses WHERE id=?').get(req.params.id);
+  db.prepare('DELETE FROM b2c_payments WHERE course_id=?').run(req.params.id);
+  db.prepare('DELETE FROM b2c_courses WHERE id=?').run(req.params.id);
+  const _un = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
+  logFinance(req.user.id, _un, 'b2c', 'delete_course', 'course', +req.params.id, bc?.title||'', `Удалён курс В2С: ${bc?.title||''}`);
+  res.json({ ok: true });
+});
+app.get('/api/b2c/courses/:id/payments', auth, requirePerm('manage_b2c'), (req, res) => {
+  res.json(db.prepare('SELECT * FROM b2c_payments WHERE course_id=? ORDER BY created_at ASC').all(req.params.id));
+});
+app.post('/api/b2c/courses/:id/payments', auth, requirePerm('manage_b2c'), (req, res) => {
+  const { student_name, phone='', course_amount=0, amount=0, payment_method='cash', received_by='', payment_date='', comment='', receipt_img='' } = req.body;
+  if (!student_name?.trim()) return res.status(400).json({ error: 'Введите ФИО' });
+  const ca = +course_amount||0, pa = +amount||0;
+  const status = pa<=0?'unpaid': pa>=ca?'paid':'hybrid';
+  const r = db.prepare('INSERT INTO b2c_payments (course_id,student_name,phone,course_amount,amount,status,payment_method,received_by,payment_date,comment,receipt_img) VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(req.params.id, student_name.trim(), phone, ca, pa, status, payment_method, received_by, payment_date, comment, receipt_img);
+  const _un2=db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
+  const _c2=db.prepare('SELECT title FROM b2c_courses WHERE id=?').get(req.params.id);
+  logFinance(req.user.id,_un2,'b2c','add_student','payment',r.lastInsertRowid,student_name,'Курс: '+(_c2?.title||'')+', Сумма: '+ca+', Оплачено: '+pa+', '+payment_method,pa);
+  res.json({ id: r.lastInsertRowid });
+});
+app.put('/api/b2c/payments/:id', auth, requirePerm('manage_b2c'), (req, res) => {
+  const { student_name, phone='', course_amount=0, amount=0, payment_method='cash', received_by='', payment_date='', comment='', receipt_img='' } = req.body;
+  const ca = +course_amount||0, pa = +amount||0;
+  const status = pa<=0?'unpaid': pa>=ca?'paid':'hybrid';
+  db.prepare("UPDATE b2c_payments SET student_name=?,phone=?,course_amount=?,amount=?,status=?,payment_method=?,received_by=?,payment_date=?,comment=?,receipt_img=?,updated_at=datetime('now') WHERE id=?").run(student_name, phone, ca, pa, status, payment_method, received_by, payment_date, comment, receipt_img, req.params.id);
+  res.json({ ok: true });
+});
+app.delete('/api/b2c/payments/:id', auth, requirePerm('manage_b2c'), (req, res) => {
+  const bp = db.prepare('SELECT p.student_name, p.amount, c.title FROM b2c_payments p JOIN b2c_courses c ON c.id=p.course_id WHERE p.id=?').get(req.params.id);
+  db.prepare('DELETE FROM b2c_payments WHERE id=?').run(req.params.id);
+  const _un = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
+  if (bp) logFinance(req.user.id, _un, 'b2c', 'delete_student', 'payment', +req.params.id, bp.student_name, `Удалён студент из курса "${bp.title}", сумма: ${bp.amount}`, +bp.amount||0);
+  res.json({ ok: true });
+});
+
+// ─── Expenses ─────────────────────────────────────────────────────────────────
+app.get('/api/expenses', auth, requirePerm('manage_finance'), (req, res) => {
+  const month = req.query.month || new Date().toISOString().slice(0,7);
+  res.json(db.prepare('SELECT * FROM expenses WHERE month=? ORDER BY created_at DESC').all(month));
+});
+app.get('/api/expenses/annual', auth, requirePerm('manage_finance'), (req, res) => {
+  const year = req.query.year || new Date().getFullYear();
+  res.json(db.prepare(`SELECT month, SUM(amount) as total, COUNT(*) as count FROM expenses WHERE month LIKE ? GROUP BY month ORDER BY month`).all(year + '-%'));
+});
+app.post('/api/expenses', auth, requirePerm('manage_finance'), (req, res) => {
+  const { title, amount, category='other', comment='', month } = req.body;
+  if (!title?.trim()) return res.status(400).json({ error: 'Введите название' });
+  const r = db.prepare('INSERT INTO expenses (title,amount,category,comment,month) VALUES (?,?,?,?,?)').run(title.trim(), amount||0, category, comment, month);
+  const un = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
+  logFinance(req.user.id, un, 'finance', 'create_expense', 'expense', r.lastInsertRowid, title, `Категория: ${category}, Сумма: ${amount}`, +amount||0);
+  res.json({ id: r.lastInsertRowid });
+});
+app.put('/api/expenses/:id', auth, requirePerm('manage_finance'), (req, res) => {
+  const { title, amount, category='other', comment='', month } = req.body;
+  db.prepare("UPDATE expenses SET title=?,amount=?,category=?,comment=?,month=?,updated_at=datetime('now') WHERE id=?").run(title, amount||0, category, comment, month, req.params.id);
+  const un = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
+  logFinance(req.user.id, un, 'finance', 'update_expense', 'expense', +req.params.id, title, `Сумма: ${amount}`, +amount||0);
+  res.json({ ok: true });
+});
+app.delete('/api/expenses/:id', auth, requirePerm('manage_finance'), (req, res) => {
+  const exp = db.prepare('SELECT title, amount FROM expenses WHERE id=?').get(req.params.id);
+  db.prepare('DELETE FROM expenses WHERE id=?').run(req.params.id);
+  const un = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
+  logFinance(req.user.id, un, 'finance', 'delete_expense', 'expense', +req.params.id, exp?.title||'', `Удалён расход ${exp?.amount||0}`);
+  res.json({ ok: true });
+});
+
 // ─── Finance ──────────────────────────────────────────────────────────────────
 app.get('/api/finance', auth, requirePerm('manage_finance'), (req, res) => {
   const { month, all_months, status, payment_type, search } = req.query;
+  const targetMonth = month || new Date().toISOString().slice(0,7);
   let where = 'WHERE 1=1';
   const params = [];
-  if (!all_months) { where += ' AND month=?'; params.push(month || new Date().toISOString().slice(0,7)); }
+  if (!all_months) { where += ' AND month=?'; params.push(targetMonth); }
   if (status)       { where += ' AND status=?'; params.push(status); }
   if (payment_type) { where += ' AND payment_type=?'; params.push(payment_type); }
   if (search)       { where += ' AND (project_name LIKE ? OR client_name LIKE ?)'; params.push('%'+search+'%','%'+search+'%'); }
   const rows = db.prepare(`SELECT * FROM finance ${where} ORDER BY created_at DESC`).all(...params);
-  // Attach payments to each row
+  // Attach payments
   const ids = rows.map(r=>r.id);
   const payments = ids.length ? db.prepare(`SELECT * FROM finance_payments WHERE finance_id IN (${ids.map(()=>'?').join(',')}) ORDER BY payment_date`).all(...ids) : [];
   const payMap = {};
   payments.forEach(p => { if (!payMap[p.finance_id]) payMap[p.finance_id]=[]; payMap[p.finance_id].push(p); });
+
+  // Add virtual B2C row — aggregate by course start_date month
+  if (!status && !payment_type && !search) {
+    try {
+      const b2cRow = db.prepare(`
+        SELECT COALESCE(SUM(p.course_amount),0) as svc, COALESCE(SUM(p.amount),0) as paid,
+               COUNT(p.id) as cnt
+        FROM b2c_payments p
+        JOIN b2c_courses c ON c.id=p.course_id
+        WHERE strftime('%Y-%m', c.start_date)=?
+      `).get(targetMonth);
+      const svc = +b2cRow?.svc||0, paid = +b2cRow?.paid||0;
+      if (svc > 0 || paid > 0) {
+        const b2cStat = paid<=0?'unpaid': paid>=svc?'paid':'partial';
+        rows.push({
+          id: 'b2c', project_name:'Финансы В2С', project_id:null,
+          service_amount: svc, paid_amount: paid,
+          status: b2cStat, payment_type:'', comment:`Курсы начатые в ${targetMonth} · ${b2cRow?.cnt||0} студентов`,
+          month: targetMonth, is_b2c: 1, payments:[], created_at: new Date().toISOString()
+        });
+      }
+      // Kids row
+      const kidsRow = db.prepare(`SELECT COALESCE(SUM(p.course_amount),0) as svc, COALESCE(SUM(p.amount),0) as paid, COUNT(p.id) as cnt FROM kids_payments p JOIN kids_courses c ON c.id=p.course_id WHERE strftime('%Y-%m', c.start_date)=?`).get(targetMonth);
+      const ksvc = +kidsRow?.svc||0, kpaid = +kidsRow?.paid||0;
+      if (ksvc > 0 || kpaid > 0) {
+        const kidsStat = kpaid<=0?'unpaid': kpaid>=ksvc?'paid':'partial';
+        rows.push({
+          id: 'kids', project_name:'Финансы Kids', project_id:null,
+          service_amount: ksvc, paid_amount: kpaid,
+          status: kidsStat, payment_type:'', comment:`Курсы Kids начатые в ${targetMonth} · ${kidsRow?.cnt||0} студентов`,
+          month: targetMonth, is_b2c: 2, payments:[], created_at: new Date().toISOString()
+        });
+      }
+    } catch {}
+  }
+
   res.json(rows.map(r => ({ ...r, payments: payMap[r.id]||[] })));
 });
 
@@ -961,6 +1190,38 @@ app.get('/api/finance/annual', auth, requirePerm('manage_finance'), (req, res) =
   const rows = db.prepare(`SELECT month, SUM(service_amount) as total_service, SUM(paid_amount) as total_paid, COUNT(*) as count
     FROM finance WHERE month LIKE ? GROUP BY month ORDER BY month`).all(year + '-%');
   res.json(rows);
+});
+
+// Combined annual — Finance + B2C + Kids
+app.get('/api/finance/annual-combined', auth, requirePerm('manage_finance'), (req, res) => {
+  const year = req.query.year || new Date().getFullYear();
+  const months12 = Array.from({length:12},(_,i)=>`${year}-${String(i+1).padStart(2,'0')}`);
+  const fin  = db.prepare(`SELECT month, SUM(service_amount) as svc, SUM(paid_amount) as paid, COUNT(*) as cnt FROM finance WHERE month LIKE ? GROUP BY month`).all(year+'-%');
+  const b2c  = db.prepare(`SELECT strftime('%Y-%m',c.start_date) as month, SUM(p.course_amount) as svc, SUM(p.amount) as paid, COUNT(p.id) as cnt FROM b2c_payments p JOIN b2c_courses c ON c.id=p.course_id WHERE strftime('%Y',c.start_date)=? GROUP BY month`).all(String(year));
+  const kids = db.prepare(`SELECT strftime('%Y-%m',c.start_date) as month, SUM(p.course_amount) as svc, SUM(p.amount) as paid, COUNT(p.id) as cnt FROM kids_payments p JOIN kids_courses c ON c.id=p.course_id WHERE strftime('%Y',c.start_date)=? GROUP BY month`).all(String(year));
+  const toMap = arr => { const m={}; arr.forEach(r=>{m[r.month]={svc:+r.svc||0,paid:+r.paid||0,cnt:+r.cnt||0}}); return m; };
+  const finM=toMap(fin), b2cM=toMap(b2c), kidsM=toMap(kids);
+  res.json(months12.map(m=>({
+    month:m,
+    fin_svc:finM[m]?.svc||0,   fin_paid:finM[m]?.paid||0,   fin_cnt:finM[m]?.cnt||0,
+    b2c_svc:b2cM[m]?.svc||0,   b2c_paid:b2cM[m]?.paid||0,   b2c_cnt:b2cM[m]?.cnt||0,
+    kids_svc:kidsM[m]?.svc||0, kids_paid:kidsM[m]?.paid||0, kids_cnt:kidsM[m]?.cnt||0,
+    total_svc: (finM[m]?.svc||0)+(b2cM[m]?.svc||0)+(kidsM[m]?.svc||0),
+    total_paid:(finM[m]?.paid||0)+(b2cM[m]?.paid||0)+(kidsM[m]?.paid||0),
+  })));
+});
+
+// Summary by section for current month
+app.get('/api/finance/section-summary', auth, requirePerm('manage_finance'), (req, res) => {
+  const month = req.query.month || new Date().toISOString().slice(0,7);
+  const fin  = db.prepare(`SELECT SUM(service_amount) as svc, SUM(paid_amount) as paid, COUNT(*) as cnt FROM finance WHERE month=?`).get(month);
+  const b2c  = db.prepare(`SELECT SUM(p.course_amount) as svc, SUM(p.amount) as paid, COUNT(p.id) as cnt FROM b2c_payments p JOIN b2c_courses c ON c.id=p.course_id WHERE strftime('%Y-%m',c.start_date)=?`).get(month);
+  const kids = db.prepare(`SELECT SUM(p.course_amount) as svc, SUM(p.amount) as paid, COUNT(p.id) as cnt FROM kids_payments p JOIN kids_courses c ON c.id=p.course_id WHERE strftime('%Y-%m',c.start_date)=?`).get(month);
+  res.json({
+    finance: { svc:+fin?.svc||0, paid:+fin?.paid||0, cnt:+fin?.cnt||0 },
+    b2c:     { svc:+b2c?.svc||0, paid:+b2c?.paid||0, cnt:+b2c?.cnt||0 },
+    kids:    { svc:+kids?.svc||0,paid:+kids?.paid||0,cnt:+kids?.cnt||0 },
+  });
 });
 
 // Project breakdown
@@ -975,6 +1236,8 @@ app.post('/api/finance', auth, requirePerm('manage_finance'), (req, res) => {
   if (!project_name?.trim()) return res.status(400).json({ error: 'Укажите название проекта' });
   const result = db.prepare(`INSERT INTO finance (project_id,project_name,service_amount,paid_amount,status,payment_type,comment,month,currency,client_name,client_phone,is_recurring)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(project_id||null, project_name.trim(), service_amount||0, paid_amount||0, status||'unpaid', payment_type||'cash', comment||'', month, currency, client_name, client_phone, is_recurring?1:0);
+  const uname = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
+  logFinance(req.user.id, uname, 'finance', 'create_record', 'record', result.lastInsertRowid, project_name, `Сумма: ${service_amount}, Оплачено: ${paid_amount}`, +service_amount||0);
   res.json({ id: result.lastInsertRowid });
 });
 
@@ -994,13 +1257,21 @@ app.put('/api/finance/:id', auth, requirePerm('manage_finance'), (req, res) => {
   });
   db.prepare(`UPDATE finance SET project_id=?,project_name=?,service_amount=?,paid_amount=?,status=?,payment_type=?,comment=?,month=?,currency=?,client_name=?,client_phone=?,is_recurring=?,updated_at=datetime('now') WHERE id=?`)
     .run(project_id||null, project_name, service_amount||0, paid_amount||0, status, payment_type, comment||'', month, currency, client_name||'', client_phone||'', is_recurring?1:0, req.params.id);
+  const unameU = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
+  logFinance(req.user.id, unameU, 'finance', 'update_record', 'record', +req.params.id, project_name, `Сумма: ${service_amount}, Оплачено: ${paid_amount}, Статус: ${status}`, +paid_amount||0);
   res.json({ ok: true });
 });
 
 app.delete('/api/finance/:id', auth, requirePerm('manage_finance'), (req, res) => {
+  const delRec = db.prepare('SELECT project_name, service_amount FROM finance WHERE id=?').get(req.params.id);
   db.prepare('DELETE FROM finance_payments WHERE finance_id=?').run(req.params.id);
   db.prepare('DELETE FROM finance_history WHERE finance_id=?').run(req.params.id);
   db.prepare('DELETE FROM finance WHERE id=?').run(req.params.id);
+  // Only log if real record with data
+  if (delRec?.project_name && +delRec.service_amount > 0) {
+    const unameD = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
+    logFinance(req.user.id, unameD, 'finance', 'delete_record', 'record', +req.params.id, delRec.project_name, `Удалена запись: ${delRec.project_name} на сумму ${delRec.service_amount}`, +delRec.service_amount);
+  }
   res.json({ ok: true });
 });
 
@@ -1013,11 +1284,12 @@ app.post('/api/finance/:id/payments', auth, requirePerm('manage_finance'), (req,
   if (!amount || !payment_date) return res.status(400).json({ error: 'Укажите сумму и дату' });
   const r = db.prepare('INSERT INTO finance_payments (finance_id,amount,payment_type,payment_date,note) VALUES (?,?,?,?,?)')
     .run(req.params.id, amount, payment_type, payment_date, note);
-  // Recalculate paid_amount
   const total = db.prepare('SELECT SUM(amount) as t FROM finance_payments WHERE finance_id=?').get(req.params.id).t || 0;
-  const fin = db.prepare('SELECT service_amount FROM finance WHERE id=?').get(req.params.id);
+  const fin = db.prepare('SELECT service_amount, project_name FROM finance WHERE id=?').get(req.params.id);
   const newStatus = total >= fin.service_amount ? 'paid' : total > 0 ? 'partial' : 'unpaid';
   db.prepare("UPDATE finance SET paid_amount=?, status=?, updated_at=datetime('now') WHERE id=?").run(total, newStatus, req.params.id);
+  const unameP = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
+  logFinance(req.user.id, unameP, 'finance', 'add_payment', 'payment', r.lastInsertRowid, fin?.project_name||'', `Платёж ${amount} · ${payment_type} · ${payment_date}`, +amount);
   res.json({ id: r.lastInsertRowid, paid_amount: total, status: newStatus });
 });
 app.delete('/api/finance/payments/:id', auth, requirePerm('manage_finance'), (req, res) => {
@@ -1119,13 +1391,19 @@ app.get('/api/best-employee', auth, (req, res) => {
       const doneLate   = enriched.filter(t => t.late).length;
       const overdue    = enriched.filter(t => t.overdue).length;
       const done       = doneOnTime + doneLate;
-      const score      = total > 0
+      // Efficiency % (for display)
+      const score = total > 0
         ? Math.round((doneOnTime * 100 + doneLate * 50) / total)
         : null;
 
-      return { ...u, total, done, doneOnTime, doneLate, overdue, score };
+      // Ranking score = absolute completions × (1 + efficiency)
+      // This rewards MORE tasks done even at lower %, over fewer tasks at 100%
+      // Example: 9 done × (1 + 0.53) = 13.77 > 2 done × (1 + 1.0) = 4.0
+      const rankScore = doneOnTime * (1 + (score || 0) / 100);
+
+      return { ...u, total, done, doneOnTime, doneLate, overdue, score, rankScore };
     }).filter(u => u.total > 0)
-      .sort((a, b) => (b.score ?? -1) - (a.score ?? -1) || b.doneOnTime - a.doneOnTime || a.overdue - b.overdue);
+      .sort((a, b) => (b.rankScore ?? -1) - (a.rankScore ?? -1) || b.doneOnTime - a.doneOnTime || a.overdue - b.overdue);
   }
 
   // Current selected month
