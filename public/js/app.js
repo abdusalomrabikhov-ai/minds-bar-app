@@ -354,11 +354,17 @@ async function initApp() {
   document.addEventListener('keydown', e => {
     const inInput = e.target.matches('input,textarea,select,[contenteditable]');
     if (e.key === 'Escape') {
-      // Close topmost overlay first
       const detail = document.getElementById('fb-detail-overlay');
       if (detail) { detail.remove(); return; }
+      const search = document.getElementById('global-search-overlay');
+      if (search) { search.remove(); return; }
       closeWelcomeModal();
       closeModal();
+    }
+    // Cmd+K / Ctrl+K — global search
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      e.preventDefault();
+      openGlobalSearch();
     }
     if (!inInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
       if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openTaskModal(); }
@@ -4388,7 +4394,7 @@ function minutesToTime(m) {
 
 let _schedDrag   = null; // { id, durMin, title, comment }
 let _schedCache  = [];  // last fetched events
-let _schedFilter = { search: '', classes: new Set([0, 1, 2, 3]) };
+let _schedFilter = { search: '', classes: new Set(SCHED_CLASSES.map(c => c.id)) };
 
 function _escHtml(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -5078,6 +5084,143 @@ function openFeedbackDetail(rowId) {
     </div>`;
 
   document.body.appendChild(overlay);
+}
+
+// ─── Global Search ────────────────────────────────────────────────────────────
+let _gsAllTasks = null;
+
+async function openGlobalSearch() {
+  if (document.getElementById('global-search-overlay')) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'global-search-overlay';
+  overlay.className = 'gs-overlay';
+  overlay.innerHTML = `
+    <div class="gs-box">
+      <div class="gs-input-wrap">
+        <svg class="gs-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="gs-input" class="gs-input" placeholder="Поиск задач, проектов, сотрудников..." autocomplete="off">
+        <kbd class="gs-esc-hint">Esc</kbd>
+      </div>
+      <div id="gs-results" class="gs-results">
+        <div class="gs-hint">Начните вводить для поиска</div>
+      </div>
+    </div>`;
+
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+
+  const input = document.getElementById('gs-input');
+  input.focus();
+
+  // Load tasks once
+  if (!_gsAllTasks) {
+    try { _gsAllTasks = await GET('/tasks'); } catch { _gsAllTasks = []; }
+  }
+
+  let selectedIdx = -1;
+
+  input.addEventListener('input', () => renderGsResults(input.value.trim(), selectedIdx = -1));
+
+  input.addEventListener('keydown', e => {
+    const items = document.querySelectorAll('.gs-result-item');
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      selectedIdx = Math.min(selectedIdx + 1, items.length - 1);
+      items.forEach((el, i) => el.classList.toggle('gs-selected', i === selectedIdx));
+      items[selectedIdx]?.scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      selectedIdx = Math.max(selectedIdx - 1, 0);
+      items.forEach((el, i) => el.classList.toggle('gs-selected', i === selectedIdx));
+      items[selectedIdx]?.scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') {
+      const selected = items[selectedIdx] || items[0];
+      selected?.click();
+    }
+  });
+}
+
+function renderGsResults(q, selectedIdx) {
+  const el = document.getElementById('gs-results');
+  if (!el) return;
+  if (!q) { el.innerHTML = '<div class="gs-hint">Начните вводить для поиска</div>'; return; }
+
+  const ql = q.toLowerCase();
+  const highlight = s => s.replace(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi'), '<mark class="gs-hl">$1</mark>');
+
+  // Tasks
+  const tasks = (_gsAllTasks || []).filter(t =>
+    t.title?.toLowerCase().includes(ql) || (t.description || '').toLowerCase().includes(ql)
+  ).slice(0, 5);
+
+  // Projects
+  const projects = (state.projects || []).filter(p =>
+    p.name?.toLowerCase().includes(ql)
+  ).slice(0, 4);
+
+  // Users
+  const users = (state.users || []).filter(u =>
+    u.name?.toLowerCase().includes(ql) || u.email?.toLowerCase().includes(ql)
+  ).slice(0, 4);
+
+  if (!tasks.length && !projects.length && !users.length) {
+    el.innerHTML = `<div class="gs-hint">Ничего не найдено по «${_escHtml(q)}»</div>`;
+    return;
+  }
+
+  const STATUS_LABELS = { new: 'Новая', in_progress: 'В работе', done: 'Готово' };
+  const STATUS_COLORS = { new: '#3B82F6', in_progress: '#D97706', done: '#059669' };
+
+  let html = '';
+
+  if (tasks.length) {
+    html += `<div class="gs-group-title">${svgI(SVG_PATHS.clip,13)} Задачи</div>`;
+    html += tasks.map(t => `
+      <div class="gs-result-item" onclick="gsGo('task',${t.id})">
+        <div class="gs-result-main">
+          <span class="gs-result-title">${highlight(_escHtml(t.title))}</span>
+          ${t.project_name ? `<span class="gs-result-badge" style="background:${t.project_color}22;color:${t.project_color}">${t.project_name}</span>` : ''}
+        </div>
+        <span class="gs-result-status" style="color:${STATUS_COLORS[t.status]}">${STATUS_LABELS[t.status]||t.status}</span>
+      </div>`).join('');
+  }
+
+  if (projects.length) {
+    html += `<div class="gs-group-title">${svgI(SVG_PATHS.folder,13)} Проекты</div>`;
+    html += projects.map(p => `
+      <div class="gs-result-item" onclick="gsGo('project',${p.id})">
+        <div class="gs-result-main">
+          <span class="gs-dot" style="background:${p.color}"></span>
+          <span class="gs-result-title">${highlight(_escHtml(p.name))}</span>
+        </div>
+        <span class="gs-result-status" style="color:#94a3b8">${p.task_count||0} задач</span>
+      </div>`).join('');
+  }
+
+  if (users.length) {
+    html += `<div class="gs-group-title">${svgI(SVG_PATHS.users,13)} Сотрудники</div>`;
+    html += users.map(u => `
+      <div class="gs-result-item" onclick="gsGo('user',${u.id})">
+        <div class="gs-result-main">
+          <div class="gs-user-av" style="background:${u.avatar_color||'#6366f1'}">${u.name.split(' ').map(w=>w[0]).join('').slice(0,2)}</div>
+          <span class="gs-result-title">${highlight(_escHtml(u.name))}</span>
+        </div>
+        <span class="gs-result-status" style="color:#94a3b8">${u.email}</span>
+      </div>`).join('');
+  }
+
+  el.innerHTML = html;
+  if (selectedIdx >= 0) {
+    document.querySelectorAll('.gs-result-item')[selectedIdx]?.classList.add('gs-selected');
+  }
+}
+
+function gsGo(type, id) {
+  document.getElementById('global-search-overlay')?.remove();
+  if (type === 'task') openTaskDetail(id);
+  else if (type === 'project') navigateTo('project', id);
+  else if (type === 'user') { state.currentEmployeeId = id; navigateTo('employee'); }
 }
 
 // ─── Welcome Modal ────────────────────────────────────────────────────────────
