@@ -6257,10 +6257,9 @@ async function renderIdeahastPage() {
             ${projects.map(p => {
               const start = p.start_date ? p.start_date : '—';
               const end   = p.end_date   ? p.end_date   : 'сейчас';
-              const msLife = p.end_date
-                ? new Date(p.end_date) - new Date(p.start_date)
-                : Date.now() - new Date(p.start_date);
-              const lifeMonths = Math.max(0, Math.floor(msLife/(1000*60*60*24*30)));
+              const d1 = new Date(p.start_date);
+              const d2 = p.end_date ? new Date(p.end_date) : new Date();
+              const lifeMonths = Math.max(0, (d2.getFullYear()-d1.getFullYear())*12 + (d2.getMonth()-d1.getMonth()));
               return `
               <div class="ih-card" onclick="openIhModal(${p.id})">
                 <div class="ih-card-color" style="background:${p.color}"></div>
