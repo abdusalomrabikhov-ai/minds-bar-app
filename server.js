@@ -12,6 +12,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'teamtask-secret-key-change-me';
 
+// Timezone helpers — Dushanbe is UTC+5
+const TZ_OFFSET = 5;
+const localNow    = () => new Date(Date.now() + TZ_OFFSET*3600000).toISOString().slice(0,19).replace('T',' ');
+const localToday  = () => new Date(Date.now() + TZ_OFFSET*3600000).toISOString().slice(0,10);
+const localMonth  = () => new Date(Date.now() + TZ_OFFSET*3600000).toISOString().slice(0,7);
+
 // SSE clients: Map<userId, res[]>
 const sseClients = new Map();
 
@@ -811,6 +817,10 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
     dateParams.push(month);
   }
 
+  // Current local time (Dushanbe UTC+5) as ISO string for correct deadline comparison
+  const nowLocal = new Date(Date.now() + 5*3600000).toISOString().slice(0,19).replace('T',' ');
+  const todayLocal = nowLocal.slice(0,10);
+
   const employees = db.prepare(
     "SELECT id, name, avatar_color FROM users WHERE role = 'employee' ORDER BY name"
   ).all();
@@ -822,10 +832,12 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
         SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done,
         SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
         SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) as new_count,
-        SUM(CASE WHEN status != 'done' AND deadline IS NOT NULL AND (length(deadline) > 10 AND deadline < datetime('now') OR length(deadline) <= 10 AND deadline < date('now')) THEN 1 ELSE 0 END) as overdue
+        SUM(CASE WHEN status != 'done' AND deadline IS NOT NULL AND
+          (length(deadline) > 10 AND deadline < ? OR length(deadline) <= 10 AND deadline < ?)
+        THEN 1 ELSE 0 END) as overdue
       FROM tasks t
       WHERE t.assignee_id = ? ${dateWhere}
-    `).get(user.id, ...dateParams);
+    `).get(nowLocal, todayLocal, user.id, ...dateParams);
 
     const byProject = db.prepare(`
       SELECT p.name, p.color,
@@ -1104,7 +1116,7 @@ app.delete('/api/b2c/payments/:id', auth, requirePerm('manage_b2c'), (req, res) 
 
 // ─── Expenses ─────────────────────────────────────────────────────────────────
 app.get('/api/expenses', auth, requirePerm('manage_finance'), (req, res) => {
-  const month = req.query.month || new Date().toISOString().slice(0,7);
+  const month = req.query.month || localMonth();
   res.json(db.prepare('SELECT * FROM expenses WHERE month=? ORDER BY created_at DESC').all(month));
 });
 app.get('/api/expenses/annual', auth, requirePerm('manage_finance'), (req, res) => {
@@ -1137,7 +1149,7 @@ app.delete('/api/expenses/:id', auth, requirePerm('manage_finance'), (req, res) 
 // ─── Finance ──────────────────────────────────────────────────────────────────
 app.get('/api/finance', auth, requirePerm('manage_finance'), (req, res) => {
   const { month, all_months, status, payment_type, search } = req.query;
-  const targetMonth = month || new Date().toISOString().slice(0,7);
+  const targetMonth = month || localMonth();
   let where = 'WHERE 1=1';
   const params = [];
   if (!all_months) { where += ' AND month=?'; params.push(targetMonth); }
@@ -1218,7 +1230,7 @@ app.get('/api/finance/annual-combined', auth, requirePerm('manage_finance'), (re
 
 // Summary by section for current month
 app.get('/api/finance/section-summary', auth, requirePerm('manage_finance'), (req, res) => {
-  const month = req.query.month || new Date().toISOString().slice(0,7);
+  const month = req.query.month || localMonth();
   const fin  = db.prepare(`SELECT SUM(service_amount) as svc, SUM(paid_amount) as paid, COUNT(*) as cnt FROM finance WHERE month=?`).get(month);
   const b2c  = db.prepare(`SELECT SUM(p.course_amount) as svc, SUM(p.amount) as paid, COUNT(p.id) as cnt FROM b2c_payments p JOIN b2c_courses c ON c.id=p.course_id WHERE strftime('%Y-%m',c.start_date)=?`).get(month);
   const kids = db.prepare(`SELECT SUM(p.course_amount) as svc, SUM(p.amount) as paid, COUNT(p.id) as cnt FROM kids_payments p JOIN kids_courses c ON c.id=p.course_id WHERE strftime('%Y-%m',c.start_date)=?`).get(month);
@@ -1355,7 +1367,7 @@ app.delete('/api/feedback/:id', auth, adminOnly, (req, res) => {
 
 // ─── Best Employee ────────────────────────────────────────────────────────────
 app.get('/api/best-employee', auth, (req, res) => {
-  const month = req.query.month || new Date().toISOString().slice(0, 7);
+  const month = req.query.month || localMonth();
 
   function calcMonth(m) {
     const users = db.prepare("SELECT id, name, avatar_color, avatar_img FROM users WHERE role='employee' ORDER BY name").all();
@@ -1372,7 +1384,7 @@ app.get('/api/best-employee', auth, (req, res) => {
           AND strftime('%Y-%m', t.deadline) = ?
       `).all(u.id, u.id, u.id, m);
 
-      const nowIso = new Date().toISOString();
+      const nowIso = localNow();
 
       // Determine effective completion for each task:
       // - multi-assignee: use ta.done + ta.done_at (this user's individual completion)

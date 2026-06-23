@@ -63,12 +63,15 @@ function getTasksWithDeadline(fromISO, toISO, notifType, cooldownHours) {
 }
 
 function checkDeadlines() {
-  const now = new Date();
-  const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-  const in1h  = new Date(now.getTime() + 60 * 60 * 1000);
+  // Use Dushanbe local time (UTC+5) since deadlines are stored in local time
+  const TZ_OFFSET = 5;
+  const nowLocal  = new Date(Date.now() + TZ_OFFSET*3600000);
+  const in24h     = new Date(nowLocal.getTime() + 24*3600000);
+  const in1h      = new Date(nowLocal.getTime() + 3600000);
+  const toLocal   = d => d.toISOString().slice(0,19).replace('T',' ');
 
   // За 24 часа
-  const tasks24 = getTasksWithDeadline(now.toISOString(), in24h.toISOString(), 'deadline_24h', 25);
+  const tasks24 = getTasksWithDeadline(toLocal(nowLocal), toLocal(in24h), 'deadline_24h', 25);
   tasks24.forEach(task => {
     const msg = `⏰ Через 24 часа истекает дедлайн: «${task.title}»`;
     db.prepare(`INSERT INTO notifications (user_id, task_id, type, message) VALUES (?, ?, 'deadline_24h', ?)`)
@@ -82,7 +85,7 @@ function checkDeadlines() {
   });
 
   // За 1 час
-  const tasks1 = getTasksWithDeadline(now.toISOString(), in1h.toISOString(), 'deadline_1h', 2);
+  const tasks1 = getTasksWithDeadline(toLocal(nowLocal), toLocal(in1h), 'deadline_1h', 2);
   tasks1.forEach(task => {
     const msg = `🔴 Через 1 час истекает дедлайн: «${task.title}»`;
     db.prepare(`INSERT INTO notifications (user_id, task_id, type, message) VALUES (?, ?, 'deadline_1h', ?)`)
@@ -122,9 +125,10 @@ function backupDB() {
 }
 
 function copyRecurringFinance() {
-  const now = new Date();
-  const thisMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-  const prevDate  = new Date(now.getFullYear(), now.getMonth()-1, 1);
+  const TZ_OFFSET = 5;
+  const nowLocal  = new Date(Date.now() + TZ_OFFSET*3600000);
+  const thisMonth = nowLocal.toISOString().slice(0,7);
+  const prevDate  = new Date(nowLocal.getFullYear(), nowLocal.getMonth()-1, 1);
   const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}`;
   const recurring = db.prepare('SELECT * FROM finance WHERE is_recurring=1 AND month=?').all(prevMonth);
   recurring.forEach(r => {
