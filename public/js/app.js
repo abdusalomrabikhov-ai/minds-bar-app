@@ -6502,27 +6502,67 @@ async function _renderGenericCoursePage(sec) {
       ${filteredCourses.length===0
         ? `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.users,44)}</div><h3>Нет курсов</h3><p>Создайте первый курс чтобы начать работу</p></div>`
         : `<div class="b2c-courses-grid">
-            ${filteredCourses.filter(c=>!searchFilt||c.title.toLowerCase().includes(searchFilt)||(c.teacher||'').toLowerCase().includes(searchFilt)).map(c=>`
-              <div class="b2c-course-card" onclick="secOpenCourse('${sec}',${c.id})">
-                <div class="b2c-course-title">${_escHtml(c.title)}</div>
-                ${c.teacher?`<div class="b2c-course-meta">${svgI(SVG_PATHS.user,12)} ${_escHtml(c.teacher)}${c.teacher_phone?' · '+_escHtml(c.teacher_phone):''}</div>`:''}
-                ${(c.start_date||c.end_date)?`<div class="b2c-course-meta">${svgI(SVG_PATHS.cal,12)} ${c.start_date||''}${c.end_date?' — '+c.end_date:''}</div>`:''}
-                <div class="b2c-course-stats"><span>${c.student_count||0} студентов</span></div>
-                <div class="b2c-course-finance">
-                  <div class="b2c-cf-item"><span class="b2c-cf-lbl">Сумма</span><span class="b2c-cf-val">${fmtMoney(c.total_collected||0)}</span></div>
-                  <div class="b2c-cf-item"><span class="b2c-cf-lbl">Оплачено</span><span class="b2c-cf-val" style="color:#16a34a">${fmtMoney(c.total_paid||0)}</span></div>
-                  <div class="b2c-cf-item"><span class="b2c-cf-lbl">Долг</span><span class="b2c-cf-val" style="color:${((+c.total_collected||0)-(+c.total_paid||0))>0?'#dc2626':'#16a34a'}">${fmtMoney(Math.max(0,(+c.total_collected||0)-(+c.total_paid||0)))}</span></div>
+            ${filteredCourses.filter(c=>!searchFilt||c.title.toLowerCase().includes(searchFilt)||(c.teacher||'').toLowerCase().includes(searchFilt)).map(c=>{
+              const collected = +c.total_collected||0;
+              const paid      = +c.total_paid||0;
+              const debt      = Math.max(0, collected - paid);
+              const pct       = collected > 0 ? Math.round(paid/collected*100) : 0;
+              const pctColor  = pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626';
+              const nowD      = new Date();
+              const isActive  = !c.end_date || new Date(c.end_date) >= nowD;
+              const sc        = +c.student_count||0;
+              const scWord    = sc===1?'студент':sc>=2&&sc<=4?'студента':'студентов';
+              const fmtD = raw => {
+                if (!raw) return '';
+                const d = new Date(raw);
+                if (isNaN(d.getTime())) return raw.slice(0,10);
+                const months = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+                return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+              };
+              const dateStr = (c.start_date||c.end_date)
+                ? (c.start_date && c.end_date ? `${fmtD(c.start_date)} — ${fmtD(c.end_date)}` : fmtD(c.start_date||c.end_date))
+                : '';
+              return `<div class="b2c-course-card b2c-card-v2" onclick="secOpenCourse('${sec}',${c.id})">
+                <div class="b2c-card-v2-head">
+                  <div class="b2c-card-v2-title">${_escHtml(c.title)}</div>
+                  <div class="b2c-card-v2-actions" onclick="event.stopPropagation()">
+                    <button class="fin-btn-edit" onclick="openSecCourseModal('${sec}',${c.id})" title="Редактировать">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    <button class="fin-btn-del" onclick="deleteSecCourse('${sec}',${c.id})" title="Удалить">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+                    </button>
+                  </div>
                 </div>
-                ${(+c.total_collected||0)>0?`<div class="b2c-cf-bar"><div class="b2c-cf-bar-fill" style="width:${Math.round((+c.total_paid||0)/(+c.total_collected||1)*100)}%"></div></div>`:''}
-                <div class="b2c-course-actions" onclick="event.stopPropagation()">
-                  <button class="fin-btn-edit" onclick="openSecCourseModal('${sec}',${c.id})" title="Редактировать">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                  </button>
-                  <button class="fin-btn-del" onclick="deleteSecCourse('${sec}',${c.id})" title="Удалить">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
-                  </button>
+                <span class="b2c-card-v2-status ${isActive?'active':'done'}">${isActive?'● Активный':'✓ Завершён'}</span>
+                ${c.teacher?`<div class="b2c-card-v2-meta">${svgI(SVG_PATHS.user,11)} ${_escHtml(c.teacher)}${c.teacher_phone?` <span class="b2c-card-v2-phone">· ${_escHtml(c.teacher_phone)}</span>`:''}</div>`:''}
+                ${dateStr?`<div class="b2c-card-v2-meta">${svgI(SVG_PATHS.cal,11)} ${dateStr}</div>`:''}
+                <div class="b2c-card-v2-students">
+                  <span class="b2c-card-v2-students-num">${sc}</span>
+                  <span class="b2c-card-v2-students-lbl">${scWord}</span>
                 </div>
-              </div>`).join('')}
+                <div class="b2c-card-v2-finance">
+                  <div class="b2c-card-v2-fin-item">
+                    <span class="b2c-card-v2-fin-lbl">Сумма</span>
+                    <span class="b2c-card-v2-fin-val">${fmtMoney(collected)}</span>
+                  </div>
+                  <div class="b2c-card-v2-fin-divider"></div>
+                  <div class="b2c-card-v2-fin-item">
+                    <span class="b2c-card-v2-fin-lbl">Оплачено</span>
+                    <span class="b2c-card-v2-fin-val" style="color:#16a34a">${fmtMoney(paid)}</span>
+                  </div>
+                  <div class="b2c-card-v2-fin-divider"></div>
+                  <div class="b2c-card-v2-fin-item">
+                    <span class="b2c-card-v2-fin-lbl">Долг</span>
+                    <span class="b2c-card-v2-fin-val" style="color:${debt>0?'#dc2626':'#16a34a'}">${fmtMoney(debt)}</span>
+                  </div>
+                </div>
+                ${collected>0?`<div class="b2c-card-v2-progress-wrap">
+                  <div class="b2c-card-v2-progress-bar"><div class="b2c-card-v2-progress-fill" style="width:${pct}%;background:${pctColor}"></div></div>
+                  <span class="b2c-card-v2-pct" style="color:${pctColor}">${pct}%</span>
+                </div>`:''}
+              </div>`;
+            }).join('')}
           </div>`}
     </div>`;
   } catch(err) { content.innerHTML=`<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`; }
