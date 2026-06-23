@@ -108,7 +108,7 @@ function backupDB() {
   const backupDir = path.join(__dirname, 'backups');
   try {
     if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir);
-    const date = new Date().toISOString().slice(0, 10);
+    const date = new Date(Date.now() + 5*3600000).toISOString().slice(0, 10);
     const dst  = path.join(backupDir, `teamtask_${date}.db`);
     fs.copyFileSync(src, dst);
     console.log(`✅ Резервная копия БД: backups/teamtask_${date}.db`);
@@ -143,15 +143,17 @@ function copyRecurringFinance() {
 }
 
 function checkFinanceOverdue() {
-  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 7); // 7+ дней не оплачено
+  // Use Dushanbe local time for 7-day boundary
+  const cutoffLocal = new Date(Date.now() + 5*3600000 - 7*24*3600000)
+    .toISOString().slice(0,19).replace('T',' ');
   const overdue = db.prepare(`
     SELECT f.*, u.telegram_id FROM finance f
     JOIN users u ON u.role='admin'
     WHERE f.status IN ('unpaid','partial')
       AND f.overdue_notified = 0
-      AND f.updated_at < datetime('now', '-7 days')
+      AND f.updated_at < ?
     LIMIT 10
-  `).all();
+  `).all(cutoffLocal);
   overdue.forEach(f => {
     const msg = `💰 *Задолженность*\n\nПроект: *${f.project_name}*\nОстаток: *${(f.service_amount - f.paid_amount).toLocaleString()} ${f.currency||'TJS'}*\nМесяц: ${f.month}\n\nСтатус: ${f.status === 'partial' ? 'Частично оплачено' : 'Не оплачено'}`;
     if (f.telegram_id) sendTelegramNotification(f.telegram_id, msg);

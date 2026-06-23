@@ -370,8 +370,8 @@ function recomputeTaskStatus(taskId) {
   if (!rows.length) return;
   const allDone = rows.every(r => r.done === 1);
   const anyDone = rows.some(r => r.done === 1);
-  db.prepare('UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-    .run(allDone ? 'done' : anyDone ? 'in_progress' : 'new', taskId);
+  db.prepare('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?')
+    .run(allDone ? 'done' : anyDone ? 'in_progress' : 'new', localNow(), taskId);
 }
 
 function enrichTasksWithAssignees(tasks) {
@@ -495,7 +495,7 @@ app.put('/api/tasks/:id', auth, (req, res) => {
   db.prepare(`
     UPDATE tasks SET
       title = ?, description = ?, project_id = ?, assignee_id = ?,
-      priority = ?, deadline = ?, status = ?, recurrence = ?, updated_at = CURRENT_TIMESTAMP
+      priority = ?, deadline = ?, status = ?, recurrence = ?, updated_at = ?
     WHERE id = ?
   `).run(
     title || existing.title,
@@ -506,6 +506,7 @@ app.put('/api/tasks/:id', auth, (req, res) => {
     deadline !== undefined ? (deadline || null) : existing.deadline,
     newStatus,
     newRecurrence,
+    localNow(),
     req.params.id
   );
 
@@ -604,7 +605,7 @@ app.patch('/api/tasks/:id/my-done', auth, (req, res) => {
   const row = db.prepare('SELECT * FROM task_assignees WHERE task_id = ? AND user_id = ?').get(req.params.id, targetId);
   if (!row) return res.status(403).json({ error: 'Вы не являетесь исполнителем этой задачи' });
   db.prepare('UPDATE task_assignees SET done = ?, done_at = ? WHERE task_id = ? AND user_id = ?')
-    .run(done ? 1 : 0, done ? new Date().toISOString() : null, req.params.id, targetId);
+    .run(done ? 1 : 0, done ? localNow() : null, req.params.id, targetId);
   recomputeTaskStatus(req.params.id);
   const task = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [req.params.id]))[0];
   if (done && task) {
@@ -826,29 +827,32 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
   ).all();
 
   const report = employees.map(user => {
+    // Include both single-assignee AND multi-assignee tasks
     const stats = db.prepare(`
       SELECT
-        COUNT(*) as total,
-        SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done,
-        SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
-        SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) as new_count,
-        SUM(CASE WHEN status != 'done' AND deadline IS NOT NULL AND
-          (length(deadline) > 10 AND deadline < ? OR length(deadline) <= 10 AND deadline < ?)
+        COUNT(DISTINCT t.id) as total,
+        SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) as done,
+        SUM(CASE WHEN t.status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+        SUM(CASE WHEN t.status = 'new' THEN 1 ELSE 0 END) as new_count,
+        SUM(CASE WHEN t.status != 'done' AND t.deadline IS NOT NULL AND
+          (length(t.deadline) > 10 AND t.deadline < ? OR length(t.deadline) <= 10 AND t.deadline < ?)
         THEN 1 ELSE 0 END) as overdue
       FROM tasks t
-      WHERE t.assignee_id = ? ${dateWhere}
-    `).get(nowLocal, todayLocal, user.id, ...dateParams);
+      LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
+      WHERE (t.assignee_id = ? OR ta.user_id = ?) ${dateWhere}
+    `).get(nowLocal, todayLocal, user.id, user.id, user.id, ...dateParams);
 
     const byProject = db.prepare(`
       SELECT p.name, p.color,
-        COUNT(*) as total,
+        COUNT(DISTINCT t.id) as total,
         SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) as done
       FROM tasks t
+      LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
       JOIN projects p ON p.id = t.project_id
-      WHERE t.assignee_id = ? ${dateWhere}
+      WHERE (t.assignee_id = ? OR ta.user_id = ?) ${dateWhere}
       GROUP BY p.id
       ORDER BY total DESC
-    `).all(user.id, ...dateParams);
+    `).all(user.id, user.id, user.id, ...dateParams);
 
     return { ...user, stats: stats || { total: 0, done: 0, in_progress: 0, new_count: 0, overdue: 0 }, byProject };
   });
@@ -1120,7 +1124,7 @@ app.get('/api/expenses', auth, requirePerm('manage_finance'), (req, res) => {
   res.json(db.prepare('SELECT * FROM expenses WHERE month=? ORDER BY created_at DESC').all(month));
 });
 app.get('/api/expenses/annual', auth, requirePerm('manage_finance'), (req, res) => {
-  const year = req.query.year || new Date().getFullYear();
+  const year = req.query.year || new Date(Date.now()+5*3600000).getFullYear();
   res.json(db.prepare(`SELECT month, SUM(amount) as total, COUNT(*) as count FROM expenses WHERE month LIKE ? GROUP BY month ORDER BY month`).all(year + '-%'));
 });
 app.post('/api/expenses', auth, requirePerm('manage_finance'), (req, res) => {
@@ -1203,7 +1207,7 @@ app.get('/api/finance', auth, requirePerm('manage_finance'), (req, res) => {
 
 // Annual summary
 app.get('/api/finance/annual', auth, requirePerm('manage_finance'), (req, res) => {
-  const year = req.query.year || new Date().getFullYear();
+  const year = req.query.year || new Date(Date.now()+5*3600000).getFullYear();
   const rows = db.prepare(`SELECT month, SUM(service_amount) as total_service, SUM(paid_amount) as total_paid, COUNT(*) as count
     FROM finance WHERE month LIKE ? GROUP BY month ORDER BY month`).all(year + '-%');
   res.json(rows);
@@ -1211,7 +1215,7 @@ app.get('/api/finance/annual', auth, requirePerm('manage_finance'), (req, res) =
 
 // Combined annual — Finance + B2C + Kids
 app.get('/api/finance/annual-combined', auth, requirePerm('manage_finance'), (req, res) => {
-  const year = req.query.year || new Date().getFullYear();
+  const year = req.query.year || new Date(Date.now()+5*3600000).getFullYear();
   const months12 = Array.from({length:12},(_,i)=>`${year}-${String(i+1).padStart(2,'0')}`);
   const fin  = db.prepare(`SELECT month, SUM(service_amount) as svc, SUM(paid_amount) as paid, COUNT(*) as cnt FROM finance WHERE month LIKE ? GROUP BY month`).all(year+'-%');
   const b2c  = db.prepare(`SELECT strftime('%Y-%m',c.start_date) as month, SUM(p.course_amount) as svc, SUM(p.amount) as paid, COUNT(p.id) as cnt FROM b2c_payments p JOIN b2c_courses c ON c.id=p.course_id WHERE strftime('%Y',c.start_date)=? GROUP BY month`).all(String(year));
@@ -1323,8 +1327,8 @@ app.delete('/api/finance/payments/:id', auth, requirePerm('manage_finance'), (re
 
 // Clean up auto-copied recurring records beyond next month
 app.delete('/api/finance/cleanup-future', auth, requirePerm('manage_finance'), (req, res) => {
-  const now = new Date();
-  const nextMonth = new Date(now.getFullYear(), now.getMonth()+1, 1);
+  const nowLoc = new Date(Date.now() + 5*3600000);
+  const nextMonth = new Date(nowLoc.getFullYear(), nowLoc.getMonth()+1, 1);
   const nextMonthStr = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth()+1).padStart(2,'0')}`;
   // Delete auto-created (is_recurring=1, unpaid) records beyond next month
   const result = db.prepare(`DELETE FROM finance WHERE is_recurring=1 AND status='unpaid' AND paid_amount=0 AND month > ?`).run(nextMonthStr);
@@ -1428,10 +1432,10 @@ app.get('/api/best-employee', auth, (req, res) => {
 
   // History: last 12 months, find winner of each
   const history = [];
-  const now = new Date();
+  const now = new Date(Date.now() + 5*3600000); // Dushanbe local time
   for (let i = 0; i < 12; i++) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const m = d.toISOString().slice(0, 7);
+    const m = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
     if (m === month && i === 0) { history.push({ month: m, winner: current[0] || null }); continue; }
     const ranked = calcMonth(m);
     if (ranked.length > 0) history.push({ month: m, winner: ranked[0] });

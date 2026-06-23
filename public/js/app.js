@@ -108,10 +108,18 @@ function fmtDateShort(dt) {
   return d.toLocaleString('ru-RU', opts);
 }
 
-// For date-only deadlines (no time component) treat expiry as end of that day in local time
+// Parse deadline stored as Dushanbe local time (UTC+5), return Date in UTC for comparison
 function parseDeadline(dt) {
   if (!dt) return null;
-  return /^\d{4}-\d{2}-\d{2}$/.test(dt) ? new Date(dt + 'T23:59:59') : new Date(dt);
+  const clean = dt.replace(' ', 'T');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    // Date-only → end of that day in Dushanbe (23:59:59 UTC+5)
+    return new Date(clean + 'T23:59:59+05:00');
+  }
+  // Datetime without timezone → treat as Dushanbe (UTC+5)
+  return clean.includes('+') || clean.endsWith('Z')
+    ? new Date(clean)
+    : new Date(clean + '+05:00');
 }
 
 function deadlineClass(dt, status) {
@@ -1798,7 +1806,7 @@ function buildContentCalendar(items, year, month, projectId, canEdit) {
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const startOffset = firstDay === 0 ? 6 : firstDay - 1;
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = new Date(Date.now()+5*3600000).toISOString().slice(0,10);
 
   const byDate = {};
   items.forEach(item => {
@@ -3274,7 +3282,7 @@ function renderActivityChart(chart, days = 30, logs = []) {
   _actBucketIdx = 0;
 
   const MONTHS_SHORT = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
-  const today = new Date();
+  const today = new Date(Date.now()+5*3600000);
   const todayStr = today.toISOString().slice(0, 10);
 
   const dayMap = {};
@@ -3765,7 +3773,7 @@ function renderUserActivityContent(userId, data, days) {
 }
 
 async function renderReportsPage() {
-  const now = new Date();
+  const now = new Date(Date.now() + 5*3600000); // Dushanbe UTC+5
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
   document.getElementById('page-content').innerHTML = `
@@ -5370,7 +5378,7 @@ async function openPaymentsModal(finId) {
               <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:10px">Добавить платёж</div>
               <div class="form-row">
                 <div class="field"><label>Сумма</label><input id="pmt-amount" class="input" type="number" placeholder="0"></div>
-                <div class="field"><label>Дата</label><input id="pmt-date" class="input" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+                <div class="field"><label>Дата</label><input id="pmt-date" class="input" type="date" value="${new Date(Date.now()+5*3600000).toISOString().slice(0,10)}"></div>
               </div>
               <div class="form-row">
                 <div class="field"><label>Тип оплаты</label>
