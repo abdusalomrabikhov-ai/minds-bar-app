@@ -7461,7 +7461,7 @@ async function renderSchedulePage() {
                     const safeTitle   = _escHtml(e.title);
                     const safeComment = _escHtml(e.comment);
                     return `<div class="sched-event" style="top:${top}px;height:${height}px;background:${cls.color}"
-                      data-id="${e.id}"
+                      data-id="${e.id}" data-search-text="${(e.title+' '+(e.comment||'')+(e.teacher||'')).toLowerCase()}"
                       ${canEdit ? `draggable="true"
                         ondragstart="schedDragStart(event,${e.id},${durMin})"
                         ondragend="schedDragEnd(event)"
@@ -7496,7 +7496,10 @@ async function renderSchedulePage() {
 
 function schedFilterSearch(val) {
   _schedFilter.search = val;
-  renderSchedulePage();
+  const low = val.toLowerCase();
+  document.querySelectorAll('.sched-event').forEach(el => {
+    el.style.display = (!low || el.dataset.searchText.includes(low)) ? '' : 'none';
+  });
 }
 
 function schedToggleClass(id) {
