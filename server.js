@@ -413,16 +413,24 @@ function getTaskQuery(extraWhere = '', params = []) {
 }
 
 app.get('/api/tasks', auth, (req, res) => {
-  const { project_id, assignee_id, status } = req.query;
+  const { project_id, assignee_id, status, my_tasks } = req.query;
   let where = '';
   const params = [];
 
   const userPerms = JSON.parse(req.user.permissions || '{}');
-  if (req.user.role !== 'admin' && !userPerms.manage_team) {
-    // Show tasks where user is assignee OR creator
+  const isAdmin = req.user.role === 'admin';
+  const hasTeam = userPerms.manage_team;
+
+  if (my_tasks === '1') {
+    // "Мои задачи" — always filter to current user only, regardless of role
+    where += ' AND (t.assignee_id = ? OR t.created_by = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = ?))';
+    params.push(req.user.id, req.user.id, req.user.id);
+  } else if (!isAdmin && !hasTeam) {
+    // Regular employee — show own tasks only
     where += ' AND (t.assignee_id = ? OR t.created_by = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = ?))';
     params.push(req.user.id, req.user.id, req.user.id);
   }
+  // Admin or manage_team — no restriction, sees all tasks
   if (project_id) { where += ' AND t.project_id = ?'; params.push(project_id); }
   if (assignee_id) {
     where += ' AND (t.assignee_id = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = ?))';
@@ -483,7 +491,8 @@ app.put('/api/tasks/:id', auth, (req, res) => {
   const isAssigned = isMulti
     ? !!db.prepare('SELECT 1 FROM task_assignees WHERE task_id = ? AND user_id = ?').get(req.params.id, req.user.id)
     : existing.assignee_id === req.user.id;
-  if (req.user.role !== 'admin' && !isAssigned) {
+  const canManageTeam = JSON.parse(req.user.permissions || '{}').manage_team;
+  if (req.user.role !== 'admin' && !isAssigned && !canManageTeam) {
     return res.status(403).json({ error: 'Нет доступа' });
   }
 

@@ -545,6 +545,7 @@ function setupNavigation() {
 }
 
 const PAGE_TITLES = {
+  'team-tasks': 'Задачи сотрудников',
   'finance-log': 'Активность финансов',
   'ideahast': 'Ideahast',
   'kids': 'Финансы Kids',
@@ -608,6 +609,7 @@ function navigateTo(page, projectId = null, pushHistory = true) {
       renderTasksPage();
       break;
     case 'project': renderProjectPage(projectId); break;
+    case 'team-tasks': renderTeamTasksPage(); break;
     case 'team': renderTeamPage(); break;
     case 'reports': renderReportsPage(); break;
     case 'settings': renderSettingsPage(); break;
@@ -1527,8 +1529,8 @@ function setTaskFilter(key, val) {
 async function loadAndRenderTasks() {
   try {
     if (myTasksMode) {
-      // Fetch ALL tasks visible to user (includes assigned + created by them)
-      const allUserTasks = await GET('/tasks');
+      // my_tasks=1 ensures only current user's own tasks (even for manage_team users)
+      const allUserTasks = await GET('/tasks?my_tasks=1');
       const summaryEl = document.getElementById('mytasks-summary');
       if (summaryEl) {
         summaryEl.innerHTML = renderMyTasksSummary(allUserTasks);
@@ -1539,8 +1541,11 @@ async function loadAndRenderTasks() {
     let url = '/tasks';
     const params = [];
     if (tasksFilter.status) params.push('status=' + tasksFilter.status);
-    // In myTasksMode: don't filter by assignee_id — server returns tasks where user is assignee OR creator
-    if (!myTasksMode && tasksFilter.assignee_id) params.push('assignee_id=' + tasksFilter.assignee_id);
+    if (myTasksMode) {
+      params.push('my_tasks=1'); // always show only current user's own tasks
+    } else if (tasksFilter.assignee_id) {
+      params.push('assignee_id=' + tasksFilter.assignee_id);
+    }
     if (params.length) url += '?' + params.join('&');
     let tasks = await GET(url);
     if (tasksFilter.overdue) tasks = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date());
@@ -6863,6 +6868,82 @@ async function exportB2CExcel(courseId) {
   ws['!cols']=[{wch:4},{wch:24},{wch:12},{wch:14},{wch:10},{wch:12},{wch:14},{wch:10},{wch:24}];
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, course?.title||'Курс');
   XLSX.writeFile(wb, `B2C_${course?.title||courseId}.xlsx`); toast('Excel скачан','success');
+}
+
+// ─── Team Tasks Page (for manage_team users) ─────────────────────────────────
+let _teamTasksFilter = { status: '', assignee_id: '', search: '', overdue: false };
+
+async function renderTeamTasksPage() {
+  const content = document.getElementById('page-content');
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  try {
+    const [allTasks, users] = await Promise.all([GET('/tasks'), GET('/users')]);
+    state.users = users;
+
+    // Filter tasks
+    let tasks = allTasks.filter(t => t.assignee_id || (t.multi_assignees||[]).length);
+    if (_teamTasksFilter.assignee_id) {
+      tasks = tasks.filter(t =>
+        String(t.assignee_id) === _teamTasksFilter.assignee_id ||
+        (t.multi_assignees||[]).some(a => String(a.id) === _teamTasksFilter.assignee_id)
+      );
+    }
+    if (_teamTasksFilter.status) tasks = tasks.filter(t => t.status === _teamTasksFilter.status);
+    if (_teamTasksFilter.overdue) tasks = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date());
+    if (_teamTasksFilter.search) {
+      const q = _teamTasksFilter.search.toLowerCase();
+      tasks = tasks.filter(t => t.title.toLowerCase().includes(q));
+    }
+
+    const employeeOptions = `<option value="">Все сотрудники</option>` +
+      users.filter(u => u.role !== 'admin').map(u =>
+        `<option value="${u.id}" ${_teamTasksFilter.assignee_id === String(u.id) ? 'selected' : ''}>${u.name}</option>`
+      ).join('');
+
+    // Stats
+    const total    = tasks.length;
+    const done     = tasks.filter(t => t.status === 'done').length;
+    const inProg   = tasks.filter(t => t.status === 'in_progress').length;
+    const overdueN = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date()).length;
+
+    content.innerHTML = `
+      <div style="padding:0 0 40px">
+        <!-- Stats -->
+        <div class="dash-stat-cards" style="margin-bottom:16px">
+          <div class="dash-stat-card"><div class="dsc-label">Всего задач</div><div class="dsc-value">${total}</div></div>
+          <div class="dash-stat-card"><div class="dsc-label">Выполнено</div><div class="dsc-value dsc-value--green">${done}</div></div>
+          <div class="dash-stat-card"><div class="dsc-label">В работе</div><div class="dsc-value" style="color:#D97706">${inProg}</div></div>
+          <div class="dash-stat-card"><div class="dsc-label">Просрочено</div><div class="dsc-value ${overdueN>0?'dsc-value--red':''}">${overdueN}</div></div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters">
+          <div class="search-wrap">
+            <input class="search-input" id="tt-search" placeholder="Поиск задач..." value="${_teamTasksFilter.search}"
+              oninput="_teamTasksFilter.search=this.value;renderTeamTasksPage()">
+          </div>
+          <div class="employee-filter">
+            <select id="tt-employee" onchange="_teamTasksFilter.assignee_id=this.value;renderTeamTasksPage()">
+              ${employeeOptions}
+            </select>
+          </div>
+          <button class="filter-btn ${!_teamTasksFilter.status&&!_teamTasksFilter.overdue?'active':''}" onclick="_teamTasksFilter.status='';_teamTasksFilter.overdue=false;renderTeamTasksPage()">Все</button>
+          <button class="filter-btn ${_teamTasksFilter.status==='new'?'active':''}" onclick="_teamTasksFilter.status='new';_teamTasksFilter.overdue=false;renderTeamTasksPage()" style="display:inline-flex;align-items:center;gap:5px">${colorDot('#3B82F6')} Новые</button>
+          <button class="filter-btn ${_teamTasksFilter.status==='in_progress'?'active':''}" onclick="_teamTasksFilter.status='in_progress';_teamTasksFilter.overdue=false;renderTeamTasksPage()" style="display:inline-flex;align-items:center;gap:5px">${colorDot('#D97706')} В работе</button>
+          <button class="filter-btn ${_teamTasksFilter.status==='done'?'active':''}" onclick="_teamTasksFilter.status='done';_teamTasksFilter.overdue=false;renderTeamTasksPage()" style="display:inline-flex;align-items:center;gap:5px">${colorDot('#059669')} Готово</button>
+          <button class="filter-btn ${_teamTasksFilter.overdue?'active':''}" onclick="_teamTasksFilter.overdue=true;_teamTasksFilter.status='';renderTeamTasksPage()" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.warning)} Просрочено</button>
+        </div>
+
+        <!-- Task list -->
+        ${tasks.length === 0
+          ? `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.clip,44)}</div><h3>Нет задач</h3><p>Измените фильтры</p></div>`
+          : `<div class="tasks-list">${tasks.map(t => taskCard(t)).join('')}</div>`}
+      </div>`;
+
+    attachTaskCardListeners();
+  } catch (err) {
+    content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
+  }
 }
 
 // ─── Schedule Page ────────────────────────────────────────────────────────────
