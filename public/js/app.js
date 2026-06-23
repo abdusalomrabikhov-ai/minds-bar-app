@@ -6535,8 +6535,8 @@ async function _renderGenericCoursePage(sec) {
                   </div>
                 </div>
                 <span class="b2c-card-v2-status ${isActive?'active':'done'}">${isActive?'● Активный':'✓ Завершён'}</span>
-                ${c.teacher?`<div class="b2c-card-v2-meta">${svgI(SVG_PATHS.user,11)} ${_escHtml(c.teacher)}${c.teacher_phone?` <span class="b2c-card-v2-phone">· ${_escHtml(c.teacher_phone)}</span>`:''}</div>`:''}
-                ${dateStr?`<div class="b2c-card-v2-meta">${svgI(SVG_PATHS.cal,11)} ${dateStr}</div>`:''}
+                <div class="b2c-card-v2-meta">${c.teacher?`${svgI(SVG_PATHS.user,11)} ${_escHtml(c.teacher)}${c.teacher_phone?` <span class="b2c-card-v2-phone">· ${_escHtml(c.teacher_phone)}</span>`:''}`:'&nbsp;'}</div>
+                <div class="b2c-card-v2-meta">${dateStr?`${svgI(SVG_PATHS.cal,11)} ${dateStr}`:'&nbsp;'}</div>
                 <div class="b2c-card-v2-students">
                   <span class="b2c-card-v2-students-num">${sc}</span>
                   <span class="b2c-card-v2-students-lbl">${scWord}</span>
@@ -6557,10 +6557,10 @@ async function _renderGenericCoursePage(sec) {
                     <span class="b2c-card-v2-fin-val" style="color:${debt>0?'#dc2626':'#16a34a'}">${fmtMoney(debt)}</span>
                   </div>
                 </div>
-                ${collected>0?`<div class="b2c-card-v2-progress-wrap">
+                <div class="b2c-card-v2-progress-wrap" style="${collected>0?'':'visibility:hidden'}">
                   <div class="b2c-card-v2-progress-bar"><div class="b2c-card-v2-progress-fill" style="width:${pct}%;background:${pctColor}"></div></div>
                   <span class="b2c-card-v2-pct" style="color:${pctColor}">${pct}%</span>
-                </div>`:''}
+                </div>
               </div>`;
             }).join('')}
           </div>`}
@@ -6889,8 +6889,8 @@ async function renderB2CPage() {
 
                   <span class="b2c-card-v2-status ${isActive?'active':'done'}">${isActive?'● Активный':'✓ Завершён'}</span>
 
-                  ${c.teacher?`<div class="b2c-card-v2-meta">${svgI(SVG_PATHS.user,11)} ${_escHtml(c.teacher)}${c.teacher_phone?` <span class="b2c-card-v2-phone">· ${_escHtml(c.teacher_phone)}</span>`:''}</div>`:''}
-                  ${dateStr?`<div class="b2c-card-v2-meta">${svgI(SVG_PATHS.cal,11)} ${dateStr}</div>`:''}
+                  <div class="b2c-card-v2-meta">${c.teacher?`${svgI(SVG_PATHS.user,11)} ${_escHtml(c.teacher)}${c.teacher_phone?` <span class="b2c-card-v2-phone">· ${_escHtml(c.teacher_phone)}</span>`:''}`:'&nbsp;'}</div>
+                  <div class="b2c-card-v2-meta">${dateStr?`${svgI(SVG_PATHS.cal,11)} ${dateStr}`:'&nbsp;'}</div>
 
                   <div class="b2c-card-v2-students">
                     <span class="b2c-card-v2-students-num">${sc}</span>
@@ -6914,13 +6914,12 @@ async function renderB2CPage() {
                     </div>
                   </div>
 
-                  ${collected>0?`
-                  <div class="b2c-card-v2-progress-wrap">
+                  <div class="b2c-card-v2-progress-wrap" style="${collected>0?'':'visibility:hidden'}">
                     <div class="b2c-card-v2-progress-bar">
                       <div class="b2c-card-v2-progress-fill" style="width:${pct}%;background:${pctColor}"></div>
                     </div>
                     <span class="b2c-card-v2-pct" style="color:${pctColor}">${pct}%</span>
-                  </div>`:''}
+                  </div>
                 </div>`;
               }).join('')}
             </div>`}
