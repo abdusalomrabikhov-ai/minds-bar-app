@@ -1945,24 +1945,24 @@ body.dark .gs-esc-hint { background: #0f172a; border-color: #334155; color: #647
 .rpt-chart-legend { display:flex; gap:14px; flex-wrap:wrap; }
 .rpt-leg { display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-muted); }
 .rpt-leg-dot { width:10px; height:10px; border-radius:2px; flex-shrink:0; }
-.rpt-chart-bars { display:flex; flex-direction:column; gap:8px; }
-.rpt-bar-row { display:flex; align-items:center; gap:10px; cursor:pointer; border-radius:8px; padding:4px 6px; transition:background .12s; }
+.rpt-chart-bars { display:flex; flex-direction:column; gap:6px; }
+.rpt-bar-row { display:grid; grid-template-columns:110px 1fr 130px; align-items:center; gap:10px; cursor:pointer; border-radius:8px; padding:4px 6px; transition:background .12s; min-width:0; }
 .rpt-bar-row:hover { background:var(--bg); }
-.rpt-bar-label { display:flex; align-items:center; gap:7px; width:110px; flex-shrink:0; }
+.rpt-bar-label { display:flex; align-items:center; gap:7px; min-width:0; }
 .rpt-bar-av { width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:800; color:white; flex-shrink:0; overflow:hidden; }
-.rpt-bar-name { font-size:12.5px; font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.rpt-bar-track { flex:1; height:18px; background:var(--bg); border-radius:99px; overflow:hidden; border:1px solid var(--border); }
-.rpt-bar-fill { height:100%; display:flex; border-radius:99px; overflow:hidden; }
-.rpt-bar-seg { height:100%; transition:width .3s; }
+.rpt-bar-name { font-size:12px; font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.rpt-bar-track { height:18px; background:var(--bg); border-radius:99px; overflow:hidden; border:1px solid var(--border); min-width:0; }
+.rpt-bar-fill { height:100%; display:flex; border-radius:99px; overflow:hidden; max-width:100%; }
+.rpt-bar-seg { height:100%; min-width:0; }
 .rpt-seg-done { background:#16a34a; }
 .rpt-seg-inp  { background:#d97706; }
 .rpt-seg-ov   { background:#dc2626; }
 .rpt-seg-nw   { background:#e2e8f0; }
 body.dark .rpt-seg-nw { background:#334155; }
-.rpt-bar-nums { display:flex; align-items:center; gap:8px; width:90px; flex-shrink:0; justify-content:flex-end; }
-.rpt-bar-total { font-size:13px; font-weight:800; color:var(--text); }
+.rpt-bar-nums { display:flex; align-items:center; gap:6px; justify-content:flex-end; flex-wrap:nowrap; white-space:nowrap; }
+.rpt-bar-total { font-size:13px; font-weight:800; color:var(--text); min-width:22px; text-align:right; }
 .rpt-bar-sub   { font-size:11px; font-weight:600; }
-.rpt-bar-pct   { font-size:12px; font-weight:800; min-width:32px; text-align:right; }
+.rpt-bar-pct   { font-size:12px; font-weight:800; min-width:36px; text-align:right; }
 
 /* ─── Task History ─────────────────────────────────────────────────────────── */
 .task-history-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
