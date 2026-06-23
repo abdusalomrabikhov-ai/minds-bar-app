@@ -215,7 +215,7 @@ function countdownFmt(dt, status) {
 
 function recurrenceBadge(r) {
   if (!r || r === 'none') return '';
-  const labels = { daily: 'Ежедневно', weekly: 'Еженедельно', monthly: 'Ежемесячно' };
+  const labels = { daily: 'Ежедневно', every2days: 'Каждые 2 дня', weekly: 'Еженедельно', monthly: 'Ежемесячно' };
   return `<span class="recur-badge" style="display:inline-flex;align-items:center;gap:4px">${svgI(SVG_PATHS.repeat)} ${labels[r] || r}</span>`;
 }
 
@@ -361,8 +361,9 @@ async function initApp() {
   // Show/hide nav items by permission
   const showAdmin = u.role === 'admin';
   document.querySelectorAll('[data-perm]').forEach(el => {
-    const perm = el.dataset.perm;
-    el.classList.toggle('hidden', !can(perm));
+    // Support multiple permissions separated by space: "perm1 perm2" → visible if any
+    const perms = el.dataset.perm.split(' ').map(p => p.trim()).filter(Boolean);
+    el.classList.toggle('hidden', !perms.some(p => can(p)));
   });
   document.querySelectorAll('.admin-only').forEach(el => {
     el.classList.toggle('hidden', !showAdmin);
@@ -2526,7 +2527,7 @@ async function openTaskDetail(taskId) {
     const isMyTask = isMultiAssignee
       ? ma.some(a => a.id === state.user.id)
       : t.assignee_id === state.user.id;
-    const canEdit = isAdmin || isMyTask;
+    const canEdit = isAdmin || isMyTask || can('assign_tasks') || can('manage_team');
 
     openModal(`
       <div class="modal modal-lg">
@@ -2548,7 +2549,7 @@ async function openTaskDetail(taskId) {
             <div class="task-detail-meta-item">
               <div class="label">Статус</div>
               <div class="value" id="td-status">
-                ${isMultiAssignee ? statusBadge(t.status) : canEdit ? `
+                ${canEdit ? `
                   <div class="status-select" id="status-select">
                     ${['new','in_progress','done'].map(s => `
                       <div class="status-option ${s} ${t.status === s ? 'selected' : ''}" data-status="${s}">
@@ -2602,10 +2603,10 @@ async function openTaskDetail(taskId) {
             </div>` : ''}
           </div>
 
-          ${canEdit && isAdmin ? `
+          ${canEdit ? `
             <div style="display:flex;gap:10px;margin-bottom:20px">
               <button class="btn btn-outline btn-sm" onclick="closeModal();openTaskModal(${t.id})" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.edit)} Редактировать</button>
-              <button class="btn btn-danger btn-sm" onclick="deleteTask(${t.id})" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.trash)} Удалить</button>
+              ${isAdmin || can('assign_tasks') ? `<button class="btn btn-danger btn-sm" onclick="deleteTask(${t.id})" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.trash)} Удалить</button>` : ''}
             </div>
           ` : ''}
 
@@ -2919,6 +2920,7 @@ async function openTaskModal(taskId = null, defaultProjectId = null) {
           <select id="f-recurrence">
             <option value="none" ${!task?.recurrence || task?.recurrence==='none' ? 'selected':''}>Не повторяется</option>
             <option value="daily" ${task?.recurrence==='daily' ? 'selected':''}>Каждый день</option>
+            <option value="every2days" ${task?.recurrence==='every2days' ? 'selected':''}>Каждые 2 дня</option>
             <option value="weekly" ${task?.recurrence==='weekly' ? 'selected':''}>Каждую неделю</option>
             <option value="monthly" ${task?.recurrence==='monthly' ? 'selected':''}>Каждый месяц</option>
           </select>
@@ -3864,6 +3866,58 @@ async function loadReport() {
         </div>
       </div>
 
+      <!-- Workload chart -->
+      ${totalAll > 0 ? (() => {
+        const sorted = [...data].filter(u => u.stats.total > 0).sort((a,b) => b.stats.total - a.stats.total);
+        const maxTotal = Math.max(...sorted.map(u => u.stats.total), 1);
+        const bars = sorted.map(u => {
+          const s = u.stats;
+          const tot = s.total || 0;
+          const don = s.done || 0;
+          const ov  = s.overdue || 0;
+          const inp = s.in_progress || 0;
+          const nw  = tot - don - inp - ov;
+          const pct = tot > 0 ? Math.round(don/tot*100) : 0;
+          const barW = Math.round(tot/maxTotal*100);
+          const ini = u.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+          return `<div class="rpt-bar-row" onclick="openEmployeeProfile(${u.id})" title="${u.name}: ${tot} задач">
+            <div class="rpt-bar-label">
+              <div class="rpt-bar-av" style="background:${u.avatar_color||'#6366f1'}">
+                ${u.avatar_img ? `<img src="${u.avatar_img}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">` : ini}
+              </div>
+              <span class="rpt-bar-name">${u.name.split(' ')[0]}</span>
+            </div>
+            <div class="rpt-bar-track">
+              <div class="rpt-bar-fill" style="width:${barW}%">
+                ${don > 0 ? `<div class="rpt-bar-seg rpt-seg-done" style="width:${Math.round(don/tot*100)}%" title="Выполнено: ${don}"></div>` : ''}
+                ${inp > 0 ? `<div class="rpt-bar-seg rpt-seg-inp" style="width:${Math.round(inp/tot*100)}%" title="В работе: ${inp}"></div>` : ''}
+                ${ov > 0 ? `<div class="rpt-bar-seg rpt-seg-ov" style="width:${Math.round(ov/tot*100)}%" title="Просрочено: ${ov}"></div>` : ''}
+                ${nw > 0 ? `<div class="rpt-bar-seg rpt-seg-nw" style="width:${Math.round(nw/tot*100)}%" title="Новые: ${nw}"></div>` : ''}
+              </div>
+            </div>
+            <div class="rpt-bar-nums">
+              <span class="rpt-bar-total">${tot}</span>
+              <span class="rpt-bar-sub" style="color:#16a34a">${don}✓</span>
+              ${ov > 0 ? `<span class="rpt-bar-sub" style="color:#dc2626">${ov}⚠</span>` : ''}
+              <span class="rpt-bar-pct" style="color:${pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626'}">${pct}%</span>
+            </div>
+          </div>`;
+        }).join('');
+
+        return `<div class="rpt-chart-wrap">
+          <div class="rpt-chart-header">
+            <div class="rpt-chart-title">Нагрузка по сотрудникам</div>
+            <div class="rpt-chart-legend">
+              <span class="rpt-leg"><span class="rpt-leg-dot" style="background:#16a34a"></span>Выполнено</span>
+              <span class="rpt-leg"><span class="rpt-leg-dot" style="background:#d97706"></span>В работе</span>
+              <span class="rpt-leg"><span class="rpt-leg-dot" style="background:#dc2626"></span>Просрочено</span>
+              <span class="rpt-leg"><span class="rpt-leg-dot" style="background:#e2e8f0"></span>Новые</span>
+            </div>
+          </div>
+          <div class="rpt-chart-bars">${bars}</div>
+        </div>`;
+      })() : ''}
+
       <div class="report-grid">
         ${data.map(u => {
           const s = u.stats;
@@ -3994,17 +4048,18 @@ function svgMonthlyBars(months) {
 
 async function renderEmployeeProfile(userId) {
   try {
-    const [users, allTasks] = await Promise.all([GET('/users'), GET('/tasks')]);
+    // Fetch only this employee's tasks — much faster than loading all tasks
+    const [users, tasks] = await Promise.all([
+      GET('/users'),
+      GET('/tasks?assignee_id=' + userId)
+    ]);
     const u = users.find(u => u.id === userId);
     if (!u) {
       document.getElementById('page-content').innerHTML = '<div class="empty-state"><h3>Сотрудник не найден</h3></div>';
       return;
     }
 
-    const tasks = allTasks.filter(t =>
-      t.assignee_id === userId ||
-      (t.multi_assignees || []).some(a => a.id === userId)
-    );
+    const allTasks = tasks; // already filtered by server
     // Task is done for this user if:
     // 1. Overall task status is 'done' (everyone completed), OR
     // 2. This user's individual done flag is set in multi_assignees
@@ -6903,6 +6958,7 @@ async function exportB2CExcel(courseId) {
 
 // ─── Team Tasks Page (for manage_team users) ─────────────────────────────────
 let _teamTasksFilter = { status: '', assignee_id: '', search: '', overdue: false };
+let _teamTasksCache  = []; // cached tasks to avoid re-fetching on search
 
 async function renderTeamTasksPage() {
   const content = document.getElementById('page-content');
@@ -6910,71 +6966,91 @@ async function renderTeamTasksPage() {
   try {
     const [allTasks, users] = await Promise.all([GET('/tasks'), GET('/users')]);
     state.users = users;
-
-    // Filter tasks
-    let tasks = allTasks.filter(t => t.assignee_id || (t.multi_assignees||[]).length);
-    if (_teamTasksFilter.assignee_id) {
-      tasks = tasks.filter(t =>
-        String(t.assignee_id) === _teamTasksFilter.assignee_id ||
-        (t.multi_assignees||[]).some(a => String(a.id) === _teamTasksFilter.assignee_id)
-      );
-    }
-    if (_teamTasksFilter.status) tasks = tasks.filter(t => t.status === _teamTasksFilter.status);
-    if (_teamTasksFilter.overdue) tasks = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date());
-    if (_teamTasksFilter.search) {
-      const q = _teamTasksFilter.search.toLowerCase();
-      tasks = tasks.filter(t => t.title.toLowerCase().includes(q));
-    }
+    _teamTasksCache = allTasks.filter(t => t.assignee_id || (t.multi_assignees||[]).length);
 
     const employeeOptions = `<option value="">Все сотрудники</option>` +
       users.filter(u => u.role !== 'admin').map(u =>
         `<option value="${u.id}" ${_teamTasksFilter.assignee_id === String(u.id) ? 'selected' : ''}>${u.name}</option>`
       ).join('');
 
-    // Stats
-    const total    = tasks.length;
-    const done     = tasks.filter(t => t.status === 'done').length;
-    const inProg   = tasks.filter(t => t.status === 'in_progress').length;
-    const overdueN = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date()).length;
-
     content.innerHTML = `
       <div style="padding:0 0 40px">
-        <!-- Stats -->
-        <div class="dash-stat-cards" style="margin-bottom:16px">
-          <div class="dash-stat-card"><div class="dsc-label">Всего задач</div><div class="dsc-value">${total}</div></div>
-          <div class="dash-stat-card"><div class="dsc-label">Выполнено</div><div class="dsc-value dsc-value--green">${done}</div></div>
-          <div class="dash-stat-card"><div class="dsc-label">В работе</div><div class="dsc-value" style="color:#D97706">${inProg}</div></div>
-          <div class="dash-stat-card"><div class="dsc-label">Просрочено</div><div class="dsc-value ${overdueN>0?'dsc-value--red':''}">${overdueN}</div></div>
-        </div>
-
-        <!-- Filters -->
+        <div class="dash-stat-cards" style="margin-bottom:16px" id="tt-stats"></div>
         <div class="filters">
           <div class="search-wrap">
-            <input class="search-input" id="tt-search" placeholder="Поиск задач..." value="${_teamTasksFilter.search}"
-              oninput="_teamTasksFilter.search=this.value;renderTeamTasksPage()">
+            <input class="search-input" id="tt-search" placeholder="Поиск задач..." value="${_escHtml(_teamTasksFilter.search)}"
+              oninput="_teamTasksFilter.search=this.value;_renderTeamTasksList()">
           </div>
           <div class="employee-filter">
-            <select id="tt-employee" onchange="_teamTasksFilter.assignee_id=this.value;renderTeamTasksPage()">
+            <select id="tt-employee" onchange="_teamTasksFilter.assignee_id=this.value;_renderTeamTasksList()">
               ${employeeOptions}
             </select>
           </div>
-          <button class="filter-btn ${!_teamTasksFilter.status&&!_teamTasksFilter.overdue?'active':''}" onclick="_teamTasksFilter.status='';_teamTasksFilter.overdue=false;renderTeamTasksPage()">Все</button>
-          <button class="filter-btn ${_teamTasksFilter.status==='new'?'active':''}" onclick="_teamTasksFilter.status='new';_teamTasksFilter.overdue=false;renderTeamTasksPage()" style="display:inline-flex;align-items:center;gap:5px">${colorDot('#3B82F6')} Новые</button>
-          <button class="filter-btn ${_teamTasksFilter.status==='in_progress'?'active':''}" onclick="_teamTasksFilter.status='in_progress';_teamTasksFilter.overdue=false;renderTeamTasksPage()" style="display:inline-flex;align-items:center;gap:5px">${colorDot('#D97706')} В работе</button>
-          <button class="filter-btn ${_teamTasksFilter.status==='done'?'active':''}" onclick="_teamTasksFilter.status='done';_teamTasksFilter.overdue=false;renderTeamTasksPage()" style="display:inline-flex;align-items:center;gap:5px">${colorDot('#059669')} Готово</button>
-          <button class="filter-btn ${_teamTasksFilter.overdue?'active':''}" onclick="_teamTasksFilter.overdue=true;_teamTasksFilter.status='';renderTeamTasksPage()" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.warning)} Просрочено</button>
+          <button id="tt-btn-all" class="filter-btn" onclick="_teamTasksFilter.status='';_teamTasksFilter.overdue=false;_renderTeamTasksList()">Все</button>
+          <button id="tt-btn-new" class="filter-btn" onclick="_teamTasksFilter.status='new';_teamTasksFilter.overdue=false;_renderTeamTasksList()" style="display:inline-flex;align-items:center;gap:5px">${colorDot('#3B82F6')} Новые</button>
+          <button id="tt-btn-inp" class="filter-btn" onclick="_teamTasksFilter.status='in_progress';_teamTasksFilter.overdue=false;_renderTeamTasksList()" style="display:inline-flex;align-items:center;gap:5px">${colorDot('#D97706')} В работе</button>
+          <button id="tt-btn-done" class="filter-btn" onclick="_teamTasksFilter.status='done';_teamTasksFilter.overdue=false;_renderTeamTasksList()" style="display:inline-flex;align-items:center;gap:5px">${colorDot('#059669')} Готово</button>
+          <button id="tt-btn-ov" class="filter-btn" onclick="_teamTasksFilter.overdue=true;_teamTasksFilter.status='';_renderTeamTasksList()" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.warning)} Просрочено</button>
         </div>
-
-        <!-- Task list -->
-        ${tasks.length === 0
-          ? `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.clip,44)}</div><h3>Нет задач</h3><p>Измените фильтры</p></div>`
-          : `<div class="tasks-list">${tasks.map(t => taskCard(t)).join('')}</div>`}
+        <div id="tt-task-list"></div>
       </div>`;
 
-    attachTaskCardListeners();
+    _renderTeamTasksList();
   } catch (err) {
     content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
   }
+}
+
+function _renderTeamTasksList() {
+  // Apply filters client-side from cache — no API call, no focus loss
+  let tasks = _teamTasksCache;
+  if (_teamTasksFilter.assignee_id) {
+    tasks = tasks.filter(t =>
+      String(t.assignee_id) === _teamTasksFilter.assignee_id ||
+      (t.multi_assignees||[]).some(a => String(a.id) === _teamTasksFilter.assignee_id)
+    );
+  }
+  if (_teamTasksFilter.status)  tasks = tasks.filter(t => t.status === _teamTasksFilter.status);
+  if (_teamTasksFilter.overdue) tasks = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date());
+  if (_teamTasksFilter.search) {
+    const q = _teamTasksFilter.search.toLowerCase();
+    tasks = tasks.filter(t => t.title.toLowerCase().includes(q) || (t.assignee_name||'').toLowerCase().includes(q));
+  }
+
+  // Update active filter buttons
+  ['all','new','inp','done','ov'].forEach(id => {
+    const btn = document.getElementById('tt-btn-' + id);
+    if (!btn) return;
+    const active =
+      (id==='all'  && !_teamTasksFilter.status && !_teamTasksFilter.overdue) ||
+      (id==='new'  && _teamTasksFilter.status==='new') ||
+      (id==='inp'  && _teamTasksFilter.status==='in_progress') ||
+      (id==='done' && _teamTasksFilter.status==='done') ||
+      (id==='ov'   && _teamTasksFilter.overdue);
+    btn.classList.toggle('active', active);
+  });
+
+  // Update stats
+  const total    = tasks.length;
+  const done     = tasks.filter(t => t.status === 'done').length;
+  const inProg   = tasks.filter(t => t.status === 'in_progress').length;
+  const overdueN = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date()).length;
+  const statsEl  = document.getElementById('tt-stats');
+  if (statsEl) statsEl.innerHTML = `
+    <div class="dash-stat-card"><div class="dsc-label">Всего задач</div><div class="dsc-value">${total}</div></div>
+    <div class="dash-stat-card"><div class="dsc-label">Выполнено</div><div class="dsc-value dsc-value--green">${done}</div></div>
+    <div class="dash-stat-card"><div class="dsc-label">В работе</div><div class="dsc-value" style="color:#D97706">${inProg}</div></div>
+    <div class="dash-stat-card"><div class="dsc-label">Просрочено</div><div class="dsc-value ${overdueN>0?'dsc-value--red':''}">${overdueN}</div></div>`;
+
+  // Update task list
+  const listEl = document.getElementById('tt-task-list');
+  if (!listEl) return;
+
+  listEl.innerHTML = tasks.length === 0
+    ? `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.clip,44)}</div><h3>Нет задач</h3><p>Измените фильтры</p></div>`
+    : `<div class="tasks-list">${tasks.map(t => taskCard(t)).join('')}</div>`;
+
+  attachTaskCardListeners();
 }
 
 // ─── Schedule Page ────────────────────────────────────────────────────────────
@@ -7914,6 +7990,110 @@ function gsGo(type, id) {
   if (type === 'task') openTaskDetail(id);
   else if (type === 'project') navigateTo('project', id);
   else if (type === 'user') { state.currentEmployeeId = id; navigateTo('employee'); }
+}
+
+// ─── Admin Broadcast Modal ────────────────────────────────────────────────────
+function openBroadcastModal() {
+  const users = (state.users || []).filter(u => u.role !== 'admin');
+  const hasTg  = u => u.telegram_id;
+
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="max-width:520px;max-height:90vh;overflow-y:auto">
+        <div class="modal-header">
+          <div>
+            <div class="modal-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:6px"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              Отправить сообщение в Telegram
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:3px">Сообщение придёт в Telegram бот сотрудника</div>
+          </div>
+          <button class="modal-close" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-body">
+
+          <!-- Select all -->
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <label style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted)">
+              Получатели
+            </label>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-outline btn-sm" onclick="broadcastSelectAll(true)">Выбрать всех</button>
+              <button class="btn btn-outline btn-sm" onclick="broadcastSelectAll(false)">Снять все</button>
+            </div>
+          </div>
+
+          <!-- Employee list -->
+          <div class="broadcast-list" id="broadcast-list">
+            ${users.map(u => `
+              <label class="broadcast-item ${hasTg(u) ? '' : 'broadcast-item-notg'}">
+                <input type="checkbox" class="broadcast-chk" data-uid="${u.id}" ${hasTg(u) ? '' : 'disabled'}>
+                <div class="broadcast-av" style="background:${u.avatar_color||'#6366f1'}">
+                  ${u.avatar_img ? `<img src="${u.avatar_img}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">` : u.name.split(' ').map(w=>w[0]).join('').slice(0,2)}
+                </div>
+                <div class="broadcast-info">
+                  <div class="broadcast-name">${_escHtml(u.name)}</div>
+                  <div class="broadcast-tg">${hasTg(u) ? '<span style="color:#16a34a">✓ Telegram подключён</span>' : '<span style="color:#dc2626">✗ Telegram не подключён</span>'}</div>
+                </div>
+              </label>`).join('')}
+          </div>
+
+          <!-- Message -->
+          <div class="field" style="margin-top:16px">
+            <label>Текст сообщения</label>
+            <textarea id="broadcast-text" class="input" rows="5"
+              placeholder="Напишите сообщение для сотрудников...&#10;&#10;Поддерживается *жирный*, _курсив_"></textarea>
+            <div id="broadcast-counter" style="font-size:11px;color:var(--text-muted);margin-top:4px;text-align:right">0 символов</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <div id="broadcast-status" style="font-size:12px;color:var(--text-muted);margin-right:auto"></div>
+          <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+          <button class="btn btn-blue" onclick="sendBroadcast()" id="broadcast-send-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Отправить
+          </button>
+        </div>
+      </div>
+    </div>`;
+
+  // Counter
+  document.getElementById('broadcast-text')?.addEventListener('input', e => {
+    document.getElementById('broadcast-counter').textContent = e.target.value.length + ' символов';
+  });
+}
+
+function broadcastSelectAll(val) {
+  document.querySelectorAll('.broadcast-chk:not(:disabled)').forEach(el => { el.checked = val; });
+}
+
+async function sendBroadcast() {
+  const message = document.getElementById('broadcast-text')?.value.trim();
+  if (!message) return toast('Введите текст сообщения', 'error');
+
+  const userIds = [...document.querySelectorAll('.broadcast-chk:checked')].map(el => parseInt(el.dataset.uid));
+  if (!userIds.length) return toast('Выберите хотя бы одного сотрудника', 'error');
+
+  const btn = document.getElementById('broadcast-send-btn');
+  const status = document.getElementById('broadcast-status');
+  btn.disabled = true;
+  btn.textContent = 'Отправка...';
+  status.textContent = '';
+
+  try {
+    const result = await POST('/admin/broadcast', { user_ids: userIds, message });
+    let msg = `✅ Отправлено: ${result.sent}`;
+    if (result.noTelegram) msg += ` | ⚠️ Без Telegram: ${result.noTelegram}`;
+    status.textContent = msg;
+    status.style.color = '#16a34a';
+    btn.textContent = 'Отправлено!';
+    setTimeout(() => closeModal(), 2500);
+  } catch (err) {
+    toast(err.message, 'error');
+    btn.disabled = false;
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Отправить`;
+  }
 }
 
 // ─── Welcome Modal ────────────────────────────────────────────────────────────

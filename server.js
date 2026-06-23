@@ -418,19 +418,20 @@ app.get('/api/tasks', auth, (req, res) => {
   const params = [];
 
   const userPerms = JSON.parse(req.user.permissions || '{}');
-  const isAdmin = req.user.role === 'admin';
-  const hasTeam = userPerms.manage_team;
+  const isAdmin      = req.user.role === 'admin';
+  const hasTeam      = userPerms.manage_team;
+  const hasAssign    = userPerms.assign_tasks;
 
   if (my_tasks === '1') {
     // "Мои задачи" — always filter to current user only, regardless of role
     where += ' AND (t.assignee_id = ? OR t.created_by = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = ?))';
     params.push(req.user.id, req.user.id, req.user.id);
-  } else if (!isAdmin && !hasTeam) {
+  } else if (!isAdmin && !hasTeam && !hasAssign) {
     // Regular employee — show own tasks only
     where += ' AND (t.assignee_id = ? OR t.created_by = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = ?))';
     params.push(req.user.id, req.user.id, req.user.id);
   }
-  // Admin or manage_team — no restriction, sees all tasks
+  // Admin, manage_team, assign_tasks — no restriction, sees all tasks
   if (project_id) { where += ' AND t.project_id = ?'; params.push(project_id); }
   if (assignee_id) {
     where += ' AND (t.assignee_id = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = ?))';
@@ -442,13 +443,34 @@ app.get('/api/tasks', auth, (req, res) => {
 });
 
 function calcNextDeadline(deadline, recurrence) {
-  if (!deadline) return null;
-  const d = new Date(deadline);
-  if (recurrence === 'daily') d.setDate(d.getDate() + 1);
-  else if (recurrence === 'weekly') d.setDate(d.getDate() + 7);
-  else if (recurrence === 'monthly') d.setMonth(d.getMonth() + 1);
-  else return null;
-  return d.toISOString();
+  // Use local Dushanbe time as base; if no deadline, use tomorrow at 09:00
+  const DSH = 5 * 3600000;
+  let base;
+  if (deadline) {
+    // Parse stored local time as Dushanbe
+    const clean = deadline.replace(' ', 'T');
+    base = clean.endsWith('Z') || clean.includes('+')
+      ? new Date(clean)
+      : new Date(new Date(clean).getTime() - DSH); // stored as local, convert to UTC
+  } else {
+    base = new Date(Date.now() + DSH); // current Dushanbe time in UTC
+  }
+
+  const days = { daily: 1, every2days: 2, weekly: 7 };
+  if (days[recurrence]) {
+    base = new Date(base.getTime() + days[recurrence] * 86400000);
+  } else if (recurrence === 'monthly') {
+    // Add 1 month in local time
+    const local = new Date(base.getTime() + DSH);
+    local.setMonth(local.getMonth() + 1);
+    base = new Date(local.getTime() - DSH);
+  } else {
+    return null;
+  }
+
+  // Return as local Dushanbe time string (no timezone suffix)
+  const localDt = new Date(base.getTime() + DSH);
+  return localDt.toISOString().slice(0, 16); // "YYYY-MM-DDTHH:MM"
 }
 
 app.post('/api/tasks', auth, (req, res) => {
@@ -491,8 +513,10 @@ app.put('/api/tasks/:id', auth, (req, res) => {
   const isAssigned = isMulti
     ? !!db.prepare('SELECT 1 FROM task_assignees WHERE task_id = ? AND user_id = ?').get(req.params.id, req.user.id)
     : existing.assignee_id === req.user.id;
-  const canManageTeam = JSON.parse(req.user.permissions || '{}').manage_team;
-  if (req.user.role !== 'admin' && !isAssigned && !canManageTeam) {
+  const perms = JSON.parse(req.user.permissions || '{}');
+  const canManageTeam  = perms.manage_team;
+  const canAssignTasks = perms.assign_tasks;
+  if (req.user.role !== 'admin' && !isAssigned && !canManageTeam && !canAssignTasks) {
     return res.status(403).json({ error: 'Нет доступа' });
   }
 
@@ -564,7 +588,7 @@ app.put('/api/tasks/:id', auth, (req, res) => {
            existing.created_by, existing.priority, nextDl, newRecurrence);
 
     if (existing.assignee_id) {
-      const recurLabels = { daily: 'ежедневная', weekly: 'еженедельная', monthly: 'ежемесячная' };
+      const recurLabels = { daily: 'ежедневная', every2days: 'каждые 2 дня', weekly: 'еженедельная', monthly: 'ежемесячная' };
       const msg = `🔄 Создана новая ${recurLabels[newRecurrence] || ''} задача: «${existing.title}»`;
       db.prepare(`INSERT INTO notifications (user_id, task_id, type, message) VALUES (?, ?, 'recurring', ?)`)
         .run(existing.assignee_id, nextResult.lastInsertRowid, msg);
@@ -636,7 +660,10 @@ app.patch('/api/tasks/:id/my-done', auth, (req, res) => {
   res.json({ ok: true, status: task?.status });
 });
 
-app.delete('/api/tasks/:id', auth, adminOnly, (req, res) => {
+app.delete('/api/tasks/:id', auth, (req, res) => {
+  if (req.user.role !== 'admin' && !JSON.parse(req.user.permissions||'{}').assign_tasks) {
+    return res.status(403).json({ error: 'Нет доступа' });
+  }
   const task = db.prepare('SELECT title FROM tasks WHERE id = ?').get(req.params.id);
   db.prepare('DELETE FROM notifications WHERE task_id = ?').run(req.params.id);
   db.prepare('DELETE FROM comments WHERE task_id = ?').run(req.params.id);
@@ -1515,6 +1542,29 @@ if (false) app.post('/api/_seed_once', (req, res) => {
     try { db.prepare('INSERT OR IGNORE INTO projects (id,name,color,description,archived) VALUES (?,?,?,?,?)').run(proj.id,proj.name,proj.color||'#6366f1',proj.description||'',proj.archived||0); p++; } catch(e){}
   });
   res.json({ ok:true, users: db.prepare('SELECT COUNT(*) as c FROM users').get().c, projects: db.prepare('SELECT COUNT(*) as c FROM projects').get().c });
+});
+
+// ─── Admin Telegram Broadcast ─────────────────────────────────────────────────
+app.post('/api/admin/broadcast', auth, adminOnly, (req, res) => {
+  const { user_ids, message } = req.body;
+  if (!message?.trim()) return res.status(400).json({ error: 'Введите текст сообщения' });
+  if (!Array.isArray(user_ids) || user_ids.length === 0) return res.status(400).json({ error: 'Выберите хотя бы одного сотрудника' });
+
+  const sender = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id);
+  const text = `📢 *Сообщение от руководства*\n\n${message.trim()}\n\n— _${sender?.name || 'Администратор'}_`;
+
+  let sent = 0, noTelegram = 0;
+  user_ids.forEach(uid => {
+    const user = db.prepare('SELECT name, telegram_id FROM users WHERE id=?').get(uid);
+    if (user?.telegram_id) {
+      sendTelegramNotification(user.telegram_id, text);
+      sent++;
+    } else {
+      noTelegram++;
+    }
+  });
+
+  res.json({ ok: true, sent, noTelegram });
 });
 
 // SPA fallback

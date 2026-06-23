@@ -21,8 +21,23 @@ db.prepare = (sql) => wrap(_prepare(sql));
 
 db.exec('PRAGMA journal_mode = WAL');
 db.exec('PRAGMA foreign_keys = ON');
+db.exec('PRAGMA synchronous = NORMAL');
+db.exec('PRAGMA cache_size = -32000'); // 32MB cache
+db.exec('PRAGMA temp_store = MEMORY');
 
 function initDB() {
+  // Indexes for frequently queried columns
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_deadline ON tasks(deadline)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_created_by ON tasks(created_by)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_task_assignees_task ON task_assignees(task_id)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_task_assignees_user ON task_assignees(user_id)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_activity_log_user ON activity_log(user_id)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_activity_log_date ON activity_log(created_at)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id)'); } catch {}
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
