@@ -1882,7 +1882,7 @@ function buildContentCalendar(items, year, month, projectId, canEdit) {
           : `data-item-id="${item.id}" data-type="${item.type}" data-title="${safeTitle}" data-description="${safeDesc}" onclick="cpViewItem(event,this)"`;
         return `<div class="cp-chip" ${dragAttrs} style="background:${t.bg};border-left:3px solid ${t.color};cursor:pointer">
           <span class="cp-chip-type" style="color:${t.color}">${t.label}${qty}</span>
-          ${item.title ? `<span class="cp-chip-title">${item.title}</span>` : ''}
+          ${item.title ? `<span class="cp-chip-title">${_escHtml(item.title)}</span>` : ''}
           ${hasDesc ? `<span class="cp-chip-has-desc" title="${safeDesc.slice(0,80).replace(/"/g,'&quot;')}${safeDesc.length>80?'…':''}"></span>` : ''}
         </div>`;
       }).join('');
@@ -1971,8 +1971,6 @@ function initCpDragDrop(projectId) {
   });
 }
 
-let _cpAddPopup = null;
-
 function cpOpenAdd(btn, dateStr, projectId) {
   const [y, m, d] = dateStr.split('-');
   const dateLabel = `${d}.${m}.${y}`;
@@ -2032,8 +2030,6 @@ async function cpSubmitAdd(dateStr, projectId) {
     toast('Ошибка: ' + e.message, 'error');
   }
 }
-
-let _cpEditPopup = null;
 
 function cpOpenEdit(e, chip, projectId) {
   if (_cpJustDragged) return;
@@ -2095,7 +2091,6 @@ function cpOpenEdit(e, chip, projectId) {
   });
 }
 
-function _cpEditOutside(e) {}
 function cpCloseEdit() { closeModal(); }
 
 async function cpSubmitEdit(itemId, projectId) {
@@ -2122,8 +2117,6 @@ async function cpDeleteItem(itemId, projectId) {
     toast('Ошибка: ' + e.message, 'error');
   }
 }
-
-let _cpViewPopup = null;
 
 function cpViewItem(e, chip) {
   e.stopPropagation();
@@ -2159,8 +2152,7 @@ let _cpMemberPopup = null;
 
 function cpOpenMemberAdd(projectId, btn) {
   if (_cpMemberPopup) { _cpMemberPopup.remove(); _cpMemberPopup = null; }
-  if (_cpAddPopup)    { _cpAddPopup.remove();    _cpAddPopup    = null; }
-  if (_cpEditPopup)   { _cpEditPopup.remove();   _cpEditPopup   = null; }
+  closeModal();
 
   const currentIds = new Set([...document.querySelectorAll('.proj-member-wrap[data-user-id]')].map(el => el.dataset.userId));
   const available = state.users.filter(u => !currentIds.has(String(u.id)));
@@ -2455,157 +2447,6 @@ function cpDownloadTemplate(projectId) {
   a.href = '/templates/content-plan-template.xlsx';
   a.download = 'Контент-план_Шаблон.xlsx';
   a.click();
-  toast('Шаблон скачан', 'success');
-}
-
-function cpDownloadTemplate_UNUSED(projectId) {
-  if (typeof XLSX === 'undefined') { toast('Библиотека Excel не загружена', 'error'); return; }
-
-  // Find project name for filename
-  const projName = document.querySelector('.proj-header-title')?.textContent?.trim() || 'Проект';
-  const now = new Date();
-  const monthName = CP_MONTHS[now.getMonth()];
-  const year = now.getFullYear();
-
-  // ── Sheet data ──
-  const CYAN  = 'FF17A2B8';
-  const DARK  = 'FF1E293B';
-  const WHITE = 'FFFFFFFF';
-  const LIGHT = 'FFF8FAFC';
-  const BORDER_CLR = 'FFE2E8F0';
-
-  // Header rows
-  const titleRow  = [`Контент-план · ${projName} · ${monthName} ${year}`];
-  const subRow    = ['Заполните таблицу и импортируйте через кнопку «Импорт Excel» в разделе Контент-план'];
-  const emptyRow  = [];
-  const headerRow = ['Дата', 'Тип', 'Заголовок', 'Описание публикации', 'Количество (для сторис)'];
-
-  // Example rows
-  const today = now;
-  const d1 = new Date(today); d1.setDate(1);
-  const d2 = new Date(today); d2.setDate(5);
-  const d3 = new Date(today); d3.setDate(10);
-  const d4 = new Date(today); d4.setDate(15);
-  const d5 = new Date(today); d5.setDate(20);
-  const fmt = d => `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
-
-  const dataRows = [
-    [fmt(d1), 'ПОСТ',   'Знакомство с командой', 'Пишем пост о нашей команде: кто мы, чем занимаемся, почему любим своё дело. Тон — дружелюбный, личный. Добавить фото команды.', 1],
-    [fmt(d2), 'РИЛС',   'До/после',              'Видео-трансформация: показываем работу до и после. Формат: 15 сек, динамичный монтаж, трендовая музыка. Горизонтальные кадры.', 1],
-    [fmt(d3), 'СТОРИС', 'Опрос недели',           'Интерактивные сторис с опросом: «Какой контент вам интереснее?». Варианты: Советы / Кейсы / За кулисами. Яркий фон, крупный текст.', 5],
-    [fmt(d4), 'ПОСТ',   'Кейс клиента',           'Рассказываем историю успеха клиента: задача → решение → результат. Структура: 3 абзаца. Попросить у клиента разрешение на публикацию.', 1],
-    [fmt(d5), 'РИЛС',   'Лайфхак',                'Короткое видео с полезным советом по теме нашей ниши. До 30 секунд. Субтитры обязательны. Заканчивать призывом подписаться.', 1],
-  ];
-
-  const noteRows = [
-    [],
-    ['📌 Инструкция:'],
-    ['', '• Дата — в формате ДД.ММ.ГГГГ (например, 01.07.2026)'],
-    ['', '• Тип — только: ПОСТ, РИЛС или СТОРИС (заглавными буквами)'],
-    ['', '• Заголовок — необязательно, краткое название публикации'],
-    ['', '• Описание публикации — текст, тезисы, технические детали, референсы'],
-    ['', '• Количество — только для СТОРИС (сколько сторис в серии), для остальных — 1'],
-    ['', '• Можно добавлять сколько угодно строк, удалять примеры'],
-  ];
-
-  const aoa = [titleRow, subRow, emptyRow, headerRow, ...dataRows, ...noteRows];
-
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-
-  // ── Column widths ──
-  ws['!cols'] = [
-    { wch: 16 },  // Дата
-    { wch: 10 },  // Тип
-    { wch: 24 },  // Заголовок
-    { wch: 60 },  // Описание
-    { wch: 22 },  // Количество
-  ];
-
-  // ── Row heights ──
-  ws['!rows'] = [
-    { hpt: 28 }, // Title
-    { hpt: 18 }, // Subtitle
-    { hpt: 8  }, // Empty
-    { hpt: 22 }, // Header
-    ...dataRows.map(() => ({ hpt: 60 })), // Data rows — tall for descriptions
-  ];
-
-  // ── Styles via cell properties ──
-  // Title cell
-  const titleCell = ws['A1'];
-  if (titleCell) {
-    titleCell.s = {
-      font: { bold: true, sz: 14, color: { rgb: DARK.slice(2) } },
-      fill: { fgColor: { rgb: 'FFEEF2FF' } },
-      alignment: { vertical: 'center' },
-    };
-  }
-  // Subtitle cell
-  const subCell = ws['A2'];
-  if (subCell) {
-    subCell.s = {
-      font: { sz: 10, italic: true, color: { rgb: '6B7280' } },
-    };
-  }
-
-  // Header row (row index 3 = row 4 in 1-based)
-  const headers = ['A4','B4','C4','D4','E4'];
-  headers.forEach(addr => {
-    if (!ws[addr]) return;
-    ws[addr].s = {
-      font:  { bold: true, sz: 11, color: { rgb: WHITE.slice(2) } },
-      fill:  { fgColor: { rgb: DARK.slice(2) } },
-      alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
-      border: {
-        bottom: { style: 'thin', color: { rgb: '334155' } },
-        right:  { style: 'thin', color: { rgb: '334155' } },
-      },
-    };
-  });
-
-  // Data rows (rows 5–9)
-  const typeColors = { 'ПОСТ': 'FF6366F1', 'РИЛС': 'FFF59E0B', 'СТОРИС': 'FF10B981' };
-  const typeBg     = { 'ПОСТ': 'FFEEF2FF', 'РИЛС': 'FFFFFBEB', 'СТОРИС': 'FFECFDF5' };
-  for (let r = 0; r < dataRows.length; r++) {
-    const rowIdx = r + 5; // 1-based Excel row
-    const typeVal = dataRows[r][1];
-    const cols = ['A','B','C','D','E'];
-    cols.forEach((col, ci) => {
-      const addr = `${col}${rowIdx}`;
-      if (!ws[addr]) ws[addr] = { t: 's', v: '' };
-      const isType = ci === 1;
-      const isDesc = ci === 3;
-      ws[addr].s = {
-        font: isType
-          ? { bold: true, sz: 10, color: { rgb: (typeColors[typeVal] || 'FF374151').slice(2) } }
-          : { sz: 10, color: { rgb: '374151' } },
-        fill: { fgColor: { rgb: (r % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC').slice(2) } },
-        alignment: {
-          vertical: 'top',
-          wrapText: true,
-          horizontal: ci === 0 ? 'center' : (ci === 1 ? 'center' : 'left'),
-        },
-        border: {
-          bottom: { style: 'thin', color: { rgb: BORDER_CLR.slice(2) } },
-          right:  { style: 'thin', color: { rgb: BORDER_CLR.slice(2) } },
-          top:    { style: 'thin', color: { rgb: BORDER_CLR.slice(2) } },
-          left:   { style: 'thin', color: { rgb: BORDER_CLR.slice(2) } },
-        },
-      };
-    });
-  }
-
-  // Merge title across all columns
-  ws['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }, // A1:E1
-    { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } }, // A2:E2
-  ];
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Контент-план');
-
-  const filename = `Контент-план_${projName.replace(/[^\wа-яА-Я]/g,'_')}_${monthName}_${year}.xlsx`;
-  XLSX.writeFile(wb, filename);
   toast('Шаблон скачан', 'success');
 }
 
@@ -6801,39 +6642,78 @@ async function renderB2CPage() {
                 const matchSearch = !_b2cSearch || c.title.toLowerCase().includes(_b2cSearch.toLowerCase()) || (c.teacher||'').toLowerCase().includes(_b2cSearch.toLowerCase());
                 const matchMonth  = !_b2cMonthFilter || (c.start_date||'').startsWith(_b2cMonthFilter);
                 return matchSearch && matchMonth;
-              }).map(c => `
-                <div class="b2c-course-card" onclick="b2cOpenCourse(${c.id})">
-                  <div class="b2c-course-title">${_escHtml(c.title)}</div>
-                  ${c.teacher?`<div class="b2c-course-meta">${svgI(SVG_PATHS.user,12)} ${_escHtml(c.teacher)}${c.teacher_phone?' · '+_escHtml(c.teacher_phone):''}</div>`:''}
-                  ${(c.start_date||c.end_date)?`<div class="b2c-course-meta">${svgI(SVG_PATHS.cal,12)} ${c.start_date||''}${c.end_date?' — '+c.end_date:''}</div>`:''}
-                  <div class="b2c-course-stats">
-                    <span>${c.student_count||0} студентов</span>
+              }).map(c => {
+                const collected = +c.total_collected||0;
+                const paid      = +c.total_paid||0;
+                const debt      = Math.max(0, collected - paid);
+                const pct       = collected > 0 ? Math.round(paid/collected*100) : 0;
+                const now       = new Date();
+                const isActive  = !c.end_date || new Date(c.end_date) >= now;
+                const sc        = +c.student_count||0;
+                const scWord    = sc===1?'студент':sc>=2&&sc<=4?'студента':'студентов';
+                const fmtD = raw => {
+                  if (!raw) return '';
+                  const d = new Date(raw);
+                  if (isNaN(d.getTime())) return raw.slice(0,10);
+                  const months = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+                  return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+                };
+                const dateStr = (c.start_date||c.end_date)
+                  ? (c.start_date && c.end_date
+                      ? `${fmtD(c.start_date)} — ${fmtD(c.end_date)}`
+                      : fmtD(c.start_date||c.end_date))
+                  : '';
+                const pctColor = pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626';
+                return `
+                <div class="b2c-course-card b2c-card-v2" onclick="b2cOpenCourse(${c.id})">
+                  <div class="b2c-card-v2-head">
+                    <div class="b2c-card-v2-title">${_escHtml(c.title)}</div>
+                    <div class="b2c-card-v2-actions" onclick="event.stopPropagation()">
+                      <button class="fin-btn-edit" onclick="openB2CCourseModal(${c.id})" title="Редактировать">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                      </button>
+                      <button class="fin-btn-del" onclick="deleteB2CCourse(${c.id})" title="Удалить">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+                      </button>
+                    </div>
                   </div>
-                  <div class="b2c-course-finance">
-                    <div class="b2c-cf-item">
-                      <span class="b2c-cf-lbl">Сумма</span>
-                      <span class="b2c-cf-val">${fmtMoney(c.total_collected||0)}</span>
-                    </div>
-                    <div class="b2c-cf-item">
-                      <span class="b2c-cf-lbl">Оплачено</span>
-                      <span class="b2c-cf-val" style="color:#16a34a">${fmtMoney(c.total_paid||0)}</span>
-                    </div>
-                    <div class="b2c-cf-item">
-                      <span class="b2c-cf-lbl">Долг</span>
-                      <span class="b2c-cf-val" style="color:${((+c.total_collected||0)-(+c.total_paid||0))>0?'#dc2626':'#16a34a'}">${fmtMoney(Math.max(0,(+c.total_collected||0)-(+c.total_paid||0)))}</span>
-                    </div>
-                  </div>
-                  ${(+c.total_collected||0)>0?`<div class="b2c-cf-bar"><div class="b2c-cf-bar-fill" style="width:${Math.round((+c.total_paid||0)/(+c.total_collected||1)*100)}%"></div></div>`:''}
 
-                  <div class="b2c-course-actions" onclick="event.stopPropagation()">
-                    <button class="fin-btn-edit" onclick="openB2CCourseModal(${c.id})" title="Редактировать">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                    </button>
-                    <button class="fin-btn-del" onclick="deleteB2CCourse(${c.id})" title="Удалить">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
-                    </button>
+                  <span class="b2c-card-v2-status ${isActive?'active':'done'}">${isActive?'● Активный':'✓ Завершён'}</span>
+
+                  ${c.teacher?`<div class="b2c-card-v2-meta">${svgI(SVG_PATHS.user,11)} ${_escHtml(c.teacher)}${c.teacher_phone?` <span class="b2c-card-v2-phone">· ${_escHtml(c.teacher_phone)}</span>`:''}</div>`:''}
+                  ${dateStr?`<div class="b2c-card-v2-meta">${svgI(SVG_PATHS.cal,11)} ${dateStr}</div>`:''}
+
+                  <div class="b2c-card-v2-students">
+                    <span class="b2c-card-v2-students-num">${sc}</span>
+                    <span class="b2c-card-v2-students-lbl">${scWord}</span>
                   </div>
-                </div>`).join('')}
+
+                  <div class="b2c-card-v2-finance">
+                    <div class="b2c-card-v2-fin-item">
+                      <span class="b2c-card-v2-fin-lbl">Сумма</span>
+                      <span class="b2c-card-v2-fin-val">${fmtMoney(collected)}</span>
+                    </div>
+                    <div class="b2c-card-v2-fin-divider"></div>
+                    <div class="b2c-card-v2-fin-item">
+                      <span class="b2c-card-v2-fin-lbl">Оплачено</span>
+                      <span class="b2c-card-v2-fin-val" style="color:#16a34a">${fmtMoney(paid)}</span>
+                    </div>
+                    <div class="b2c-card-v2-fin-divider"></div>
+                    <div class="b2c-card-v2-fin-item">
+                      <span class="b2c-card-v2-fin-lbl">Долг</span>
+                      <span class="b2c-card-v2-fin-val" style="color:${debt>0?'#dc2626':'#16a34a'}">${fmtMoney(debt)}</span>
+                    </div>
+                  </div>
+
+                  ${collected>0?`
+                  <div class="b2c-card-v2-progress-wrap">
+                    <div class="b2c-card-v2-progress-bar">
+                      <div class="b2c-card-v2-progress-fill" style="width:${pct}%;background:${pctColor}"></div>
+                    </div>
+                    <span class="b2c-card-v2-pct" style="color:${pctColor}">${pct}%</span>
+                  </div>`:''}
+                </div>`;
+              }).join('')}
             </div>`}
       </div>`;
   } catch (err) { content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`; }
