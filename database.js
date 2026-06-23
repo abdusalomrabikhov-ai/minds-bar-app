@@ -113,6 +113,7 @@ function initDB() {
     UNIQUE(project_id, user_id)
   )`); } catch {}
   try { db.exec("ALTER TABLE tasks ADD COLUMN source_content_id INTEGER REFERENCES content_plan(id) ON DELETE SET NULL"); } catch {}
+  try { db.exec("ALTER TABLE content_plan ADD COLUMN description TEXT DEFAULT ''"); } catch {}
   try { db.exec("ALTER TABLE users ADD COLUMN last_seen TEXT DEFAULT NULL"); } catch {}
   try { db.exec(`CREATE TABLE IF NOT EXISTS activity_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

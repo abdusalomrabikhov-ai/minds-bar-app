@@ -289,10 +289,10 @@ app.delete('/api/projects/:id/members/:userId', auth, requirePerm('manage_projec
 // ─── Content CRUD ─────────────────────────────────────────────────────────────
 
 app.post('/api/projects/:id/content/item', auth, requirePerm('manage_projects'), (req, res) => {
-  const { date, type, title, quantity } = req.body;
+  const { date, type, title, quantity, description } = req.body;
   if (!date || !type) return res.status(400).json({ error: 'Нет данных' });
-  const r = db.prepare('INSERT INTO content_plan (project_id, date, type, title, quantity) VALUES (?,?,?,?,?)')
-    .run(req.params.id, date, type, title || '', quantity || 1);
+  const r = db.prepare('INSERT INTO content_plan (project_id, date, type, title, quantity, description) VALUES (?,?,?,?,?,?)')
+    .run(req.params.id, date, type, title || '', quantity || 1, description || '');
   const item = db.prepare('SELECT * FROM content_plan WHERE id = ?').get(r.lastInsertRowid);
   const proj = db.prepare('SELECT name FROM projects WHERE id = ?').get(req.params.id);
   syncTasksForItem(item, req.params.id, req.user.id);
@@ -303,9 +303,9 @@ app.post('/api/projects/:id/content/item', auth, requirePerm('manage_projects'),
 app.put('/api/content/:id', auth, requirePerm('manage_projects'), (req, res) => {
   const row = db.prepare('SELECT * FROM content_plan WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Не найдено' });
-  const { date, type, title, quantity } = req.body;
-  db.prepare('UPDATE content_plan SET date=?, type=?, title=?, quantity=? WHERE id=?')
-    .run(date ?? row.date, type ?? row.type, title !== undefined ? title : row.title, quantity ?? row.quantity, req.params.id);
+  const { date, type, title, quantity, description } = req.body;
+  db.prepare('UPDATE content_plan SET date=?, type=?, title=?, quantity=?, description=? WHERE id=?')
+    .run(date ?? row.date, type ?? row.type, title !== undefined ? title : row.title, quantity ?? row.quantity, description !== undefined ? description : (row.description || ''), req.params.id);
   const updated = db.prepare('SELECT * FROM content_plan WHERE id = ?').get(req.params.id);
   const proj = db.prepare('SELECT name FROM projects WHERE id = ?').get(row.project_id);
   syncTasksForItem(updated, row.project_id, req.user.id);
@@ -330,11 +330,11 @@ app.post('/api/projects/:id/content/import', auth, requirePerm('manage_projects'
     toDelete.forEach(ci => db.prepare('DELETE FROM tasks WHERE source_content_id = ?').run(ci.id));
     db.prepare("DELETE FROM content_plan WHERE project_id = ? AND strftime('%Y-%m', date) = ?").run(req.params.id, m);
   });
-  const stmt = db.prepare('INSERT INTO content_plan (project_id, date, type, title, quantity) VALUES (?, ?, ?, ?, ?)');
+  const stmt = db.prepare('INSERT INTO content_plan (project_id, date, type, title, quantity, description) VALUES (?, ?, ?, ?, ?, ?)');
   let count = 0;
   items.forEach(item => {
     if (!item.date || !item.type) return;
-    const r = stmt.run(req.params.id, item.date, item.type, item.title || '', item.quantity || 1);
+    const r = stmt.run(req.params.id, item.date, item.type, item.title || '', item.quantity || 1, item.description || '');
     const inserted = db.prepare('SELECT * FROM content_plan WHERE id = ?').get(r.lastInsertRowid);
     syncTasksForItem(inserted, req.params.id, req.user.id);
     count++;

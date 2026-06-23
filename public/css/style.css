@@ -1075,6 +1075,10 @@ input, textarea, select { font: inherit; }
 }
 .cp-chip-type { font-weight: 700; display: block; }
 .cp-chip-title { color: #374151; display: block; margin-top: 1px; }
+.cp-chip-has-desc {
+  display: block; height: 2px; border-radius: 2px; margin-top: 3px;
+  background: currentColor; opacity: 0.35; width: 60%;
+}
 .cp-chip[draggable] { cursor: grab; transition: opacity .15s, box-shadow .15s; }
 .cp-chip[draggable]:hover { box-shadow: 0 2px 8px rgba(0,0,0,.18); }
 .cp-chip.cp-dragging { opacity: .4; cursor: grabbing; }
@@ -1094,6 +1098,36 @@ input, textarea, select { font: inherit; }
   min-width: 220px;
 }
 .cp-add-popup-title { font-size: 12px; font-weight: 700; color: #374151; margin-bottom: 8px; }
+
+/* Content plan publication modal */
+.cp-pub-modal { max-width: 560px; }
+.cp-pub-type-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.cp-pub-type-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px; border-radius: 8px; cursor: pointer;
+  border: 1.5px solid #e2e8f0; font-size: 13px; font-weight: 600;
+  color: #374151; transition: all .15s; user-select: none;
+  background: #f8fafc;
+}
+.cp-pub-type-btn:hover { border-color: #94a3b8; background: #f1f5f9; }
+.cp-pub-type-btn.active { border-color: currentColor; background: #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.06); }
+.cp-pub-type-btn[data-val="post"].active { border-color: #6366f1; color: #6366f1; background: #eef2ff; }
+.cp-pub-type-btn[data-val="reel"].active { border-color: #f59e0b; color: #d97706; background: #fffbeb; }
+.cp-pub-type-btn[data-val="story"].active { border-color: #10b981; color: #059669; background: #ecfdf5; }
+.cp-pub-type-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.cp-pub-desc-area {
+  min-height: 140px; resize: vertical; font-size: 14px;
+  line-height: 1.6; font-family: inherit;
+}
+.cp-pub-desc-view {
+  font-size: 14px; line-height: 1.7; color: #374151;
+  max-height: 60vh; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-word;
+}
+.cp-pub-type-badge {
+  display: inline-block; padding: 3px 10px; border-radius: 6px;
+  font-size: 11px; font-weight: 700; letter-spacing: .04em;
+}
 
 .cp-footer {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;

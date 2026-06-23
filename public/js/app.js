@@ -1804,6 +1804,9 @@ async function renderProjectContentTab(projectId) {
         </div>
         <div style="display:flex;gap:8px;align-items:center">
           ${isAdmin ? `
+            <button class="btn btn-outline btn-sm" style="display:inline-flex;align-items:center;gap:5px" onclick="cpDownloadTemplate(${projectId})" title="Скачать шаблон Excel для заполнения">
+              ${svgI('<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',14)} Шаблон
+            </button>
             <label class="btn btn-outline btn-sm" style="cursor:pointer;display:inline-flex;align-items:center;gap:5px">
               ${svgI('<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',14)} Импорт Excel
               <input type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="importContentExcel(this,${projectId})">
@@ -1872,12 +1875,15 @@ function buildContentCalendar(items, year, month, projectId, canEdit) {
         const t = CP_TYPES[item.type] || CP_TYPES.post;
         const qty = item.type === 'story' && item.quantity > 1 ? ` ×${item.quantity}` : '';
         const safeTitle = (item.title || '').replace(/"/g, '&quot;');
+        const safeDesc = (item.description || '').replace(/"/g, '&quot;');
+        const hasDesc = !!(item.description || '').trim();
         const dragAttrs = canEdit
-          ? `draggable="true" data-item-id="${item.id}" data-type="${item.type}" data-title="${safeTitle}" data-qty="${item.quantity || 1}" onclick="cpOpenEdit(event,this,${projectId})"`
-          : '';
-        return `<div class="cp-chip" ${dragAttrs} style="background:${t.bg};border-left:3px solid ${t.color}${canEdit?';cursor:pointer':''}">
+          ? `draggable="true" data-item-id="${item.id}" data-type="${item.type}" data-title="${safeTitle}" data-qty="${item.quantity || 1}" data-description="${safeDesc}" onclick="cpOpenEdit(event,this,${projectId})"`
+          : `data-item-id="${item.id}" data-type="${item.type}" data-title="${safeTitle}" data-description="${safeDesc}" onclick="cpViewItem(event,this)"`;
+        return `<div class="cp-chip" ${dragAttrs} style="background:${t.bg};border-left:3px solid ${t.color};cursor:pointer">
           <span class="cp-chip-type" style="color:${t.color}">${t.label}${qty}</span>
           ${item.title ? `<span class="cp-chip-title">${item.title}</span>` : ''}
+          ${hasDesc ? `<span class="cp-chip-has-desc" title="${safeDesc.slice(0,80).replace(/"/g,'&quot;')}${safeDesc.length>80?'…':''}"></span>` : ''}
         </div>`;
       }).join('');
       const addBtn = canEdit ? `<button class="cp-add-btn" onclick="cpOpenAdd(this,'${ds}',${projectId})" title="Добавить публикацию">+</button>` : '';
@@ -1968,50 +1974,59 @@ function initCpDragDrop(projectId) {
 let _cpAddPopup = null;
 
 function cpOpenAdd(btn, dateStr, projectId) {
-  if (_cpAddPopup) { _cpAddPopup.remove(); _cpAddPopup = null; }
-
-  const popup = document.createElement('div');
-  popup.className = 'cp-add-popup';
-  popup.innerHTML = `
-    <div class="cp-add-popup-title">Новая публикация · ${dateStr.split('-').reverse().join('.')}</div>
-    <select id="cp-add-type" class="form-control" style="margin-bottom:8px">
-      <option value="post">ПОСТ</option>
-      <option value="reel">РИЛС</option>
-      <option value="story">СТОРИС</option>
-    </select>
-    <input id="cp-add-title" class="form-control" placeholder="Заголовок (необязательно)" style="margin-bottom:8px">
-    <div style="display:flex;gap:6px">
-      <button class="btn btn-blue btn-sm" style="flex:1" onclick="cpSubmitAdd('${dateStr}',${projectId})">Добавить</button>
-      <button class="btn btn-outline btn-sm" onclick="cpCloseAdd()">Отмена</button>
+  const [y, m, d] = dateStr.split('-');
+  const dateLabel = `${d}.${m}.${y}`;
+  openModal(`
+    <div class="modal cp-pub-modal">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">Новая публикация</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:2px">${dateLabel}</div>
+        </div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="cp-pub-type-row">
+          ${Object.entries(CP_TYPES).map(([k,v]) => `
+            <label class="cp-pub-type-btn" data-val="${k}">
+              <input type="radio" name="cp-add-type-r" value="${k}" ${k==='post'?'checked':''} style="display:none">
+              <span class="cp-pub-type-dot" style="background:${v.color}"></span>${v.label}
+            </label>`).join('')}
+        </div>
+        <div class="field" style="margin-top:14px">
+          <label class="field-label">Заголовок <span style="color:#9ca3af;font-weight:400">(необязательно)</span></label>
+          <input id="cp-add-title" class="form-control" placeholder="Например: Пост про новый продукт">
+        </div>
+        <div class="field">
+          <label class="field-label">Текст / описание публикации</label>
+          <textarea id="cp-add-desc" class="form-control cp-pub-desc-area" placeholder="Напишите текст публикации, тезисы или любые детали..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+        <button class="btn btn-primary" onclick="cpSubmitAdd('${dateStr}',${projectId})">Добавить публикацию</button>
+      </div>
     </div>
-  `;
-
-  const rect = btn.closest('.cp-day-num').getBoundingClientRect();
-  popup.style.top = (rect.bottom + window.scrollY + 4) + 'px';
-  popup.style.left = (rect.left + window.scrollX) + 'px';
-  document.body.appendChild(popup);
-  _cpAddPopup = popup;
-
-  setTimeout(() => {
-    document.addEventListener('mousedown', _cpAddOutside, { once: true });
-  }, 0);
+  `);
+  // highlight selected type
+  document.querySelectorAll('.cp-pub-type-btn').forEach(lbl => {
+    lbl.classList.toggle('active', lbl.dataset.val === 'post');
+    lbl.querySelector('input').addEventListener('change', () => {
+      document.querySelectorAll('.cp-pub-type-btn').forEach(l => l.classList.toggle('active', l.dataset.val === lbl.dataset.val));
+    });
+  });
 }
 
-function _cpAddOutside(e) {
-  if (_cpAddPopup && !_cpAddPopup.contains(e.target)) cpCloseAdd();
-}
-
-function cpCloseAdd() {
-  if (_cpAddPopup) { _cpAddPopup.remove(); _cpAddPopup = null; }
-  document.removeEventListener('mousedown', _cpAddOutside);
-}
+function cpCloseAdd() { closeModal(); }
 
 async function cpSubmitAdd(dateStr, projectId) {
-  const type  = document.getElementById('cp-add-type')?.value || 'post';
+  const typeInput = document.querySelector('input[name="cp-add-type-r"]:checked');
+  const type  = typeInput?.value || 'post';
   const title = (document.getElementById('cp-add-title')?.value || '').trim();
-  cpCloseAdd();
+  const description = (document.getElementById('cp-add-desc')?.value || '').trim();
+  closeModal();
   try {
-    await api('POST', `/projects/${projectId}/content/item`, { date: dateStr, type, title, quantity: 1 });
+    await api('POST', `/projects/${projectId}/content/item`, { date: dateStr, type, title, quantity: 1, description });
     renderProjectContentTab(projectId);
   } catch(e) {
     toast('Ошибка: ' + e.message, 'error');
@@ -2023,66 +2038,75 @@ let _cpEditPopup = null;
 function cpOpenEdit(e, chip, projectId) {
   if (_cpJustDragged) return;
   e.stopPropagation();
-  if (_cpEditPopup) { _cpEditPopup.remove(); _cpEditPopup = null; }
-  if (_cpAddPopup)  { _cpAddPopup.remove();  _cpAddPopup  = null; }
 
   const itemId = chip.dataset.itemId;
   const type   = chip.dataset.type || 'post';
   const title  = chip.dataset.title || '';
   const qty    = parseInt(chip.dataset.qty) || 1;
+  const desc   = chip.dataset.description || '';
   const t      = CP_TYPES[type] || CP_TYPES.post;
 
-  const popup = document.createElement('div');
-  popup.className = 'cp-add-popup';
-  popup.innerHTML = `
-    <div class="cp-add-popup-title" style="color:${t.color}">Редактировать публикацию</div>
-    <select id="cp-edit-type" class="form-control" style="margin-bottom:8px">
-      ${Object.entries(CP_TYPES).map(([k,v]) => `<option value="${k}"${k===type?' selected':''}>${v.label}</option>`).join('')}
-    </select>
-    <input id="cp-edit-title" class="form-control" placeholder="Заголовок" value="${title.replace(/"/g,'&quot;')}" style="margin-bottom:8px">
-    <div id="cp-edit-qty-row" style="margin-bottom:8px;${type==='story'?'':'display:none'}">
-      <label style="font-size:12px;color:#64748b;margin-bottom:4px;display:block">Количество сторис</label>
-      <input id="cp-edit-qty" type="number" min="1" max="50" class="form-control" value="${qty}">
+  openModal(`
+    <div class="modal cp-pub-modal">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">Редактировать публикацию</div>
+          <div style="font-size:12px;color:${t.color};margin-top:2px;font-weight:600">${t.label}</div>
+        </div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="cp-pub-type-row">
+          ${Object.entries(CP_TYPES).map(([k,v]) => `
+            <label class="cp-pub-type-btn${k===type?' active':''}" data-val="${k}">
+              <input type="radio" name="cp-edit-type-r" value="${k}" ${k===type?'checked':''} style="display:none">
+              <span class="cp-pub-type-dot" style="background:${v.color}"></span>${v.label}
+            </label>`).join('')}
+        </div>
+        <div id="cp-edit-qty-row" class="field" style="margin-top:14px;${type==='story'?'':'display:none'}">
+          <label class="field-label">Количество сторис</label>
+          <input id="cp-edit-qty" type="number" min="1" max="50" class="form-control" value="${qty}" style="max-width:120px">
+        </div>
+        <div class="field" style="margin-top:14px">
+          <label class="field-label">Заголовок <span style="color:#9ca3af;font-weight:400">(необязательно)</span></label>
+          <input id="cp-edit-title" class="form-control" placeholder="Заголовок публикации" value="${title.replace(/"/g,'&quot;')}">
+        </div>
+        <div class="field">
+          <label class="field-label">Текст / описание публикации</label>
+          <textarea id="cp-edit-desc" class="form-control cp-pub-desc-area" placeholder="Напишите текст публикации, тезисы или любые детали...">${desc.replace(/</g,'&lt;')}</textarea>
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content:space-between">
+        <button class="btn btn-outline" style="color:#EF4444;border-color:#EF4444" onclick="cpDeleteItem('${itemId}',${projectId})">Удалить</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+          <button class="btn btn-primary" onclick="cpSubmitEdit('${itemId}',${projectId})">Сохранить</button>
+        </div>
+      </div>
     </div>
-    <div style="display:flex;gap:6px;margin-top:4px">
-      <button class="btn btn-blue btn-sm" style="flex:1" onclick="cpSubmitEdit('${itemId}',${projectId})">Сохранить</button>
-      <button class="btn btn-outline btn-sm" style="color:#EF4444;border-color:#EF4444" onclick="cpDeleteItem('${itemId}',${projectId})">Удалить</button>
-      <button class="btn btn-outline btn-sm" onclick="cpCloseEdit()">✕</button>
-    </div>
-  `;
+  `);
 
-  // Show/hide qty row when type changes
-  popup.querySelector('#cp-edit-type').addEventListener('change', function() {
-    popup.querySelector('#cp-edit-qty-row').style.display = this.value === 'story' ? '' : 'none';
+  document.querySelectorAll('.cp-pub-type-btn').forEach(lbl => {
+    lbl.querySelector('input').addEventListener('change', () => {
+      document.querySelectorAll('.cp-pub-type-btn').forEach(l => l.classList.toggle('active', l.dataset.val === lbl.dataset.val));
+      const isStory = lbl.dataset.val === 'story';
+      document.getElementById('cp-edit-qty-row').style.display = isStory ? '' : 'none';
+    });
   });
-
-  const rect = chip.getBoundingClientRect();
-  popup.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
-  popup.style.left = Math.min(rect.left + window.scrollX, window.innerWidth - 250) + 'px';
-  document.body.appendChild(popup);
-  _cpEditPopup = popup;
-
-  setTimeout(() => {
-    document.addEventListener('mousedown', _cpEditOutside, { once: true });
-  }, 0);
 }
 
-function _cpEditOutside(e) {
-  if (_cpEditPopup && !_cpEditPopup.contains(e.target)) cpCloseEdit();
-}
-
-function cpCloseEdit() {
-  if (_cpEditPopup) { _cpEditPopup.remove(); _cpEditPopup = null; }
-  document.removeEventListener('mousedown', _cpEditOutside);
-}
+function _cpEditOutside(e) {}
+function cpCloseEdit() { closeModal(); }
 
 async function cpSubmitEdit(itemId, projectId) {
-  const type  = document.getElementById('cp-edit-type')?.value;
+  const typeInput = document.querySelector('input[name="cp-edit-type-r"]:checked');
+  const type  = typeInput?.value || 'post';
   const title = (document.getElementById('cp-edit-title')?.value || '').trim();
   const qty   = parseInt(document.getElementById('cp-edit-qty')?.value) || 1;
-  cpCloseEdit();
+  const description = (document.getElementById('cp-edit-desc')?.value || '').trim();
+  closeModal();
   try {
-    await api('PUT', `/content/${itemId}`, { type, title, quantity: type === 'story' ? qty : 1 });
+    await api('PUT', `/content/${itemId}`, { type, title, quantity: type === 'story' ? qty : 1, description });
     renderProjectContentTab(projectId);
   } catch(e) {
     toast('Ошибка: ' + e.message, 'error');
@@ -2090,13 +2114,43 @@ async function cpSubmitEdit(itemId, projectId) {
 }
 
 async function cpDeleteItem(itemId, projectId) {
-  cpCloseEdit();
+  closeModal();
   try {
     await api('DELETE', `/content/${itemId}`);
     renderProjectContentTab(projectId);
   } catch(e) {
     toast('Ошибка: ' + e.message, 'error');
   }
+}
+
+let _cpViewPopup = null;
+
+function cpViewItem(e, chip) {
+  e.stopPropagation();
+  const type  = chip.dataset.type || 'post';
+  const title = chip.dataset.title || '';
+  const desc  = chip.dataset.description || '';
+  const t     = CP_TYPES[type] || CP_TYPES.post;
+
+  openModal(`
+    <div class="modal cp-pub-modal">
+      <div class="modal-header">
+        <div>
+          <span class="cp-pub-type-badge" style="background:${t.bg};color:${t.color};border:1.5px solid ${t.color}">${t.label}</span>
+          ${title ? `<div class="modal-title" style="margin-top:6px">${title.replace(/</g,'&lt;')}</div>` : ''}
+        </div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        ${desc
+          ? `<div class="cp-pub-desc-view">${desc.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>`
+          : `<div style="color:#9ca3af;font-size:14px;padding:12px 0">Описание не добавлено</div>`}
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
+      </div>
+    </div>
+  `);
 }
 
 // ─── Project Member Management ────────────────────────────────────────────────
@@ -2290,8 +2344,8 @@ function detectCpType(line) {
   return { type, quantity };
 }
 
-function buildCpItem(date, { type, title, quantity }) {
-  return { date, type, title: title || '', quantity: quantity || 1 };
+function buildCpItem(date, { type, title, quantity, description }) {
+  return { date, type, title: title || '', description: description || '', quantity: quantity || 1 };
 }
 
 function parseCpRows(rows) {
@@ -2299,7 +2353,7 @@ function parseCpRows(rows) {
 
   // ── 1. Find header row (look for keywords «дата» + «тип») ──
   let startRow = 0;
-  let dateCol = -1, typeCol = -1, titleCol = -1, qtyCol = -1;
+  let dateCol = -1, typeCol = -1, titleCol = -1, descCol = -1, qtyCol = -1;
   let headerFound = false;
 
   for (let i = 0; i < Math.min(rows.length, 8); i++) {
@@ -2309,7 +2363,10 @@ function parseCpRows(rows) {
     if (dIdx >= 0 && tIdx >= 0) {
       dateCol  = dIdx;
       typeCol  = tIdx;
-      titleCol = r.findIndex(h => /загол|описан|назван|title|content|текст/.test(h));
+      descCol  = r.findIndex(h => /^описани|описание публик|description|текст публик/.test(h));
+      titleCol = r.findIndex(h => /загол|назван|title/.test(h));
+      // fallback: if no separate title col, allow «текст» to be title (legacy)
+      if (titleCol < 0 && descCol < 0) titleCol = r.findIndex(h => /описан|content|текст/.test(h));
       qtyCol   = r.findIndex(h => /кол|qty|шт|количест/.test(h));
       startRow = i + 1;
       headerFound = true;
@@ -2335,13 +2392,14 @@ function parseCpRows(rows) {
         break;
       }
     }
-    // Fallback positional
+    // Fallback positional: Дата | Тип | Заголовок | Описание | Кол
     if (dateCol < 0) dateCol = 0;
     if (typeCol < 0) typeCol = 1;
   }
 
-  if (titleCol < 0) titleCol = typeCol + 1 <= 3 ? typeCol + 1 : 2;
-  if (qtyCol  < 0) qtyCol  = titleCol + 1;
+  if (titleCol < 0) titleCol = typeCol + 1;
+  if (descCol  < 0) descCol  = titleCol + 1;
+  if (qtyCol   < 0) qtyCol   = descCol  + 1;
 
   // ── 3. Parse data rows ──
   const items = [];
@@ -2351,16 +2409,17 @@ function parseCpRows(rows) {
     const rawDate = row[dateCol];
     const rawType = String(row[typeCol] ?? '').trim().toUpperCase();
     const title   = String(row[titleCol] ?? '').trim();
+    const desc    = String(row[descCol]  ?? '').trim();
     const qty     = parseInt(row[qtyCol]) || 1;
     if (!rawDate || !rawType) continue;
     const date = parseCpDate(rawDate);
     if (!date) continue;
     let type = null;
-    if (rawType.includes('ПОСТ') || rawType.includes('POST'))  type = 'post';
-    else if (rawType.includes('РИЛС') || rawType.includes('REEL'))   type = 'reel';
-    else if (rawType.includes('СТОРИ') || rawType.includes('STORY'))  type = 'story';
+    if (rawType.includes('ПОСТ') || rawType.includes('POST'))   type = 'post';
+    else if (rawType.includes('РИЛС') || rawType.includes('REEL'))  type = 'reel';
+    else if (rawType.includes('СТОРИ') || rawType.includes('STORY')) type = 'story';
     if (!type) continue;
-    items.push({ date, type, title, quantity: qty });
+    items.push({ date, type, title, description: desc, quantity: qty });
   }
   return items;
 }
@@ -2388,6 +2447,166 @@ function parseCpDate(raw) {
   const d = new Date(s);
   if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
   return null;
+}
+
+// ─── Content Plan Template Download ──────────────────────────────────────────
+function cpDownloadTemplate(projectId) {
+  const a = document.createElement('a');
+  a.href = '/templates/content-plan-template.xlsx';
+  a.download = 'Контент-план_Шаблон.xlsx';
+  a.click();
+  toast('Шаблон скачан', 'success');
+}
+
+function cpDownloadTemplate_UNUSED(projectId) {
+  if (typeof XLSX === 'undefined') { toast('Библиотека Excel не загружена', 'error'); return; }
+
+  // Find project name for filename
+  const projName = document.querySelector('.proj-header-title')?.textContent?.trim() || 'Проект';
+  const now = new Date();
+  const monthName = CP_MONTHS[now.getMonth()];
+  const year = now.getFullYear();
+
+  // ── Sheet data ──
+  const CYAN  = 'FF17A2B8';
+  const DARK  = 'FF1E293B';
+  const WHITE = 'FFFFFFFF';
+  const LIGHT = 'FFF8FAFC';
+  const BORDER_CLR = 'FFE2E8F0';
+
+  // Header rows
+  const titleRow  = [`Контент-план · ${projName} · ${monthName} ${year}`];
+  const subRow    = ['Заполните таблицу и импортируйте через кнопку «Импорт Excel» в разделе Контент-план'];
+  const emptyRow  = [];
+  const headerRow = ['Дата', 'Тип', 'Заголовок', 'Описание публикации', 'Количество (для сторис)'];
+
+  // Example rows
+  const today = now;
+  const d1 = new Date(today); d1.setDate(1);
+  const d2 = new Date(today); d2.setDate(5);
+  const d3 = new Date(today); d3.setDate(10);
+  const d4 = new Date(today); d4.setDate(15);
+  const d5 = new Date(today); d5.setDate(20);
+  const fmt = d => `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
+
+  const dataRows = [
+    [fmt(d1), 'ПОСТ',   'Знакомство с командой', 'Пишем пост о нашей команде: кто мы, чем занимаемся, почему любим своё дело. Тон — дружелюбный, личный. Добавить фото команды.', 1],
+    [fmt(d2), 'РИЛС',   'До/после',              'Видео-трансформация: показываем работу до и после. Формат: 15 сек, динамичный монтаж, трендовая музыка. Горизонтальные кадры.', 1],
+    [fmt(d3), 'СТОРИС', 'Опрос недели',           'Интерактивные сторис с опросом: «Какой контент вам интереснее?». Варианты: Советы / Кейсы / За кулисами. Яркий фон, крупный текст.', 5],
+    [fmt(d4), 'ПОСТ',   'Кейс клиента',           'Рассказываем историю успеха клиента: задача → решение → результат. Структура: 3 абзаца. Попросить у клиента разрешение на публикацию.', 1],
+    [fmt(d5), 'РИЛС',   'Лайфхак',                'Короткое видео с полезным советом по теме нашей ниши. До 30 секунд. Субтитры обязательны. Заканчивать призывом подписаться.', 1],
+  ];
+
+  const noteRows = [
+    [],
+    ['📌 Инструкция:'],
+    ['', '• Дата — в формате ДД.ММ.ГГГГ (например, 01.07.2026)'],
+    ['', '• Тип — только: ПОСТ, РИЛС или СТОРИС (заглавными буквами)'],
+    ['', '• Заголовок — необязательно, краткое название публикации'],
+    ['', '• Описание публикации — текст, тезисы, технические детали, референсы'],
+    ['', '• Количество — только для СТОРИС (сколько сторис в серии), для остальных — 1'],
+    ['', '• Можно добавлять сколько угодно строк, удалять примеры'],
+  ];
+
+  const aoa = [titleRow, subRow, emptyRow, headerRow, ...dataRows, ...noteRows];
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // ── Column widths ──
+  ws['!cols'] = [
+    { wch: 16 },  // Дата
+    { wch: 10 },  // Тип
+    { wch: 24 },  // Заголовок
+    { wch: 60 },  // Описание
+    { wch: 22 },  // Количество
+  ];
+
+  // ── Row heights ──
+  ws['!rows'] = [
+    { hpt: 28 }, // Title
+    { hpt: 18 }, // Subtitle
+    { hpt: 8  }, // Empty
+    { hpt: 22 }, // Header
+    ...dataRows.map(() => ({ hpt: 60 })), // Data rows — tall for descriptions
+  ];
+
+  // ── Styles via cell properties ──
+  // Title cell
+  const titleCell = ws['A1'];
+  if (titleCell) {
+    titleCell.s = {
+      font: { bold: true, sz: 14, color: { rgb: DARK.slice(2) } },
+      fill: { fgColor: { rgb: 'FFEEF2FF' } },
+      alignment: { vertical: 'center' },
+    };
+  }
+  // Subtitle cell
+  const subCell = ws['A2'];
+  if (subCell) {
+    subCell.s = {
+      font: { sz: 10, italic: true, color: { rgb: '6B7280' } },
+    };
+  }
+
+  // Header row (row index 3 = row 4 in 1-based)
+  const headers = ['A4','B4','C4','D4','E4'];
+  headers.forEach(addr => {
+    if (!ws[addr]) return;
+    ws[addr].s = {
+      font:  { bold: true, sz: 11, color: { rgb: WHITE.slice(2) } },
+      fill:  { fgColor: { rgb: DARK.slice(2) } },
+      alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+      border: {
+        bottom: { style: 'thin', color: { rgb: '334155' } },
+        right:  { style: 'thin', color: { rgb: '334155' } },
+      },
+    };
+  });
+
+  // Data rows (rows 5–9)
+  const typeColors = { 'ПОСТ': 'FF6366F1', 'РИЛС': 'FFF59E0B', 'СТОРИС': 'FF10B981' };
+  const typeBg     = { 'ПОСТ': 'FFEEF2FF', 'РИЛС': 'FFFFFBEB', 'СТОРИС': 'FFECFDF5' };
+  for (let r = 0; r < dataRows.length; r++) {
+    const rowIdx = r + 5; // 1-based Excel row
+    const typeVal = dataRows[r][1];
+    const cols = ['A','B','C','D','E'];
+    cols.forEach((col, ci) => {
+      const addr = `${col}${rowIdx}`;
+      if (!ws[addr]) ws[addr] = { t: 's', v: '' };
+      const isType = ci === 1;
+      const isDesc = ci === 3;
+      ws[addr].s = {
+        font: isType
+          ? { bold: true, sz: 10, color: { rgb: (typeColors[typeVal] || 'FF374151').slice(2) } }
+          : { sz: 10, color: { rgb: '374151' } },
+        fill: { fgColor: { rgb: (r % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC').slice(2) } },
+        alignment: {
+          vertical: 'top',
+          wrapText: true,
+          horizontal: ci === 0 ? 'center' : (ci === 1 ? 'center' : 'left'),
+        },
+        border: {
+          bottom: { style: 'thin', color: { rgb: BORDER_CLR.slice(2) } },
+          right:  { style: 'thin', color: { rgb: BORDER_CLR.slice(2) } },
+          top:    { style: 'thin', color: { rgb: BORDER_CLR.slice(2) } },
+          left:   { style: 'thin', color: { rgb: BORDER_CLR.slice(2) } },
+        },
+      };
+    });
+  }
+
+  // Merge title across all columns
+  ws['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }, // A1:E1
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } }, // A2:E2
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Контент-план');
+
+  const filename = `Контент-план_${projName.replace(/[^\wа-яА-Я]/g,'_')}_${monthName}_${year}.xlsx`;
+  XLSX.writeFile(wb, filename);
+  toast('Шаблон скачан', 'success');
 }
 
 // ─── Task Card ────────────────────────────────────────────────────────────────
