@@ -87,10 +87,39 @@ function avatar(name, color, cls = '', imgUrl = '') {
 
 const TZ = 'Asia/Dushanbe';
 
+const _DSH_OFFSET = 5 * 3600000; // UTC+5 in ms
+
+function _parseLocalDt(dt) {
+  if (!dt) return null;
+  const s = (dt + '').trim();
+  try {
+    // Already has timezone info — parse as-is
+    if (s.endsWith('Z') || /[+\-]\d{2}:\d{2}$/.test(s)) return new Date(s);
+
+    // Date-only "YYYY-MM-DD" → midnight Dushanbe = UTC - 5h
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const [y,mo,d] = s.split('-').map(Number);
+      return new Date(Date.UTC(y, mo-1, d, 0, 0, 0) - _DSH_OFFSET);
+    }
+
+    // Datetime "YYYY-MM-DDTHH:MM" or "YYYY-MM-DD HH:MM[:SS]" → Dushanbe local time
+    const clean = s.replace(' ', 'T');
+    const parts = clean.split('T');
+    const [y,mo,d] = parts[0].split('-').map(Number);
+    const timeParts = (parts[1] || '00:00:00').split(':').map(Number);
+    const [h=0, m=0, sec=0] = timeParts;
+    return new Date(Date.UTC(y, mo-1, d, h, m, sec) - _DSH_OFFSET);
+  } catch { return new Date(NaN); }
+}
+
 function fmtDate(dt) {
   if (!dt) return '—';
-  const d = new Date(dt.endsWith('Z') || dt.includes('+') ? dt : dt + 'Z');
-  return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: TZ }).replace(',', '');
+  const d = _parseLocalDt(dt);
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(dt);
+  const opts = isDateOnly
+    ? { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: TZ }
+    : { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: TZ };
+  return d.toLocaleString('ru-RU', opts).replace(',', '');
 }
 
 function taskPlural(n) {
@@ -101,25 +130,25 @@ function taskPlural(n) {
 
 function fmtDateShort(dt) {
   if (!dt) return '—';
-  const d = new Date(dt.endsWith('Z') || dt.includes('+') ? dt : dt + 'Z');
+  const d = _parseLocalDt(dt);
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(dt);
   const now = new Date();
-  const opts = { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: TZ };
+  const opts = isDateOnly
+    ? { day: '2-digit', month: 'short', timeZone: TZ }
+    : { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: TZ };
   if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
   return d.toLocaleString('ru-RU', opts);
 }
 
-// Parse deadline stored as Dushanbe local time (UTC+5), return Date in UTC for comparison
+// Parse deadline stored as Dushanbe local time (UTC+5)
 function parseDeadline(dt) {
   if (!dt) return null;
-  const clean = dt.replace(' ', 'T');
-  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dt.trim())) {
     // Date-only → end of that day in Dushanbe (23:59:59 UTC+5)
-    return new Date(clean + 'T23:59:59+05:00');
+    const [y,mo,d] = dt.trim().split('-').map(Number);
+    return new Date(Date.UTC(y, mo-1, d, 23, 59, 59) - _DSH_OFFSET);
   }
-  // Datetime without timezone → treat as Dushanbe (UTC+5)
-  return clean.includes('+') || clean.endsWith('Z')
-    ? new Date(clean)
-    : new Date(clean + '+05:00');
+  return _parseLocalDt(dt);
 }
 
 function deadlineClass(dt, status) {
@@ -941,8 +970,8 @@ function renderMyTasksSummary(tasks) {
 
               <div class="mpc-stats-grid">
                 <div class="mpc-sgrid-cell">
-                  <div class="mpc-sgrid-num">${s.nw}</div>
-                  <div class="mpc-sgrid-lbl">новых</div>
+                  <div class="mpc-sgrid-num">${s.total}</div>
+                  <div class="mpc-sgrid-lbl">всего</div>
                 </div>
                 <div class="mpc-sgrid-cell mpc-sgrid-mid">
                   <div class="mpc-sgrid-num" style="color:#1D9E75">${s.done}</div>
@@ -4019,7 +4048,9 @@ async function renderEmployeeProfile(userId) {
 
       <!-- Header card: full width -->
       <div class="emp-profile-header">
-        <div class="emp-profile-avatar" style="background:${u.avatar_color || '#6366f1'}">${initials(u.name)}</div>
+        <div class="emp-profile-avatar" style="background:${u.avatar_color || '#6366f1'};padding:0;overflow:hidden">
+          ${u.avatar_img ? `<img src="${u.avatar_img}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block">` : initials(u.name)}
+        </div>
         <div class="emp-profile-info">
           <div class="emp-profile-name">${u.name}</div>
           <div class="emp-profile-email">${u.email}</div>
@@ -4553,7 +4584,7 @@ function _renderBestEmployee(data) {
         ${top3.slice(1).map((u, i) => {
           const av2 = u.avatar_img
             ? `<img src="${u.avatar_img}" class="be-sb-img">`
-            : `<div class="be-sb-avatar" style="background:${u.avatar_color||'#6366f1'}">${u.name.split(' ').map(w=>w[0]).join('').slice(0,2)}</div>`;
+            : u.avatar_img ? `<img src="${u.avatar_img}" class="be-sb-img">` : `<div class="be-sb-avatar" style="background:${u.avatar_color||'#6366f1'}">${u.name.split(' ').map(w=>w[0]).join('').slice(0,2)}</div>`;
           return `<div class="be-sb-card be-sb-${i===0?'silver':'bronze'}">
             <div class="be-sb-medal">${i===0
               ? `<svg viewBox="0 0 44 56" width="40" height="50">
@@ -4584,7 +4615,7 @@ function _renderBestEmployee(data) {
   const tableRows = rankings.map((u, i) => {
     const av = u.avatar_img
       ? `<img src="${u.avatar_img}" style="width:32px;height:32px;border-radius:50%;object-fit:cover">`
-      : `<div class="be-tbl-avatar" style="background:${u.avatar_color||'#6366f1'}">${u.name.split(' ').map(w=>w[0]).join('').slice(0,2)}</div>`;
+      : u.avatar_img ? `<img src="${u.avatar_img}" style="width:32px;height:32px;border-radius:50%;object-fit:cover">` : `<div class="be-tbl-avatar" style="background:${u.avatar_color||'#6366f1'}">${u.name.split(' ').map(w=>w[0]).join('').slice(0,2)}</div>`;
     return `<tr class="be-tbl-row ${i===0?'be-tbl-top':''}">
       <td class="be-tbl-rank">${i < 3 ? medal(i) : i+1}</td>
       <td class="be-tbl-user">${av}<span>${u.name}</span></td>
@@ -7865,7 +7896,7 @@ function renderGsResults(q, selectedIdx) {
     html += users.map(u => `
       <div class="gs-result-item" onclick="gsGo('user',${u.id})">
         <div class="gs-result-main">
-          <div class="gs-user-av" style="background:${u.avatar_color||'#6366f1'}">${u.name.split(' ').map(w=>w[0]).join('').slice(0,2)}</div>
+          ${u.avatar_img ? `<img src="${u.avatar_img}" style="width:24px;height:24px;border-radius:50%;object-fit:cover">` : `<div class="gs-user-av" style="background:${u.avatar_color||'#6366f1'}">${u.name.split(' ').map(w=>w[0]).join('').slice(0,2)}</div>`}
           <span class="gs-result-title">${highlight(_escHtml(u.name))}</span>
         </div>
         <span class="gs-result-status" style="color:#94a3b8">${u.email}</span>

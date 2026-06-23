@@ -834,7 +834,7 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
   const todayLocal = nowLocal.slice(0,10);                                         // "2026-06-23"
 
   const employees = db.prepare(
-    "SELECT id, name, avatar_color FROM users WHERE role = 'employee' ORDER BY name"
+    "SELECT id, name, avatar_color, avatar_img FROM users WHERE role = 'employee' ORDER BY name"
   ).all();
 
   const report = employees.map(user => {
