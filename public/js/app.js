@@ -476,7 +476,8 @@ async function initApp() {
     navigateTo('activity');
     openUserActivityPage(parseInt(parts[1]), userActivityPeriod);
   } else {
-    navigateTo(saved && PAGE_TITLES[saved] ? saved : 'dashboard');
+    const VALID_PAGES = new Set(['dashboard','tasks','mytasks','team-tasks','team','reports','settings','activity','review','finance-log','ideahast','kids','b2c','finance','best-employee','schedule']);
+    navigateTo(saved && VALID_PAGES.has(saved) ? saved : 'dashboard');
   }
 }
 

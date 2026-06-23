@@ -271,6 +271,13 @@ input, textarea, select { font: inherit; }
 .topbar-actions { grid-column: 3; display: flex; align-items: center; gap: 8px; justify-self: end; }
 
 .page-content { padding: 22px 24px; flex: 1; }
+/* Любой grid внутри page-content получает боковой отступ чтобы тени не обрезались */
+.page-content [style*="grid"],
+.page-content .b2c-courses-grid,
+.page-content .projects-grid,
+.page-content .team-grid,
+.page-content .report-grid,
+.page-content .ih-grid { overflow: visible; }
 
 /* ─── Buttons ───────────────────────────────────────────────────────────── */
 .btn {
@@ -2214,7 +2221,7 @@ body.dark .be-sb-bronze { background: var(--card-bg); border-color: #fb923c; }
 /* ─── B2C Finance Page ─────────────────────────────────────────────────────── */
 .b2c-page { padding: 0 24px 48px; }
 .b2c-courses-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; }
-.b2c-courses-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; }
+.b2c-courses-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:16px; padding:4px 2px 12px; }
 .b2c-course-card { background:var(--card-bg); border:1.5px solid var(--border); border-radius:14px; padding:18px; cursor:pointer; transition:all 0.15s; }
 .b2c-course-card:hover { border-color:var(--primary); transform:translateY(-2px); box-shadow:var(--shadow-md); }
 .b2c-course-title { font-size:15px; font-weight:800; color:var(--text); margin-bottom:8px; }
@@ -2268,7 +2275,7 @@ body.dark .be-sb-bronze { background: var(--card-bg); border-color: #fb923c; }
 .review-reject-btn:hover { background:#fef2f2; }
 
 /* ─── B2C Card v2 ───────────────────────────────────────────────────────── */
-.b2c-card-v2 { display:flex; flex-direction:column; gap:0; padding:0; overflow:hidden; }
+.b2c-card-v2 { display:flex; flex-direction:column; gap:0; padding:0; overflow:visible; }
 .b2c-card-v2-head {
   display:flex; align-items:flex-start; justify-content:space-between; gap:8px;
   padding:16px 16px 0;
