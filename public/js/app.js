@@ -171,9 +171,10 @@ function priorityBadge(p) {
 
 function statusBadge(s) {
   const map = {
-    new:         [colorDot('#3B82F6'), 'Новая',   'status-new'],
-    in_progress: [colorDot('#D97706'), 'В работе','status-in_progress'],
-    done:        [colorDot('#059669'), 'Готово',  'status-done'],
+    new:            [colorDot('#3B82F6'), 'Новая',        'status-new'],
+    in_progress:    [colorDot('#D97706'), 'В работе',     'status-in_progress'],
+    done:           [colorDot('#059669'), 'Готово',       'status-done'],
+    pending_review: [colorDot('#8B5CF6'), 'На проверке',  'status-pending_review'],
   };
   const [icon, label, cls] = map[s] || map.new;
   return `<span class="status-badge ${cls}" style="gap:5px">${icon} ${label}</span>`;
@@ -371,6 +372,11 @@ async function initApp() {
   if (showAdmin || can('view_activity')) {
     const navActivity = document.getElementById('nav-activity');
     if (navActivity) navActivity.style.display = '';
+  }
+  if (showAdmin) {
+    const navReview = document.getElementById('nav-review');
+    if (navReview) navReview.style.display = '';
+    updateReviewBadge();
   }
 
   document.getElementById('sidebar-name').textContent = u.name;
@@ -591,6 +597,7 @@ const PAGE_TITLES = {
   settings: 'Настройки',
   employee: 'Профиль сотрудника',
   activity: 'Активность',
+  review: 'Задачи для проверки',
 };
 
 function navigateTo(page, projectId = null, pushHistory = true) {
@@ -645,6 +652,7 @@ function navigateTo(page, projectId = null, pushHistory = true) {
     case 'settings': renderSettingsPage(); break;
     case 'employee': renderEmployeeProfile(state.currentEmployeeId); break;
     case 'activity': renderActivityPage(); break;
+    case 'review': renderReviewPage(); break;
     case 'finance-log': renderFinanceLogPage(); break;
     case 'ideahast': renderIdeahastPage(); break;
     case 'kids': renderSectionPage('kids'); break;
@@ -702,6 +710,23 @@ function handleSSEEvent(event) {
       if (state.currentPage === 'dashboard') renderDashboard();
       if (state.currentPage === 'tasks' || state.currentPage === 'mytasks') renderTasksPage();
       if (state.currentPage === 'project') renderProjectPage(state.currentProjectId);
+      break;
+    case 'review_badge_update':
+      updateReviewBadge();
+      if (state.currentPage === 'review') renderReviewPage();
+      break;
+    case 'pending_review':
+      checkNotifCount();
+      toast(event.message || 'Задача ожидает вашего принятия', 'info');
+      updateReviewBadge();
+      if (state.currentPage === 'review') renderReviewPage();
+      break;
+    case 'task_approved':
+    case 'task_rejected':
+      checkNotifCount();
+      toast(event.message || (event.type === 'task_approved' ? 'Задача принята' : 'Задача возвращена на доработку'), event.type === 'task_approved' ? 'success' : 'info');
+      if (state.currentPage === 'dashboard') renderDashboard();
+      if (state.currentPage === 'tasks' || state.currentPage === 'mytasks') renderTasksPage();
       break;
     case 'status_changed':
       checkNotifCount();
@@ -2540,6 +2565,7 @@ async function toggleMyDone(taskId, done, userId, btn) {
     if (statusEl && result.status) statusEl.innerHTML = statusBadge(result.status);
 
     if (result.status === 'done') toast('Задача выполнена всеми исполнителями! ✅', 'success');
+    if (result.status === 'pending_review') toast('Задача отправлена руководителю на проверку', 'info');
 
     // Re-render background page (modal stays open)
     if (state.currentPage === 'dashboard') renderDashboard();
@@ -2608,17 +2634,7 @@ async function openTaskDetail(taskId) {
           <div class="task-detail-meta">
             <div class="task-detail-meta-item">
               <div class="label">Статус</div>
-              <div class="value" id="td-status">
-                ${canEdit ? `
-                  <div class="status-select" id="status-select">
-                    ${['new','in_progress','done'].map(s => `
-                      <div class="status-option ${s} ${t.status === s ? 'selected' : ''}" data-status="${s}">
-                        ${s === 'new' ? `${colorDot('#3B82F6',7)} Новая` : s === 'in_progress' ? `${colorDot('#D97706',7)} В работе` : `${colorDot('#059669',7)} Готово`}
-                      </div>
-                    `).join('')}
-                  </div>
-                ` : statusBadge(t.status)}
-              </div>
+              <div class="value" id="td-status">${statusBadge(t.status)}</div>
             </div>
             <div class="task-detail-meta-item">
               <div class="label">Дедлайн</div>
@@ -2719,20 +2735,6 @@ async function openTaskDetail(taskId) {
       </div>
     `);
 
-    // Status change listeners
-    document.querySelectorAll('.status-option').forEach(opt => {
-      opt.addEventListener('click', async () => {
-        const newStatus = opt.dataset.status;
-        try {
-          await PUT('/tasks/' + t.id, { status: newStatus });
-          toast('Статус обновлён', 'success');
-          closeModal();
-          if (state.currentPage === 'dashboard') renderDashboard();
-          else if (state.currentPage === 'tasks') renderTasksPage();
-          else if (state.currentPage === 'project') renderProjectPage(state.currentProjectId);
-        } catch (err) { toast(err.message, 'error'); }
-      });
-    });
 
     document.getElementById('comment-input')?.addEventListener('keydown', e => {
       if (e.key === 'Enter') submitComment(t.id);
@@ -3104,6 +3106,142 @@ const ACTIVITY_PERIODS = [
   { label: '6 месяцев', days: 180 },
   { label: '1 год',     days: 365 },
 ];
+
+// ─── Review Page ──────────────────────────────────────────────────────────────
+
+async function updateReviewBadge() {
+  try {
+    const tasks = await GET('/tasks/pending-review');
+    const badge = document.getElementById('nav-review-badge');
+    if (!badge) return;
+    if (tasks.length > 0) {
+      badge.textContent = tasks.length;
+      badge.style.display = '';
+    } else {
+      badge.style.display = 'none';
+    }
+  } catch {}
+}
+
+async function renderReviewPage() {
+  const content = document.getElementById('page-content');
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  try {
+    const tasks = await GET('/tasks/pending-review');
+    updateReviewBadge();
+
+    content.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px">
+        <div>
+          <h2 style="font-size:20px;font-weight:800;color:var(--text);margin:0">Задачи для проверки</h2>
+          <p style="font-size:13px;color:#6b7280;margin:4px 0 0">Сотрудники выполнили эти задачи — примите или верните на доработку</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="background:#f3f0ff;color:#7c3aed;padding:6px 14px;border-radius:99px;font-size:13px;font-weight:700">
+            ${tasks.length} ${tasks.length===1?'задача':tasks.length>=2&&tasks.length<=4?'задачи':'задач'}
+          </span>
+        </div>
+      </div>
+
+      ${tasks.length === 0
+        ? `<div class="empty-state">
+            <div class="empty-icon">${svgI('<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',44)}</div>
+            <h3>Всё проверено</h3>
+            <p>Нет задач, ожидающих вашего принятия</p>
+          </div>`
+        : `<div class="review-tasks-list">
+            ${tasks.map(t => reviewTaskCard(t)).join('')}
+           </div>`
+      }
+    `;
+    attachTaskCardListeners();
+  } catch(err) {
+    content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
+  }
+}
+
+function reviewTaskCard(t) {
+  const dl = deadlineFmt(t.deadline, t.status);
+  const cd = countdownFmt(t.deadline, t.status);
+  const assigneeNames = (t.multi_assignees && t.multi_assignees.length > 0)
+    ? t.multi_assignees.map(a => a.name).join(', ')
+    : (t.assignee_name || '—');
+
+  return `
+    <div class="review-task-card">
+      <div class="review-task-top">
+        <div class="review-task-badges">
+          ${t.priority ? `<span class="priority-badge priority-${t.priority}">${{low:'Низкий',medium:'Средний',high:'Высокий'}[t.priority]||t.priority}</span>` : ''}
+          ${t.project_name ? `<span class="proj-badge" style="background:#f1f5f9;color:#475569;border:1px solid #e2e8f0">${_escHtml(t.project_name)}</span>` : ''}
+        </div>
+        <span class="status-badge status-pending_review" style="gap:5px">${colorDot('#8B5CF6')} На проверке</span>
+      </div>
+
+      <div class="review-task-title" onclick="openTaskModal(${t.id})" style="cursor:pointer">${_escHtml(t.title)}</div>
+
+      <div class="review-task-meta">
+        <span style="display:flex;align-items:center;gap:5px;color:#6b7280;font-size:12px">
+          ${svgI(SVG_PATHS.user,12)} ${_escHtml(assigneeNames)}
+        </span>
+        ${dl ? `<span style="display:flex;align-items:center;gap:4px;font-size:12px;color:${cd.color||'#6b7280'}">${svgI(cd.icon?SVG_PATHS[cd.icon]||SVG_PATHS.clock:SVG_PATHS.cal,11)} ${dl}${cd.text?' · '+cd.text:''}</span>` : ''}
+      </div>
+
+      <div class="review-task-actions">
+        <button class="btn btn-outline review-reject-btn" onclick="reviewReject(${t.id})">
+          ${svgI('<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 00-4-4H4"/>',14)} Вернуть на доработку
+        </button>
+        <button class="btn btn-primary review-approve-btn" onclick="reviewApprove(${t.id})">
+          ${svgI('<polyline points="20 6 9 17 4 12"/>',14)} Принять задачу
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+async function reviewApprove(taskId) {
+  try {
+    await api('POST', `/tasks/${taskId}/approve`, {});
+    toast('Задача принята и закрыта', 'success');
+    renderReviewPage();
+  } catch(e) {
+    toast('Ошибка: ' + e.message, 'error');
+  }
+}
+
+async function reviewReject(taskId) {
+  openModal(`
+    <div class="modal" style="max-width:440px">
+      <div class="modal-header">
+        <div class="modal-title">Вернуть на доработку</div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label class="field-label">Комментарий сотруднику <span style="color:#9ca3af;font-weight:400">(необязательно)</span></label>
+          <textarea id="reject-comment" class="form-control" rows="3" placeholder="Что нужно исправить или доделать..." style="resize:vertical"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+        <button class="btn btn-primary" style="background:#dc2626;border-color:#dc2626" onclick="reviewRejectConfirm(${taskId})">
+          Вернуть на доработку
+        </button>
+      </div>
+    </div>
+  `);
+}
+
+async function reviewRejectConfirm(taskId) {
+  const comment = document.getElementById('reject-comment')?.value?.trim() || '';
+  closeModal();
+  try {
+    await api('POST', `/tasks/${taskId}/reject`, { comment });
+    toast('Задача возвращена на доработку', 'info');
+    renderReviewPage();
+  } catch(e) {
+    toast('Ошибка: ' + e.message, 'error');
+  }
+}
 
 async function renderActivityPage() {
   const periodBtns = ACTIVITY_PERIODS.map(p =>
@@ -4244,17 +4382,47 @@ async function renderEmployeeProfile(userId) {
 
       <!-- Task list: full width -->
       <div class="section-header" style="margin-bottom:14px">
-        <div class="section-title">Все задачи сотрудника</div>
+        <div class="section-title">Все задачи сотрудника <span style="font-size:13px;font-weight:500;color:#6b7280">(${tasks.length})</span></div>
       </div>
       ${tasks.length === 0
         ? `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.clip,44)}</div><h3>Нет задач</h3><p>Задачи не назначены</p></div>`
-        : `<div class="tasks-list">${tasks.map(t => taskCard(t)).join('')}</div>`
+        : (() => {
+            const LIMIT = 10;
+            const visible = tasks.slice(0, LIMIT);
+            const hidden  = tasks.slice(LIMIT);
+            return `
+              <div class="tasks-list" id="emp-tasks-visible">${visible.map(t => taskCard(t)).join('')}</div>
+              ${hidden.length > 0 ? `
+                <div class="tasks-list" id="emp-tasks-hidden" style="display:none">${hidden.map(t => taskCard(t)).join('')}</div>
+                <div style="text-align:center;margin-top:16px">
+                  <button class="btn btn-outline" id="emp-tasks-toggle" onclick="empTasksToggle(${hidden.length})">
+                    ${svgI('<polyline points="6 9 12 15 18 9"/>',14)} Показать ещё ${hidden.length} ${hidden.length===1?'задачу':hidden.length>=2&&hidden.length<=4?'задачи':'задач'}
+                  </button>
+                </div>
+              ` : ''}
+            `;
+          })()
       }
     `;
     attachTaskCardListeners();
     triggerDashAnimations();
   } catch (err) {
     document.getElementById('page-content').innerHTML = `<div class="empty-state"><h3>Ошибка загрузки</h3><p>${err.message}</p></div>`;
+  }
+}
+
+function empTasksToggle(hiddenCount) {
+  const hiddenEl = document.getElementById('emp-tasks-hidden');
+  const btn      = document.getElementById('emp-tasks-toggle');
+  if (!hiddenEl || !btn) return;
+  const isOpen = hiddenEl.style.display !== 'none';
+  hiddenEl.style.display = isOpen ? 'none' : '';
+  if (isOpen) {
+    btn.innerHTML = `${svgI('<polyline points="6 9 12 15 18 9"/>',14)} Показать ещё ${hiddenCount} ${hiddenCount===1?'задачу':hiddenCount>=2&&hiddenCount<=4?'задачи':'задач'}`;
+    btn.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } else {
+    btn.innerHTML = `${svgI('<polyline points="18 15 12 9 6 15"/>',14)} Свернуть`;
+    if (!isOpen) attachTaskCardListeners();
   }
 }
 

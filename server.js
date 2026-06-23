@@ -30,6 +30,12 @@ function sendSSE(userId, data) {
 function sendSSEAll(data) {
   sseClients.forEach(clients => clients.forEach(res => res.write(`data: ${JSON.stringify(data)}\n\n`)));
 }
+function updateReviewBadgeSSE() {
+  // Notify all admins to refresh their review badge
+  db.prepare("SELECT id FROM users WHERE role = 'admin'").all().forEach(a => {
+    sendSSE(a.id, { type: 'review_badge_update' });
+  });
+}
 
 app.use(cors());
 app.use(express.json({ limit: '4mb' }));
@@ -522,7 +528,13 @@ app.put('/api/tasks/:id', auth, (req, res) => {
 
   const { title, description, project_id, assignee_id, assignee_ids, priority, deadline, status, recurrence } = req.body;
   const newIds = Array.isArray(assignee_ids) ? assignee_ids.map(Number).filter(Boolean) : null;
-  const newStatus = status || existing.status;
+
+  // ── Review gate: if task was created by admin and employee marks as done → pending_review ──
+  let newStatus = status || existing.status;
+  if (status === 'done' && existing.status !== 'done' && req.user.role !== 'admin') {
+    const creator = db.prepare('SELECT role FROM users WHERE id = ?').get(existing.created_by);
+    if (creator?.role === 'admin') newStatus = 'pending_review';
+  }
   const newAssignee = newIds ? (newIds[0] || null) : (assignee_id !== undefined ? (assignee_id || null) : existing.assignee_id);
   const newRecurrence = recurrence !== undefined ? (recurrence || 'none') : (existing.recurrence || 'none');
 
@@ -564,17 +576,22 @@ app.put('/api/tasks/:id', auth, (req, res) => {
 
   // Notify creator + all admins on status change (in-app only, no Telegram)
   if (status && status !== existing.status) {
-    const statusLabels = { new: 'Новая', in_progress: 'В работе', done: 'Готово ✅' };
-    const message = `Статус задачи «${task.title}» изменён на: ${statusLabels[status] || status}`;
+    const statusLabels = { new: 'Новая', in_progress: 'В работе', done: 'Готово ✅', pending_review: 'На проверке' };
+    const actualStatus = newStatus; // may have been redirected to pending_review
+    const message = newStatus === 'pending_review'
+      ? `Задача «${task.title}» выполнена и ожидает вашего принятия`
+      : `Статус задачи «${task.title}» изменён на: ${statusLabels[status] || status}`;
     const notifyIds = new Set();
     if (existing.created_by && existing.created_by !== req.user.id) notifyIds.add(existing.created_by);
-    db.prepare("SELECT id FROM users WHERE role = 'admin'").all().forEach(a => {
-      if (a.id !== req.user.id) notifyIds.add(a.id);
-    });
+    if (newStatus !== 'pending_review') {
+      db.prepare("SELECT id FROM users WHERE role = 'admin'").all().forEach(a => {
+        if (a.id !== req.user.id) notifyIds.add(a.id);
+      });
+    }
     notifyIds.forEach(uid => {
       db.prepare(`INSERT INTO notifications (user_id, task_id, type, message) VALUES (?, ?, 'status_change', ?)`)
         .run(uid, task.id, message);
-      sendSSE(uid, { type: 'status_changed', task, message });
+      sendSSE(uid, { type: newStatus === 'pending_review' ? 'pending_review' : 'status_changed', task, message });
     });
   }
 
@@ -602,7 +619,7 @@ app.put('/api/tasks/:id', auth, (req, res) => {
     }
   }
 
-  const statusLabels = { new: 'Новая', in_progress: 'В работе', done: 'Готово' };
+  const statusLabels = { new: 'Новая', in_progress: 'В работе', done: 'Готово', pending_review: 'На проверке' };
   if (existing.status !== newStatus) {
     logActivity(req.user.id, 'task_status', 'task', task.id, task.title,
       (statusLabels[existing.status] || existing.status) + ' → ' + (statusLabels[newStatus] || newStatus));
@@ -641,21 +658,38 @@ app.patch('/api/tasks/:id/my-done', auth, (req, res) => {
   db.prepare('UPDATE task_assignees SET done = ?, done_at = ? WHERE task_id = ? AND user_id = ?')
     .run(done ? 1 : 0, done ? localNow() : null, req.params.id, targetId);
   recomputeTaskStatus(req.params.id);
+
+  // ── Review gate: if all done and task created by admin and actor is not admin → pending_review ──
+  if (done && req.user.role !== 'admin') {
+    const taskRow = db.prepare('SELECT created_by, status FROM tasks WHERE id = ?').get(req.params.id);
+    if (taskRow?.status === 'done') {
+      const creator = db.prepare('SELECT role FROM users WHERE id = ?').get(taskRow.created_by);
+      if (creator?.role === 'admin') {
+        db.prepare("UPDATE tasks SET status = 'pending_review', updated_at = ? WHERE id = ?").run(localNow(), req.params.id);
+      }
+    }
+  }
+
   const task = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [req.params.id]))[0];
   if (done && task) {
     const allDone = (task.multi_assignees || []).every(a => a.done);
-    const statusLabel = allDone ? 'Задача полностью выполнена ✅' : 'выполнил(а) свою часть';
     const actor = db.prepare('SELECT name FROM users WHERE id = ?').get(targetId);
-    const message = allDone
-      ? `Задача «${task.title}» выполнена всеми исполнителями ✅`
-      : `${actor?.name} выполнил(а) свою часть задачи «${task.title}»`;
+    const isPendingReview = task.status === 'pending_review';
+    const message = isPendingReview
+      ? `Задача «${task.title}» выполнена и ожидает вашего принятия`
+      : allDone
+        ? `Задача «${task.title}» выполнена всеми исполнителями ✅`
+        : `${actor?.name} выполнил(а) свою часть задачи «${task.title}»`;
     const notifyIds = new Set();
     if (task.created_by && task.created_by !== targetId) notifyIds.add(task.created_by);
-    db.prepare("SELECT id FROM users WHERE role = 'admin'").all().forEach(a => { if (a.id !== targetId) notifyIds.add(a.id); });
+    if (!isPendingReview) {
+      db.prepare("SELECT id FROM users WHERE role = 'admin'").all().forEach(a => { if (a.id !== targetId) notifyIds.add(a.id); });
+    }
     notifyIds.forEach(uid => {
       db.prepare('INSERT INTO notifications (user_id, task_id, type, message) VALUES (?, ?, ?, ?)').run(uid, task.id, 'status_change', message);
-      sendSSE(uid, { type: 'status_changed', task, message });
+      sendSSE(uid, { type: isPendingReview ? 'pending_review' : 'status_changed', task, message });
     });
+    if (isPendingReview) updateReviewBadgeSSE();
   }
   res.json({ ok: true, status: task?.status });
 });
@@ -671,6 +705,74 @@ app.delete('/api/tasks/:id', auth, (req, res) => {
   sendSSEAll({ type: 'task_deleted', id: parseInt(req.params.id) });
   logActivity(req.user.id, 'task_deleted', 'task', parseInt(req.params.id), task?.title);
   res.json({ ok: true });
+});
+
+// ─── Task Review (Approve / Reject) ───────────────────────────────────────────
+app.get('/api/tasks/pending-review', auth, (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Нет доступа' });
+  const tasks = enrichTasksWithAssignees(
+    getTaskQuery(" AND t.status = 'pending_review' AND t.created_by = ?", [req.user.id])
+  );
+  res.json(tasks);
+});
+
+app.post('/api/tasks/:id/approve', auth, (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Нет доступа' });
+  const existing = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Не найдено' });
+  if (existing.status !== 'pending_review') return res.status(400).json({ error: 'Задача не ожидает проверки' });
+
+  db.prepare("UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?").run(localNow(), req.params.id);
+  const task = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [req.params.id]))[0];
+
+  const message = `Задача «${task.title}» принята и отмечена как выполненная`;
+  const notifyIds = new Set();
+  if (existing.assignee_id) notifyIds.add(existing.assignee_id);
+  db.prepare('SELECT user_id FROM task_assignees WHERE task_id = ?').all(req.params.id)
+    .forEach(r => notifyIds.add(r.user_id));
+  notifyIds.forEach(uid => {
+    db.prepare("INSERT INTO notifications (user_id, task_id, type, message) VALUES (?, ?, 'status_change', ?)")
+      .run(uid, task.id, message);
+    sendSSE(uid, { type: 'task_approved', task, message });
+  });
+
+  logActivity(req.user.id, 'task_status', 'task', task.id, task.title, 'На проверке → Готово ✅');
+  sendSSEAll({ type: 'task_updated', task });
+  res.json({ ok: true, task });
+});
+
+app.post('/api/tasks/:id/reject', auth, (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Нет доступа' });
+  const existing = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Не найдено' });
+  if (existing.status !== 'pending_review') return res.status(400).json({ error: 'Задача не ожидает проверки' });
+
+  const { comment } = req.body;
+  db.prepare("UPDATE tasks SET status = 'in_progress', updated_at = ? WHERE id = ?").run(localNow(), req.params.id);
+  const task = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [req.params.id]))[0];
+
+  // Add reject comment to task comments
+  if (comment && comment.trim()) {
+    const commentText = `↩ Возвращено на доработку: ${comment.trim()}`;
+    db.prepare('INSERT INTO comments (task_id, user_id, text) VALUES (?, ?, ?)').run(req.params.id, req.user.id, commentText);
+  }
+
+  const message = comment
+    ? `Задача «${task.title}» возвращена на доработку: ${comment}`
+    : `Задача «${task.title}» возвращена на доработку`;
+  const notifyIds = new Set();
+  if (existing.assignee_id) notifyIds.add(existing.assignee_id);
+  db.prepare('SELECT user_id FROM task_assignees WHERE task_id = ?').all(req.params.id)
+    .forEach(r => notifyIds.add(r.user_id));
+  notifyIds.forEach(uid => {
+    db.prepare("INSERT INTO notifications (user_id, task_id, type, message) VALUES (?, ?, 'status_change', ?)")
+      .run(uid, task.id, message);
+    sendSSE(uid, { type: 'task_rejected', task, message });
+  });
+
+  logActivity(req.user.id, 'task_status', 'task', task.id, task.title, 'На проверке → В работе');
+  sendSSEAll({ type: 'task_updated', task });
+  res.json({ ok: true, task });
 });
 
 // ─── Task History ─────────────────────────────────────────────────────────────
