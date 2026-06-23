@@ -68,7 +68,7 @@ function checkDeadlines() {
   const nowLocal  = new Date(Date.now() + TZ_OFFSET*3600000);
   const in24h     = new Date(nowLocal.getTime() + 24*3600000);
   const in1h      = new Date(nowLocal.getTime() + 3600000);
-  const toLocal   = d => d.toISOString().slice(0,19).replace('T',' ');
+  const toLocal   = d => d.toISOString().slice(0,19); // keep 'T' to match deadline format
 
   // За 24 часа
   const tasks24 = getTasksWithDeadline(toLocal(nowLocal), toLocal(in24h), 'deadline_24h', 25);

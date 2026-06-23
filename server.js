@@ -14,7 +14,8 @@ const JWT_SECRET = process.env.JWT_SECRET || 'teamtask-secret-key-change-me';
 
 // Timezone helpers — Dushanbe is UTC+5
 const TZ_OFFSET = 5;
-const localNow    = () => new Date(Date.now() + TZ_OFFSET*3600000).toISOString().slice(0,19).replace('T',' ');
+const localNow    = () => new Date(Date.now() + TZ_OFFSET*3600000).toISOString().slice(0,19).replace('T',' '); // for DB storage
+const localNowT   = () => new Date(Date.now() + TZ_OFFSET*3600000).toISOString().slice(0,19);                  // for deadline comparison (T separator)
 const localToday  = () => new Date(Date.now() + TZ_OFFSET*3600000).toISOString().slice(0,10);
 const localMonth  = () => new Date(Date.now() + TZ_OFFSET*3600000).toISOString().slice(0,7);
 
@@ -819,8 +820,9 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
   }
 
   // Current local time (Dushanbe UTC+5) as ISO string for correct deadline comparison
-  const nowLocal = new Date(Date.now() + 5*3600000).toISOString().slice(0,19).replace('T',' ');
-  const todayLocal = nowLocal.slice(0,10);
+  // Keep 'T' separator to match deadline strings like "2026-06-23T11:30"
+  const nowLocal   = new Date(Date.now() + 5*3600000).toISOString().slice(0,19); // "2026-06-23T13:03:40"
+  const todayLocal = nowLocal.slice(0,10);                                         // "2026-06-23"
 
   const employees = db.prepare(
     "SELECT id, name, avatar_color FROM users WHERE role = 'employee' ORDER BY name"
@@ -1388,7 +1390,7 @@ app.get('/api/best-employee', auth, (req, res) => {
           AND strftime('%Y-%m', t.deadline) = ?
       `).all(u.id, u.id, u.id, m);
 
-      const nowIso = localNow();
+      const nowIso = localNowT();
 
       // Determine effective completion for each task:
       // - multi-assignee: use ta.done + ta.done_at (this user's individual completion)
