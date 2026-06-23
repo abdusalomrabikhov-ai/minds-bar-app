@@ -1191,9 +1191,13 @@ function renderDashboardCharts(tasks) {
   const empMap = {};
   tasks.forEach(t => {
     if (!t.assignee_name) return;
-    if (!empMap[t.assignee_name]) empMap[t.assignee_name] = { total: 0, done: 0, color: t.assignee_color || '#881337', id: t.assignee_id };
+    if (!empMap[t.assignee_name]) empMap[t.assignee_name] = { total: 0, done: 0, color: t.assignee_color || '#881337', id: t.assignee_id, img: t.assignee_img || '' };
     empMap[t.assignee_name].total++;
     if (t.status === 'done') empMap[t.assignee_name].done++;
+  });
+  // Обогатить avatar_img из state.users если не пришёл с задачей
+  Object.values(empMap).forEach(s => {
+    if (!s.img) { const u = state.users?.find(u => u.id === s.id); if (u?.avatar_img) s.img = u.avatar_img; }
   });
   const emps = Object.entries(empMap).sort((a, b) => b[1].total - a[1].total);
 
@@ -1260,7 +1264,7 @@ function renderDashboardCharts(tasks) {
                 const p = s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
                 const col = p >= 80 ? '#059669' : p >= 50 ? '#D97706' : '#DC2626';
                 return `<div class="emp-row" style="cursor:pointer" onclick="openEmployeeProfile(${s.id})">
-                  <div class="emp-avatar-sm" style="background:${s.color}">${initials(name)}</div>
+                  <div class="emp-avatar-sm" style="background:${s.color};${s.img?'padding:0;overflow:hidden':''}">${s.img?`<img src="${s.img}" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:50%">`:initials(name)}</div>
                   <div class="emp-info">
                     <div class="emp-name">${name}</div>
                     <div class="emp-bar-track">
