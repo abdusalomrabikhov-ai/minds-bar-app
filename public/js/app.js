@@ -76,7 +76,10 @@ function confirmDel(msg, onYes) {
       </div>
     </div>
   </div>`;
-  document.getElementById('cdel-ok-btn').onclick = () => { closeModal(); onYes(); };
+  const btn = document.getElementById('cdel-ok-btn');
+  const handler = e => { if (e.key === 'Enter') { document.removeEventListener('keydown', handler); closeModal(); onYes(); } };
+  btn.onclick = () => { document.removeEventListener('keydown', handler); closeModal(); onYes(); };
+  document.addEventListener('keydown', handler);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
