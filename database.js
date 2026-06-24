@@ -162,6 +162,7 @@ function initDB() {
   try { db.exec("ALTER TABLE finance ADD COLUMN client_phone TEXT DEFAULT ''"); } catch {}
   try { db.exec("ALTER TABLE finance ADD COLUMN is_recurring INTEGER DEFAULT 0"); } catch {}
   try { db.exec("ALTER TABLE finance ADD COLUMN overdue_notified INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE finance ADD COLUMN direction TEXT DEFAULT ''"); } catch {}
   try { db.exec(`CREATE TABLE IF NOT EXISTS finance_payments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     finance_id INTEGER NOT NULL REFERENCES finance(id) ON DELETE CASCADE,

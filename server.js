@@ -1292,13 +1292,14 @@ app.delete('/api/expenses/:id', auth, requirePerm('manage_finance'), (req, res) 
 
 // ─── Finance ──────────────────────────────────────────────────────────────────
 app.get('/api/finance', auth, requirePerm('manage_finance'), (req, res) => {
-  const { month, all_months, status, payment_type, search } = req.query;
+  const { month, all_months, status, payment_type, search, direction } = req.query;
   const targetMonth = month || localMonth();
   let where = 'WHERE 1=1';
   const params = [];
   if (!all_months) { where += ' AND month=?'; params.push(targetMonth); }
   if (status)       { where += ' AND status=?'; params.push(status); }
   if (payment_type) { where += ' AND payment_type=?'; params.push(payment_type); }
+  if (direction)    { where += ' AND direction=?'; params.push(direction); }
   if (search)       { where += ' AND (project_name LIKE ? OR client_name LIKE ?)'; params.push('%'+search+'%','%'+search+'%'); }
   const rows = db.prepare(`SELECT * FROM finance ${where} ORDER BY created_at DESC`).all(...params);
   // Attach payments
@@ -1393,10 +1394,10 @@ app.get('/api/finance/by-project', auth, requirePerm('manage_finance'), (req, re
 });
 
 app.post('/api/finance', auth, requirePerm('manage_finance'), (req, res) => {
-  const { project_id, project_name, service_amount, paid_amount, status, payment_type, comment, month, currency='TJS', client_name='', client_phone='', is_recurring=0 } = req.body;
+  const { project_id, project_name, service_amount, paid_amount, status, payment_type, comment, month, currency='TJS', client_name='', client_phone='', is_recurring=0, direction='' } = req.body;
   if (!project_name?.trim()) return res.status(400).json({ error: 'Укажите название проекта' });
-  const result = db.prepare(`INSERT INTO finance (project_id,project_name,service_amount,paid_amount,status,payment_type,comment,month,currency,client_name,client_phone,is_recurring)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(project_id||null, project_name.trim(), service_amount||0, paid_amount||0, status||'unpaid', payment_type||'cash', comment||'', month, currency, client_name, client_phone, is_recurring?1:0);
+  const result = db.prepare(`INSERT INTO finance (project_id,project_name,service_amount,paid_amount,status,payment_type,comment,month,currency,client_name,client_phone,is_recurring,direction)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(project_id||null, project_name.trim(), service_amount||0, paid_amount||0, status||'unpaid', payment_type||'cash', comment||'', month, currency, client_name, client_phone, is_recurring?1:0, direction);
   const uname = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
   logFinance(req.user.id, uname, 'finance', 'create_record', 'record', result.lastInsertRowid, project_name, `Сумма: ${service_amount}, Оплачено: ${paid_amount}`, +service_amount||0);
   res.json({ id: result.lastInsertRowid });
@@ -1405,7 +1406,7 @@ app.post('/api/finance', auth, requirePerm('manage_finance'), (req, res) => {
 app.put('/api/finance/:id', auth, requirePerm('manage_finance'), (req, res) => {
   const existing = db.prepare('SELECT * FROM finance WHERE id=?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Не найдено' });
-  const { project_id, project_name, service_amount, paid_amount, status, payment_type, comment, month, currency='TJS', client_name='', client_phone='', is_recurring=0 } = req.body;
+  const { project_id, project_name, service_amount, paid_amount, status, payment_type, comment, month, currency='TJS', client_name='', client_phone='', is_recurring=0, direction='' } = req.body;
   // Log history for changed fields
   const actor = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id);
   const fieldLabels = { service_amount:'Сумма услуги', paid_amount:'Сумма оплаты', status:'Статус', payment_type:'Тип оплаты', project_name:'Проект', currency:'Валюта' };
@@ -1416,8 +1417,8 @@ app.put('/api/finance/:id', auth, requirePerm('manage_finance'), (req, res) => {
         .run(req.params.id, req.user.id, actor?.name||'', fieldLabels[f], String(existing[f]||''), String(newVals[f]||''));
     }
   });
-  db.prepare(`UPDATE finance SET project_id=?,project_name=?,service_amount=?,paid_amount=?,status=?,payment_type=?,comment=?,month=?,currency=?,client_name=?,client_phone=?,is_recurring=?,updated_at=datetime('now') WHERE id=?`)
-    .run(project_id||null, project_name, service_amount||0, paid_amount||0, status, payment_type, comment||'', month, currency, client_name||'', client_phone||'', is_recurring?1:0, req.params.id);
+  db.prepare(`UPDATE finance SET project_id=?,project_name=?,service_amount=?,paid_amount=?,status=?,payment_type=?,comment=?,month=?,currency=?,client_name=?,client_phone=?,is_recurring=?,direction=?,updated_at=datetime('now') WHERE id=?`)
+    .run(project_id||null, project_name, service_amount||0, paid_amount||0, status, payment_type, comment||'', month, currency, client_name||'', client_phone||'', is_recurring?1:0, direction, req.params.id);
   const unameU = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
   logFinance(req.user.id, unameU, 'finance', 'update_record', 'record', +req.params.id, project_name, `Сумма: ${service_amount}, Оплачено: ${paid_amount}, Статус: ${status}`, +paid_amount||0);
   res.json({ ok: true });

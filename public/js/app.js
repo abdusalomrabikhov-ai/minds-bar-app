@@ -64,6 +64,21 @@ function closeModal() {
   document.getElementById('modal-root').innerHTML = '';
 }
 
+function confirmDel(msg, onYes) {
+  document.getElementById('modal-root').innerHTML = `<div class="modal-overlay" style="align-items:center" onclick="if(event.target===this)closeModal()">
+    <div class="modal" style="max-width:340px;width:90%">
+      <div class="modal-body" style="padding:20px 24px 16px">
+        <p style="margin:0;font-size:14px;color:var(--text);line-height:1.5">${msg}</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+        <button class="btn btn-danger" id="cdel-ok-btn">Удалить</button>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('cdel-ok-btn').onclick = () => { closeModal(); onYes(); };
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function initials(name) {
   return (name || '?').split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
@@ -5004,12 +5019,14 @@ const EXP_CATEGORY_COLORS = {
 const FIN_STATUS       = { paid: 'Оплачено', unpaid: 'Не оплачено', partial: 'Частично' };
 const FIN_STATUS_COLOR = { paid: '#16a34a', unpaid: '#dc2626', partial: '#d97706' };
 const FIN_TYPE         = { cash: 'Наличными', bank: 'Банк', alif: 'Alif', dushanbecity: 'DC' };
-const FIN_TYPE_COLOR   = { cash: '#b45309', bank: '#0891b2', alif: '#16a34a', dushanbecity: '#1d4ed8' };
+const FIN_TYPE_COLOR   = { cash: '#ea580c', bank: '#0891b2', alif: '#16a34a', dushanbecity: '#1d4ed8' };
+const FIN_DIRECTION       = { marketing: 'Маркетинг', b2b: 'В2В', b2c: 'В2С', kids: 'Kids' };
+const FIN_DIRECTION_COLOR = { marketing: '#7c3aed', b2b: '#0284c7', b2c: '#6366f1', kids: '#16a34a' };
 const FIN_CURRENCIES   = ['TJS', 'USD', 'RUB', 'EUR'];
 
 let _finMonth  = (() => { try { return sessionStorage.getItem('fin_month') || new Date().toISOString().slice(0, 7); } catch { return new Date().toISOString().slice(0, 7); } })();
 let _finTab    = (() => { try { return sessionStorage.getItem('fin_tab') || 'month'; } catch { return 'month'; } })();
-let _finFilter = { status: '', payment_type: '', search: '' };
+let _finFilter = { status: '', payment_type: '', direction: '', search: '' };
 
 const fmtMoney = v => {
   const n = Number(v||0);
@@ -5019,11 +5036,6 @@ const fmtMoney = v => {
 async function renderFinancePage() {
   const content = document.getElementById('page-content');
   content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
-  // One-time cleanup of future auto-copied records
-  if (!window._finCleanedUp) {
-    window._finCleanedUp = true;
-    DEL('/finance/cleanup-future').catch(() => {});
-  }
   try {
     if (_finTab === 'annual')   { await _renderFinanceAnnual(); return; }
     if (_finTab === 'projects') { await _renderFinanceProjects(); return; }
@@ -5031,39 +5043,9 @@ async function renderFinancePage() {
     const params = new URLSearchParams({ month: _finMonth });
     if (_finFilter.status)       params.set('status', _finFilter.status);
     if (_finFilter.payment_type) params.set('payment_type', _finFilter.payment_type);
+    if (_finFilter.direction)    params.set('direction', _finFilter.direction);
     if (_finFilter.search)       params.set('search', _finFilter.search);
-    let rows = await GET('/finance?' + params.toString());
-
-    // Auto-copy recurring records — ONLY for current month or next month, not further
-    if (!_finFilter.status && !_finFilter.payment_type && !_finFilter.search) {
-      const now = new Date();
-      const curReal  = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-      const nextReal = (() => { const d=new Date(now.getFullYear(),now.getMonth()+1,1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; })();
-      // Only copy if target month is current or next — never further into the future
-      if (_finMonth <= nextReal) {
-        const [y, m] = _finMonth.split('-');
-        const prevDate  = new Date(+y, +m - 2, 1);
-        const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}`;
-        const prevRows  = await GET('/finance?month=' + prevMonth);
-        const recurring = prevRows.filter(r => r.is_recurring);
-        const existingRecurNames = new Set(rows.filter(r => r.is_recurring).map(r => r.project_name.toLowerCase()));
-        const toCreate = recurring.filter(r => !existingRecurNames.has(r.project_name.toLowerCase()));
-        if (toCreate.length > 0) {
-          await Promise.all(toCreate.map(r =>
-            POST('/finance', {
-              project_id: r.project_id, project_name: r.project_name,
-              service_amount: r.service_amount, paid_amount: 0,
-              status: 'unpaid', payment_type: r.payment_type,
-              comment: r.comment, month: _finMonth,
-              client_name: r.client_name||'', client_phone: r.client_phone||'',
-              is_recurring: 1,
-            }).catch(() => {})
-          ));
-          rows = await GET('/finance?' + params.toString());
-          toast(`Добавлено ${toCreate.length} повторяющихся записей`, 'success');
-        }
-      }
-    }
+    const rows = await GET('/finance?' + params.toString());
 
     _renderFinance(rows);
     // Load section summary async
@@ -5132,8 +5114,12 @@ function _renderFinance(rows) {
         <option value="">Все типы оплаты</option>
         ${Object.entries(FIN_TYPE).map(([k,v])=>`<option value="${k}" ${_finFilter.payment_type===k?'selected':''}>${v}</option>`).join('')}
       </select>
-      ${(_finFilter.status||_finFilter.payment_type||_finFilter.search)
-        ? `<button class="btn btn-outline btn-sm" onclick="_finFilter={status:'',payment_type:'',search:''};renderFinancePage()">Сбросить</button>` : ''}
+      <select class="fin-filter-sel" onchange="_finFilter.direction=this.value; renderFinancePage()">
+        <option value="">Все направления</option>
+        ${Object.entries(FIN_DIRECTION).map(([k,v])=>`<option value="${k}" ${_finFilter.direction===k?'selected':''}>${v}</option>`).join('')}
+      </select>
+      ${(_finFilter.status||_finFilter.payment_type||_finFilter.direction||_finFilter.search)
+        ? `<button class="btn btn-outline btn-sm" onclick="_finFilter={status:'',payment_type:'',direction:'',search:''};renderFinancePage()">Сбросить</button>` : ''}
     </div>`;
 
   // Summary
@@ -5148,8 +5134,8 @@ function _renderFinance(rows) {
     const isB2C = r.is_b2c === 1 || r.is_b2c === 2;
     const debt = +r.service_amount - +r.paid_amount;
     const pmts = r.payments || [];
-    return `<tr class="fin-row ${r.is_recurring?'fin-row-recurring':''} ${r.is_b2c===1?'fin-row-b2c':r.is_b2c===2?'fin-row-kids':''}">
-      <td class="fin-td fin-num">${isB2C?`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${r.is_b2c===2?'#16a34a':'#6366f1'}" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>`:i+1}${r.is_recurring?'<span class="fin-recur-dot">↻</span>':''}</td>
+    return `<tr class="fin-row ${r.is_b2c===1?'fin-row-b2c':r.is_b2c===2?'fin-row-kids':''}">
+      <td class="fin-td fin-num">${isB2C?`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${r.is_b2c===2?'#16a34a':'#6366f1'}" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>`:i+1}</td>
       <td class="fin-td fin-project">
         <div>${_escHtml(r.project_name)}${isB2C?` <span style="font-size:10px;background:${r.is_b2c===2?'#dcfce7':'#ede9fe'};color:${r.is_b2c===2?'#16a34a':'#6d28d9'};padding:1px 5px;border-radius:4px;font-weight:600">авто</span>`:''}</div>
         ${r.client_name?`<div style="font-size:11px;color:var(--text-muted)">${_escHtml(r.client_name)}${r.client_phone?' · '+_escHtml(r.client_phone):''}</div>`:''}
@@ -5162,6 +5148,7 @@ function _renderFinance(rows) {
       <td class="fin-td fin-money" style="color:${debt>0?'#dc2626':'#16a34a'}">${fmtMoney(debt)}</td>
       <td class="fin-td"><span class="fin-status-badge" style="background:${FIN_STATUS_COLOR[r.status]}22;color:${FIN_STATUS_COLOR[r.status]}">${FIN_STATUS[r.status]||r.status}</span></td>
       <td class="fin-td"><span class="fin-type-badge" style="background:${FIN_TYPE_COLOR[r.payment_type]||'#64748b'}22;color:${FIN_TYPE_COLOR[r.payment_type]||'#64748b'}">${FIN_TYPE[r.payment_type]||r.payment_type}</span></td>
+      <td class="fin-td">${r.direction?`<span class="fin-type-badge" style="background:${FIN_DIRECTION_COLOR[r.direction]||'#64748b'}22;color:${FIN_DIRECTION_COLOR[r.direction]||'#64748b'}">${FIN_DIRECTION[r.direction]||r.direction}</span>`:'—'}</td>
       <td class="fin-td fin-comment">${_escHtml(r.comment||'—')}</td>
       <td class="fin-td fin-actions">
         ${isB2C ? `<button class="btn btn-outline btn-sm" onclick="navigateTo('${r.is_b2c===2?'kids':'b2c'}')" style="font-size:11px;padding:3px 8px;white-space:nowrap">Открыть →</button>` : `
@@ -5233,7 +5220,7 @@ function _renderFinance(rows) {
               <thead>
                 <tr>
                   <th>#</th><th>Проект / Клиент</th><th>Сумма услуги</th><th>Оплачено</th><th>Остаток</th>
-                  <th>Статус</th><th>Тип оплаты</th><th>Комментарий</th><th style="width:90px"></th>
+                  <th>Статус</th><th>Тип оплаты</th><th>Направление</th><th>Комментарий</th><th style="width:90px"></th>
                 </tr>
               </thead>
               <tbody>${tableRows}</tbody>
@@ -5526,14 +5513,15 @@ async function saveExpense(id) {
   } catch (err) { toast(err.message, 'error'); }
 }
 
-async function deleteExpense(id) {
-  if (!confirm('Удалить расход?')) return;
-  try {
-    await DEL(`/expenses/${id}`);
-    closeModal();
-    renderFinancePage();
-    toast('Удалено', 'success');
-  } catch (err) { toast(err.message, 'error'); }
+function deleteExpense(id) {
+  confirmDel('Удалить расход?', async () => {
+    try {
+      await DEL(`/expenses/${id}`);
+      closeModal();
+      renderFinancePage();
+      toast('Удалено', 'success');
+    } catch (err) { toast(err.message, 'error'); }
+  });
 }
 
 async function _renderFinanceProjects() {
@@ -5817,6 +5805,13 @@ function _showFinanceModal(row) {
             </div>
           </div>
           <div class="field">
+            <label>Направление</label>
+            <select id="fin-direction" class="input">
+              <option value="">— не указано —</option>
+              ${Object.entries(FIN_DIRECTION).map(([k,v])=>`<option value="${k}" ${(row?.direction||'')===k?'selected':''}>${v}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
             <label>Месяц</label>
             <input id="fin-month" class="input" type="month" value="${row?.month||_finMonth}">
           </div>
@@ -5833,10 +5828,6 @@ function _showFinanceModal(row) {
           <div class="field">
             <label>Комментарий</label>
             <textarea id="fin-comment" class="input" rows="2" placeholder="Дополнительная информация...">${row?.comment||''}</textarea>
-          </div>
-          <div class="field" style="display:flex;align-items:center;gap:10px;margin-top:4px">
-            <input type="checkbox" id="fin-recurring" ${row?.is_recurring?'checked':''} style="width:16px;height:16px">
-            <label for="fin-recurring" style="font-size:13px;cursor:pointer">Повторяющаяся запись (копировать каждый месяц)</label>
           </div>
         </div>
         <div class="modal-footer">
@@ -5892,7 +5883,7 @@ async function saveFinance(id) {
     currency:        document.getElementById('fin-currency')?.value || 'TJS',
     client_name:     document.getElementById('fin-client-name')?.value.trim()||'',
     client_phone:    document.getElementById('fin-client-phone')?.value.trim()||'',
-    is_recurring:    document.getElementById('fin-recurring')?.checked ? 1 : 0,
+    direction:       document.getElementById('fin-direction')?.value || '',
   };
   try {
     if (id && id !== 'null') await PUT(`/finance/${id}`, body);
@@ -5904,14 +5895,15 @@ async function saveFinance(id) {
   } catch (err) { toast(err.message, 'error'); }
 }
 
-async function deleteFinance(id) {
-  if (!confirm('Удалить запись?')) return;
-  try {
-    await DEL(`/finance/${id}`);
-    closeModal();
-    renderFinancePage();
-    toast('Удалено', 'success');
-  } catch (err) { toast(err.message, 'error'); }
+function deleteFinance(id) {
+  confirmDel('Удалить запись?', async () => {
+    try {
+      await DEL(`/finance/${id}`);
+      closeModal();
+      renderFinancePage();
+      toast('Удалено', 'success');
+    } catch (err) { toast(err.message, 'error'); }
+  });
 }
 
 async function exportFinanceProjectsExcel() {
