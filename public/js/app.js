@@ -5386,7 +5386,7 @@ async function _renderExpensesPage() {
   const totalExp = expenses.reduce((s,e)=>s+(+e.amount||0),0);
   const totalInc = finRows.reduce((s,r)=>s+(+r.service_amount||0),0);
   const totalPaid = finRows.reduce((s,r)=>s+(+r.paid_amount||0),0);
-  const balance = totalPaid - totalExp;
+  const balance = totalInc - totalExp;
 
   const rows = expenses.map((e,i) => `
     <tr class="fin-row">
@@ -5422,9 +5422,9 @@ async function _renderExpensesPage() {
     <!-- Balance summary -->
     <div class="fin-summary" style="grid-template-columns:repeat(3,1fr)">
       <div class="fin-sum-card">
-        <div class="fin-sum-lbl">Доходы (оплачено)</div>
-        <div class="fin-sum-val" style="color:#16a34a">${fmtMoney(totalPaid)}</div>
-        <div class="fin-sum-sub">Услуги: ${fmtMoney(totalInc)}</div>
+        <div class="fin-sum-lbl">Сумма услуг</div>
+        <div class="fin-sum-val" style="color:#16a34a">${fmtMoney(totalInc)}</div>
+        <div class="fin-sum-sub">Оплачено: ${fmtMoney(totalPaid)}</div>
       </div>
       <div class="fin-sum-card">
         <div class="fin-sum-lbl">Расходы</div>
@@ -5432,7 +5432,7 @@ async function _renderExpensesPage() {
         <div class="fin-sum-sub">${expenses.length} позиций</div>
       </div>
       <div class="fin-sum-card" style="border-color:${balance>=0?'#bbf7d0':'#fecaca'}">
-        <div class="fin-sum-lbl">Баланс (Доходы − Расходы)</div>
+        <div class="fin-sum-lbl">Баланс (Сумма услуг − Расходы)</div>
         <div class="fin-sum-val" style="color:${balance>=0?'#16a34a':'#dc2626'}">${balance>=0?'+':''}${fmtMoney(balance)}</div>
         <div class="fin-sum-sub">${balance>=0?'Прибыль':'Убыток'}</div>
       </div>
