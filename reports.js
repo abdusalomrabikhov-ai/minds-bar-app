@@ -184,8 +184,8 @@ async function generateSummaryPDF(data) {
     const active = employees.filter(e => e.stats.assigned > 0)
       .sort((a, b) => b.stats.assigned - a.stats.assigned);
     const maxA = Math.max(...active.map(e => e.stats.assigned), 1);
-    // BAR_X=184, BAR_TRACK=260, count(32)+gap(6)+badge(34) = 72 → right edge 184+260+72=516 < 559 ✓
-    const BAR_X = X + 148, BAR_TRACK = 260, ROW = 24;
+    // ROW=20: 14 employees × 20 = 280pt. Leaves room for table below within A4=842pt
+    const BAR_X = X + 148, BAR_TRACK = 260, ROW = 20;
     let ry = chartY0 + 22;
 
     active.forEach((emp, i) => {
@@ -249,7 +249,7 @@ async function generateSummaryPDF(data) {
 
     const COL  = { name: X,     asgn: X+155, done: X+205, over: X+255, pctD: X+308, pctT: X+375, bar: X+425 };
     const CW   = { name: 150,   asgn: 48,    done: 48,    over: 50,    pctD: 64,    pctT: 64,    bar: 70   };
-    const TRH  = 19;
+    const TRH  = 16; // 14 employees × 16 = 224pt; last row y≈796, footer≈824 < 842 ✓
 
     // col headers
     doc.rect(X, tY0 + 22, W, TRH).fill('#334155');
