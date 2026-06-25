@@ -81,7 +81,11 @@ function buildSummaryData(days) {
     days === 14 ? '14 дней'  :
     days === 30 ? 'Месяц'    : `${days} дней`;
 
-  return { global, employees: perEmployee, period: days, periodLabel, generatedAt: nowISOt };
+  const fmt = d => `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
+  const dateFrom = fmt(startLocal);
+  const dateTo   = fmt(nowLocal);
+
+  return { global, employees: perEmployee, period: days, periodLabel, generatedAt: nowISOt, dateFrom, dateTo };
 }
 
 async function generateSummaryPDF(data) {
@@ -96,7 +100,7 @@ async function generateSummaryPDF(data) {
     doc.registerFont('Reg',  FONT_REG);
     doc.registerFont('Bold', FONT_BOLD);
 
-    const { global: g, employees, periodLabel, generatedAt } = data;
+    const { global: g, employees, periodLabel, generatedAt, dateFrom, dateTo } = data;
     const PW = 595, X = 36, W = 523;
     const eff = g.total > 0 ? Math.round(g.done / g.total * 100) : 0;
 
@@ -118,7 +122,7 @@ async function generateSummaryPDF(data) {
     doc.font('Bold').fontSize(17).fillColor('#ffffff')
       .text('MindsBar — Сводный отчёт', X + 22, 20);
     doc.font('Reg').fontSize(9).fillColor('#94a3b8')
-      .text(`Период: последние ${periodLabel}   ·   ${dateStr}   ·   Сформирован: ${generatedAt.slice(11,16)}`, X + 22, 42);
+      .text(`Период: ${dateFrom} — ${dateTo} (${periodLabel})   ·   Сформирован: ${dateStr} ${generatedAt.slice(11,16)}`, X + 22, 42);
 
     // ── METRIC CARDS ───────────────────────────────────────────────────────────
     const cardDefs = [
