@@ -313,80 +313,78 @@ async function generateSummaryPDF(data) {
       doc.rect(0, 46, PW, 4).fill('#881337');
 
       const statusLabel = s => s === 'done' ? 'Выполнено' : s === 'in_progress' ? 'В работе' : s === 'pending_review' ? 'На проверке' : 'Новая';
-      const statusColor = s => s === 'done' ? '#16a34a' : s === 'pending_review' ? '#7c3aed' : '#d97706';
+      const statusDot   = s => s === 'done' ? '#16a34a' : s === 'pending_review' ? '#7c3aed' : s === 'in_progress' ? '#d97706' : '#94a3b8';
       const fmtDl = dl => {
-        if (!dl) return '';
+        if (!dl) return '—';
         const d = new Date(dl.replace(' ', 'T'));
         return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
       };
-      const prioColor = p => p === 'high' ? '#dc2626' : p === 'medium' ? '#d97706' : '#16a34a';
-      const prioLabel = p => p === 'high' ? 'Выс' : p === 'medium' ? 'Ср' : 'Низ';
+      const pLabels = { high: 'Высок.', medium: 'Средн.', low: 'Низкий' };
+      const pColors = { high: '#b91c1c', medium: '#78716c', low: '#16a34a' };
 
       let py = 58;
 
       activeWithTasks.forEach(emp => {
         if (emp.taskList.length === 0) return;
-
-        // new page if close to bottom
         if (py > 760) { doc.addPage({ margin: 0, size: 'A4' }); py = 20; }
 
-        // employee header
         const av = emp.avatar_color || '#6366f1';
-        doc.roundedRect(X, py, W, 26, 5).fill(av + '22');
-        doc.rect(X, py, 4, 26).fill(av);
-        doc.circle(X + 20, py + 13, 10).fill(av);
+        const s  = emp.stats;
+
+        // ── minimal employee header: white bg + thin left accent ──────────────
+        doc.rect(X, py, W, 26).fill('#f8fafc').stroke('#e2e8f0');
+        doc.rect(X, py, 3, 26).fill(av);
+        doc.circle(X + 18, py + 13, 8).fill(av);
         const ini = emp.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-        doc.font('Bold').fontSize(6.5).fillColor('#ffffff').text(ini, X + 11, py + 9, { width: 18, align: 'center' });
-        doc.font('Bold').fontSize(10).fillColor('#111827').text(emp.name, X + 36, py + 8);
-        const s = emp.stats;
-        doc.font('Reg').fontSize(8).fillColor('#6b7280')
-          .text(`${s.assigned} задач · ${s.done} выполнено · ${s.overdue} просрочено`, X + 200, py + 9);
-        py += 30;
+        doc.font('Bold').fontSize(6).fillColor('#ffffff').text(ini, X + 11, py + 9, { width: 14, align: 'center' });
+        doc.font('Bold').fontSize(9).fillColor('#111827').text(emp.name, X + 32, py + 8);
+        const statsTxt = `${s.assigned} задач  ·  ${s.done} выполнено${s.overdue > 0 ? `  ·  ${s.overdue} просрочено` : ''}`;
+        doc.font('Reg').fontSize(7.5).fillColor(s.overdue > 0 ? '#b91c1c' : '#94a3b8').text(statsTxt, X + 170, py + 9);
+        py += 26;
 
-        // task rows header
-        doc.rect(X, py, W, 16).fill('#334155');
-        doc.font('Bold').fontSize(7).fillColor('#e2e8f0');
-        doc.text('Задача', X + 4, py + 5, { width: 210 });
-        doc.text('Проект', X + 218, py + 5, { width: 120 });
-        doc.text('Статус', X + 342, py + 5, { width: 80 });
-        doc.text('Дедлайн', X + 426, py + 5, { width: 70 });
-        doc.text('Приор.', X + 498, py + 5, { width: 25 });
-        py += 16;
+        // ── column headers — very light ──────────────────────────────────────
+        doc.rect(X, py, W, 14).fill('#f1f5f9');
+        doc.font('Bold').fontSize(6.5).fillColor('#94a3b8');
+        doc.text('Задача',  X + 6,   py + 4, { width: 205 });
+        doc.text('Проект',  X + 215, py + 4, { width: 105 });
+        doc.text('Статус',  X + 324, py + 4, { width: 92 });
+        doc.text('Дедлайн', X + 420, py + 4, { width: 62 });
+        doc.text('Приор.',  X + 486, py + 4, { width: 37, align: 'center' });
+        py += 14;
 
+        // ── task rows ─────────────────────────────────────────────────────────
         emp.taskList.forEach((t, ti) => {
-          if (py > 800) { doc.addPage({ margin: 0, size: 'A4' }); py = 20; }
-          const rh = 18;
-          const bg = ti % 2 === 0 ? '#ffffff' : '#f8fafc';
-          doc.rect(X, py, W, rh).fill(bg).stroke('#e5e7eb');
+          if (py > 808) { doc.addPage({ margin: 0, size: 'A4' }); py = 20; }
+          const rh = 16;
+          doc.rect(X, py, W, rh).fill(ti % 2 === 0 ? '#ffffff' : '#fafafa');
+          doc.moveTo(X, py + rh).lineTo(X + W, py + rh).lineWidth(0.3).stroke('#e2e8f0');
 
-          // overdue marker
-          if (t.is_overdue) doc.rect(X, py, 3, rh).fill('#dc2626');
+          const title = t.title.length > 44 ? t.title.slice(0, 42) + '…' : t.title;
+          doc.font('Reg').fontSize(7.5).fillColor(t.is_overdue ? '#b91c1c' : '#1e293b')
+            .text(title, X + 6, py + 5, { width: 205 });
 
-          const title = t.title.length > 45 ? t.title.slice(0, 43) + '…' : t.title;
-          doc.font('Reg').fontSize(7.5).fillColor('#111827').text(title, X + 6, py + 5, { width: 210 });
-
-          const proj = (t.project_name || '—').length > 22 ? (t.project_name || '').slice(0, 20) + '…' : (t.project_name || '—');
-          if (t.project_color) {
-            doc.circle(X + 222, py + 9, 4).fill(t.project_color);
-            doc.font('Reg').fontSize(7).fillColor('#374151').text(proj, X + 229, py + 5, { width: 108 });
+          const proj = (t.project_name || '').slice(0, 19) + (t.project_name?.length > 19 ? '…' : '');
+          if (t.project_color && t.project_name) {
+            doc.circle(X + 218, py + 8, 3).fill(t.project_color);
+            doc.font('Reg').fontSize(7).fillColor('#475569').text(proj, X + 224, py + 4, { width: 96 });
           } else {
-            doc.font('Reg').fontSize(7).fillColor('#9ca3af').text('—', X + 218, py + 5, { width: 120 });
+            doc.font('Reg').fontSize(7).fillColor('#cbd5e1').text('—', X + 215, py + 4, { width: 100 });
           }
 
-          const sc = statusColor(t.status);
-          doc.roundedRect(X + 342, py + 4, 72, 11, 3).fill(sc + '22');
-          doc.font('Bold').fontSize(6.5).fillColor(sc).text(statusLabel(t.status), X + 342, py + 6, { width: 72, align: 'center' });
+          // status: small colored dot + plain text
+          doc.circle(X + 327, py + 8, 3).fill(statusDot(t.status));
+          doc.font('Reg').fontSize(7).fillColor('#475569')
+            .text(statusLabel(t.status), X + 333, py + 4, { width: 80 });
 
-          doc.font('Reg').fontSize(7.5).fillColor(t.is_overdue ? '#dc2626' : '#374151')
-            .text(fmtDl(t.deadline) || '—', X + 426, py + 5, { width: 70 });
+          doc.font('Reg').fontSize(7.5).fillColor(t.is_overdue ? '#b91c1c' : '#475569')
+            .text(fmtDl(t.deadline), X + 420, py + 4, { width: 62 });
 
-          doc.roundedRect(X + 496, py + 5, 27, 10, 2).fill(prioColor(t.priority) + '22');
-          doc.font('Bold').fontSize(6).fillColor(prioColor(t.priority))
-            .text(prioLabel(t.priority), X + 496, py + 7, { width: 27, align: 'center' });
+          doc.font('Reg').fontSize(6.5).fillColor(pColors[t.priority] || '#78716c')
+            .text(pLabels[t.priority] || 'Средн.', X + 486, py + 4, { width: 37, align: 'center' });
 
           py += rh;
         });
-        py += 12;
+        py += 14;
       });
 
       // footer page 2
