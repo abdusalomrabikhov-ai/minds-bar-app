@@ -1996,6 +1996,7 @@ body.dark .gs-esc-hint { background: #0f172a; border-color: #334155; color: #647
 .rpt-bar-track { height:18px; background:var(--bg); border-radius:99px; overflow:hidden; border:1px solid var(--border); min-width:0; }
 .rpt-bar-fill { height:100%; display:flex; border-radius:99px; overflow:hidden; max-width:100%; }
 .rpt-bar-seg { height:100%; min-width:0; }
+.rpt-bar-seg:last-child { border-radius:0 99px 99px 0; }
 .rpt-seg-done { background:#16a34a; }
 .rpt-seg-inp  { background:#d97706; }
 .rpt-seg-ov   { background:#dc2626; }
