@@ -371,10 +371,13 @@ async function generateSummaryPDF(data) {
             doc.font('Reg').fontSize(7).fillColor('#cbd5e1').text('—', X + 215, py + 4, { width: 100 });
           }
 
-          // status: small colored dot + plain text
-          doc.circle(X + 327, py + 8, 3).fill(statusDot(t.status));
-          doc.font('Reg').fontSize(7).fillColor('#475569')
-            .text(statusLabel(t.status), X + 333, py + 4, { width: 80 });
+          // status: if overdue — show "Просрочено" regardless of DB status
+          const displayStatus = t.is_overdue ? 'overdue' : t.status;
+          const displayLabel  = t.is_overdue ? 'Просрочено' : statusLabel(t.status);
+          const displayDot    = t.is_overdue ? '#b91c1c' : statusDot(t.status);
+          doc.circle(X + 327, py + 8, 3).fill(displayDot);
+          doc.font('Reg').fontSize(7).fillColor(t.is_overdue ? '#b91c1c' : '#475569')
+            .text(displayLabel, X + 333, py + 4, { width: 80 });
 
           doc.font('Reg').fontSize(7.5).fillColor(t.is_overdue ? '#b91c1c' : '#475569')
             .text(fmtDl(t.deadline), X + 420, py + 4, { width: 62 });
