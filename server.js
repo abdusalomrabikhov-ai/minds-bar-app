@@ -42,17 +42,7 @@ function updateReviewBadgeSSE() {
   });
 }
 
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
-  : ['http://localhost:3000', 'http://127.0.0.1:3000'];
-app.use(cors({
-  origin: (origin, cb) => {
-    // Allow same-origin requests (no Origin header) and whitelisted origins
-    if (!origin || ALLOWED_ORIGINS.some(o => origin.startsWith(o))) cb(null, true);
-    else cb(new Error('CORS: origin not allowed'));
-  },
-  credentials: true,
-}));
+app.use(cors());
 app.use(express.json({ limit: '4mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
