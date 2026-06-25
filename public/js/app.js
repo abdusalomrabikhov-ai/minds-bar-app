@@ -4086,6 +4086,24 @@ async function renderReportsPage() {
 
 let _summaryPeriod = 7;
 
+async function downloadSummaryPDF(days) {
+  try {
+    const res = await fetch(`/api/reports/summary/pdf?period=${days}`, {
+      headers: { Authorization: 'Bearer ' + state.token }
+    });
+    if (!res.ok) { toast('Ошибка генерации PDF', 'error'); return; }
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `report-${days}d.pdf`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
 async function loadSummaryReport(days) {
   _summaryPeriod = days;
   const container = document.getElementById('report-content');
@@ -4166,10 +4184,10 @@ async function loadSummaryReport(days) {
             <button class="filter-btn ${_summaryPeriod===p.days?'active':''}" onclick="loadSummaryReport(${p.days})">${p.label}</button>
           `).join('')}
         </div>
-        <a href="/api/reports/summary/pdf?period=${days}" target="_blank" class="btn btn-outline btn-sm" style="display:inline-flex;align-items:center;gap:6px">
+        <button onclick="downloadSummaryPDF(${days})" class="btn btn-outline btn-sm" style="display:inline-flex;align-items:center;gap:6px">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Скачать PDF
-        </a>
+        </button>
       </div>
 
       <!-- Summary cards -->
