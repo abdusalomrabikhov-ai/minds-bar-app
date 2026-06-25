@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -10,6 +11,10 @@ const { startScheduler } = require('./scheduler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+if (!process.env.JWT_SECRET) {
+  console.warn('⚠️  JWT_SECRET not set in .env — using insecure default. Set a random 256-bit secret in production.');
+}
 const JWT_SECRET = process.env.JWT_SECRET || 'teamtask-secret-key-change-me';
 
 // Timezone helpers — Dushanbe is UTC+5
@@ -37,7 +42,17 @@ function updateReviewBadgeSSE() {
   });
 }
 
-app.use(cors());
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
+  : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+app.use(cors({
+  origin: (origin, cb) => {
+    // Allow same-origin requests (no Origin header) and whitelisted origins
+    if (!origin || ALLOWED_ORIGINS.some(o => origin.startsWith(o))) cb(null, true);
+    else cb(new Error('CORS: origin not allowed'));
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: '4mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -57,7 +72,8 @@ function auth(req, res, next) {
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     const row = db.prepare('SELECT role, permissions FROM users WHERE id = ?').get(decoded.id);
-    req.user = { ...decoded, role: row?.role || decoded.role, permissions: row?.permissions || '{}' };
+    if (!row) return res.status(401).json({ error: 'Пользователь не найден' });
+    req.user = { ...decoded, role: row.role, permissions: row.permissions || '{}' };
     // Throttled last_seen — update at most once per minute per user
     const now = Date.now();
     if (!lastSeenMap.get(decoded.id) || now - lastSeenMap.get(decoded.id) > 60000) {
@@ -99,7 +115,15 @@ app.post(WEBHOOK_PATH, (req, res) => {
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
-app.post('/api/auth/login', (req, res) => {
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Слишком много попыток входа. Попробуйте через 15 минут.' },
+});
+
+app.post('/api/auth/login', loginLimiter, (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email и пароль обязательны' });
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase().trim());
@@ -167,11 +191,21 @@ app.put('/api/projects/:id', auth, requirePerm('manage_projects'), (req, res) =>
 
 app.delete('/api/projects/:id', auth, requirePerm('manage_projects'), (req, res) => {
   const proj = db.prepare('SELECT name FROM projects WHERE id = ?').get(req.params.id);
+  // Notify assigned employees before cascade-deletion so they know why tasks disappeared
+  const affectedUsers = db.prepare(`
+    SELECT DISTINCT ta.user_id FROM task_assignees ta
+    JOIN tasks t ON t.id = ta.task_id WHERE t.project_id = ?
+  `).all(req.params.id);
   db.prepare('DELETE FROM notifications WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)').run(req.params.id);
   db.prepare('DELETE FROM comments WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)').run(req.params.id);
   db.prepare('DELETE FROM tasks WHERE project_id = ?').run(req.params.id);
   db.prepare('DELETE FROM projects WHERE id = ?').run(req.params.id);
   sendSSEAll({ type: 'project_deleted', id: parseInt(req.params.id) });
+  affectedUsers.forEach(({ user_id }) => {
+    if (user_id !== req.user.id) {
+      sendSSE(user_id, { type: 'project_deleted_notify', message: `Проект «${proj?.name}» был удалён, связанные задачи удалены` });
+    }
+  });
   logActivity(req.user.id, 'project_deleted', 'project', parseInt(req.params.id), proj?.name);
   res.json({ ok: true });
 });
@@ -482,6 +516,8 @@ function calcNextDeadline(deadline, recurrence) {
 app.post('/api/tasks', auth, (req, res) => {
   const { title, description, project_id, assignee_id, assignee_ids, priority, deadline, recurrence } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Название задачи обязательно' });
+  if (title.trim().length > 500) return res.status(400).json({ error: 'Название слишком длинное (макс. 500 символов)' });
+  if ((description || '').length > 10000) return res.status(400).json({ error: 'Описание слишком длинное (макс. 10 000 символов)' });
 
   const ids = Array.isArray(assignee_ids) && assignee_ids.length > 0
     ? assignee_ids.map(Number).filter(Boolean)
@@ -695,10 +731,18 @@ app.patch('/api/tasks/:id/my-done', auth, (req, res) => {
 });
 
 app.delete('/api/tasks/:id', auth, (req, res) => {
-  if (req.user.role !== 'admin' && !JSON.parse(req.user.permissions||'{}').assign_tasks) {
+  const perms = parsePerms(req.user.permissions);
+  if (req.user.role !== 'admin' && !perms.assign_tasks) {
     return res.status(403).json({ error: 'Нет доступа' });
   }
-  const task = db.prepare('SELECT title FROM tasks WHERE id = ?').get(req.params.id);
+  const task = db.prepare('SELECT id, title, created_by FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Задача не найдена' });
+  // Non-admin with assign_tasks can only delete tasks they created or are assigned to
+  if (req.user.role !== 'admin') {
+    const isAssigned = !!db.prepare('SELECT 1 FROM task_assignees WHERE task_id = ? AND user_id = ?').get(req.params.id, req.user.id);
+    const isCreator = task.created_by === req.user.id;
+    if (!isAssigned && !isCreator) return res.status(403).json({ error: 'Можно удалять только свои задачи' });
+  }
   db.prepare('DELETE FROM notifications WHERE task_id = ?').run(req.params.id);
   db.prepare('DELETE FROM comments WHERE task_id = ?').run(req.params.id);
   db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
@@ -775,8 +819,20 @@ app.post('/api/tasks/:id/reject', auth, (req, res) => {
   res.json({ ok: true, task });
 });
 
+// ─── Task access guard — used by history/comments endpoints ──────────────────
+function canAccessTask(req, taskId) {
+  if (req.user.role === 'admin') return true;
+  const perms = parsePerms(req.user.permissions);
+  if (perms.manage_team || perms.assign_tasks) return true;
+  const isAssigned = !!db.prepare('SELECT 1 FROM task_assignees WHERE task_id = ? AND user_id = ?').get(taskId, req.user.id);
+  if (isAssigned) return true;
+  const task = db.prepare('SELECT created_by, assignee_id FROM tasks WHERE id = ?').get(taskId);
+  return task && (task.created_by === req.user.id || task.assignee_id === req.user.id);
+}
+
 // ─── Task History ─────────────────────────────────────────────────────────────
 app.get('/api/tasks/:id/history', auth, (req, res) => {
+  if (!canAccessTask(req, req.params.id)) return res.status(403).json({ error: 'Нет доступа' });
   const rows = db.prepare(
     'SELECT * FROM task_history WHERE task_id = ? ORDER BY created_at DESC LIMIT 50'
   ).all(req.params.id);
@@ -786,6 +842,7 @@ app.get('/api/tasks/:id/history', auth, (req, res) => {
 // ─── Comments ─────────────────────────────────────────────────────────────────
 
 app.get('/api/tasks/:id/comments', auth, (req, res) => {
+  if (!canAccessTask(req, req.params.id)) return res.status(403).json({ error: 'Нет доступа' });
   const comments = db.prepare(`
     SELECT c.*, u.name as user_name, u.avatar_color, u.avatar_img
     FROM comments c
@@ -797,8 +854,10 @@ app.get('/api/tasks/:id/comments', auth, (req, res) => {
 });
 
 app.post('/api/tasks/:id/comments', auth, (req, res) => {
+  if (!canAccessTask(req, req.params.id)) return res.status(403).json({ error: 'Нет доступа' });
   const { text } = req.body;
   if (!text?.trim()) return res.status(400).json({ error: 'Текст обязателен' });
+  if (text.trim().length > 2000) return res.status(400).json({ error: 'Комментарий слишком длинный (макс. 2000 символов)' });
   const result = db.prepare('INSERT INTO comments (task_id, user_id, text) VALUES (?, ?, ?)')
     .run(req.params.id, req.user.id, text.trim());
   const comment = db.prepare(`
@@ -815,9 +874,13 @@ app.post('/api/tasks/:id/comments', auth, (req, res) => {
     const sender = db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id);
     const notified = new Set();
     mentions.forEach(mention => {
-      const matched = allUsers.find(u =>
-        u.name.toLowerCase().startsWith(mention.toLowerCase()) && u.id !== req.user.id
-      );
+      // Require exact full-name or exact first-name match to avoid accidental partial-prefix notifications
+      const mentionLower = mention.toLowerCase();
+      const matched = allUsers.find(u => {
+        const nameLower = u.name.toLowerCase();
+        const firstName = nameLower.split(' ')[0];
+        return u.id !== req.user.id && (nameLower === mentionLower || firstName === mentionLower);
+      });
       if (matched && !notified.has(matched.id)) {
         notified.add(matched.id);
         const msg = `${sender?.name} упомянул вас в комментарии к задаче «${taskRow?.title}»`;
@@ -869,7 +932,10 @@ app.put('/api/users/:id', auth, (req, res) => {
   if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
 
   const { name, email, password, permissions } = req.body;
-  const permsJson = permissions !== undefined ? JSON.stringify(permissions) : user.permissions;
+  // Only admins may change the permissions field — employees cannot self-escalate
+  const permsJson = (permissions !== undefined && req.user.role === 'admin')
+    ? JSON.stringify(permissions)
+    : user.permissions;
   db.prepare('UPDATE users SET name = ?, email = ?, password = ?, permissions = ? WHERE id = ?').run(
     name || user.name,
     email || user.email,
@@ -894,7 +960,9 @@ app.delete('/api/users/:id', auth, adminOnly, (req, res) => {
 app.post('/api/profile/avatar', auth, (req, res) => {
   const { avatar_img } = req.body;
   if (!avatar_img) return res.status(400).json({ error: 'Нет изображения' });
-  const base64Data = avatar_img.replace(/^data:image\/\w+;base64,/, '');
+  const mimeMatch = avatar_img.match(/^data:(image\/(?:jpeg|png|gif|webp));base64,/);
+  if (!mimeMatch) return res.status(400).json({ error: 'Допустимые форматы: JPEG, PNG, GIF, WebP (SVG запрещён)' });
+  const base64Data = avatar_img.slice(mimeMatch[0].length);
   const sizeBytes = Math.ceil(base64Data.length * 0.75);
   if (sizeBytes > 2 * 1024 * 1024) return res.status(400).json({ error: 'Файл превышает 2 МБ' });
   db.prepare('UPDATE users SET avatar_img = ? WHERE id = ?').run(avatar_img, req.user.id);
@@ -957,6 +1025,10 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
     dateParams.push(month);
   }
 
+  // For efficiency score: filter by deadline month (same as /api/best-employee)
+  const dlDateWhere = month ? " AND strftime('%Y-%m', t.deadline) = ?" : '';
+  const dlDateParams = month ? [month] : [];
+
   // Current local time (Dushanbe UTC+5) as ISO string for correct deadline comparison
   // Keep 'T' separator to match deadline strings like "2026-06-23T11:30"
   const nowLocal   = new Date(Date.now() + 5*3600000).toISOString().slice(0,19); // "2026-06-23T13:03:40"
@@ -982,6 +1054,30 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
       WHERE (t.assignee_id = ? OR ta.user_id = ?) ${dateWhere}
     `).get(nowLocal, todayLocal, user.id, user.id, user.id, ...dateParams);
 
+    // On-time/late breakdown — filter by deadline month (same as /api/best-employee)
+    const dlRows = db.prepare(`
+      SELECT DISTINCT t.id, t.status, t.deadline, t.updated_at,
+        ta.done AS my_done, ta.done_at AS my_done_at
+      FROM tasks t
+      LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
+      WHERE (t.assignee_id = ? OR ta.user_id = ?)
+        AND t.deadline IS NOT NULL AND t.deadline != '' ${dlDateWhere}
+    `).all(user.id, user.id, user.id, ...dlDateParams);
+
+    let doneOnTime = 0, doneLate = 0;
+    for (const t of dlRows) {
+      const isDone   = t.status === 'done' || t.my_done === 1;
+      const doneAt   = t.status === 'done' ? t.updated_at : (t.my_done === 1 ? t.my_done_at : null);
+      const dlNorm   = (t.deadline.replace(' ', 'T').length <= 10)
+        ? t.deadline.replace(' ', 'T') + 'T23:59:59'
+        : t.deadline.replace(' ', 'T');
+      const doneNorm = doneAt ? doneAt.replace(' ', 'T') : null;
+      if (isDone && doneNorm && doneNorm <= dlNorm) doneOnTime++;
+      else if (isDone && doneNorm && doneNorm > dlNorm) doneLate++;
+    }
+    const dlTotal = dlRows.length;
+    const score = dlTotal > 0 ? Math.round((doneOnTime * 100 + doneLate * 50) / dlTotal) : null;
+
     const byProject = db.prepare(`
       SELECT p.name, p.color,
         COUNT(DISTINCT t.id) as total,
@@ -994,10 +1090,34 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
       ORDER BY total DESC
     `).all(user.id, user.id, user.id, ...dateParams);
 
-    return { ...user, stats: stats || { total: 0, done: 0, in_progress: 0, new_count: 0, overdue: 0 }, byProject };
+    const baseStats = stats || { total: 0, done: 0, in_progress: 0, new_count: 0, overdue: 0 };
+    return { ...user, stats: { ...baseStats, doneOnTime, doneLate, dlTotal, score }, byProject };
   });
 
   res.json(report);
+});
+
+// ─── Summary Report (period-based) ───────────────────────────────────────────
+
+const { buildSummaryData, generateSummaryPDF } = require('./reports');
+
+app.get('/api/reports/summary', auth, requirePerm('reports'), (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.period || '7'), 1), 365);
+  res.json(buildSummaryData(days));
+});
+
+app.get('/api/reports/summary/pdf', auth, requirePerm('reports'), async (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.period || '7'), 1), 365);
+    const data   = buildSummaryData(days);
+    const buf    = await generateSummaryPDF(data);
+    const fname  = `report-${days}d-${data.generatedAt.slice(0, 10)}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+    res.end(buf);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── SSE ──────────────────────────────────────────────────────────────────────

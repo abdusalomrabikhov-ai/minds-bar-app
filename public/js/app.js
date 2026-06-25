@@ -57,6 +57,8 @@ function openModal(html, onClose) {
   const overlay = root.querySelector('.modal-overlay');
   overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
   if (onClose) overlay._onClose = onClose;
+  // Push modal state so Back button closes the modal instead of leaving the page
+  history.pushState({ modal: true, page: state.currentPage, projectId: state.currentProjectId }, '');
 }
 function closeModal() {
   const overlay = document.getElementById('modal-overlay');
@@ -418,6 +420,9 @@ async function initApp() {
   window.addEventListener('popstate', e => {
     const s = e.state;
     if (!s) { navigateTo('dashboard', null, false); return; }
+    // Back pressed while a modal was open — close the modal, stay on current page
+    if (s.modal) { closeModal(); return; }
+    if (document.getElementById('modal-overlay')) closeModal();
     if (s.employeeId && s.page === 'employee') {
       state.currentEmployeeId = s.employeeId;
     }
@@ -478,7 +483,9 @@ async function initApp() {
     }
 
     if (!inInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openTaskModal(); }
+      if ((e.key === 'n' || e.key === 'N') && ['dashboard','tasks','mytasks','project','team-tasks'].includes(state.currentPage)) {
+        e.preventDefault(); openTaskModal();
+      }
     }
   });
 
@@ -706,13 +713,23 @@ function setupSSEWithAuth() {
         });
       }
       if (xhr.readyState === 4) {
-        setTimeout(connect, reconnectDelay);
+        setTimeout(() => { connect(); refreshCurrentPage(); }, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 1.5, 15000);
       }
     };
     xhr.send();
   }
   connect();
+}
+
+function refreshCurrentPage() {
+  if (!state.user) return;
+  switch (state.currentPage) {
+    case 'dashboard': renderDashboard(); break;
+    case 'tasks': case 'mytasks': renderTasksPage(); break;
+    case 'project': if (state.currentProjectId) renderProjectPage(state.currentProjectId); break;
+    default: break;
+  }
 }
 
 function handleSSEEvent(event) {
@@ -766,6 +783,11 @@ function handleSSEEvent(event) {
         if (state.currentPage === 'dashboard') renderDashboard();
         if (event.type === 'project_deleted' && String(state.currentProjectId) === String(event.id)) navigateTo('dashboard');
       });
+      break;
+    case 'project_deleted_notify':
+      toast(event.message || 'Проект удалён, ваши задачи удалены', 'error');
+      if (state.currentPage === 'tasks' || state.currentPage === 'mytasks') renderTasksPage();
+      if (state.currentPage === 'dashboard') renderDashboard();
       break;
   }
 }
@@ -1778,7 +1800,8 @@ async function renderProjectPage(projectId) {
     }
 
   } catch (err) {
-    document.getElementById('page-content').innerHTML = `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.warning,44)}</div><h3>Ошибка</h3><p>${err.message}</p></div>`;
+    document.getElementById('page-content').innerHTML = `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.warning,44)}</div><h3>Проект не найден</h3><p>${err.message}</p><p style="margin-top:12px;color:#9ca3af;font-size:13px">Переход на главную через 3 секунды...</p></div>`;
+    setTimeout(() => navigateTo('dashboard'), 3000);
   }
 }
 
@@ -2951,7 +2974,7 @@ async function openTaskModal(taskId = null, defaultProjectId = null) {
       <div class="modal-body">
         <div class="field">
           <label>Название задачи *</label>
-          <input id="f-title" placeholder="Что нужно сделать?" value="${task?.title || ''}">
+          <input id="f-title" placeholder="Что нужно сделать?" value="${task?.title || ''}" maxlength="500">
         </div>
         <div class="field">
           <label>Описание</label>
@@ -3023,6 +3046,10 @@ async function openTaskModal(taskId = null, defaultProjectId = null) {
   document.getElementById('save-task-btn').addEventListener('click', async () => {
     const title = document.getElementById('f-title').value.trim();
     if (!title) { toast('Укажите название задачи', 'error'); return; }
+    const deadlineVal = document.getElementById('f-deadline').value || null;
+    if (deadlineVal && new Date(deadlineVal) < new Date() && !task) {
+      if (!confirm('Указанный срок уже прошёл. Создать задачу с прошедшим дедлайном?')) return;
+    }
     const btn = document.getElementById('save-task-btn');
     btn.disabled = true; btn.textContent = 'Сохраняю...';
     try {
@@ -3033,7 +3060,7 @@ async function openTaskModal(taskId = null, defaultProjectId = null) {
         project_id: document.getElementById('f-project').value || null,
         assignee_ids,
         priority: document.getElementById('f-priority').value,
-        deadline: document.getElementById('f-deadline').value || null,
+        deadline: deadlineVal,
         recurrence: document.getElementById('f-recurrence').value || 'none',
       };
       if (task) await PUT('/tasks/' + taskId, payload);
@@ -4029,25 +4056,176 @@ function renderUserActivityContent(userId, data, days) {
   `;
 }
 
+let _reportTab = 'monthly'; // 'monthly' | 'summary'
+
 async function renderReportsPage() {
-  const now = new Date(Date.now() + 5*3600000); // Dushanbe UTC+5
+  const now = new Date(Date.now() + 5*3600000);
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
   document.getElementById('page-content').innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
-      <div>
-        <div style="font-size:15px;font-weight:700">Эффективность команды</div>
-        <div style="font-size:13px;color:#6b7280;margin-top:2px">Статистика по задачам за выбранный месяц</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+      <div style="display:flex;gap:8px">
+        <button class="filter-btn ${_reportTab==='monthly'?'active':''}" onclick="_reportTab='monthly';renderReportsPage()">Эффективность</button>
+        <button class="filter-btn ${_reportTab==='summary'?'active':''}" onclick="_reportTab='summary';renderReportsPage()">Сводные отчёты</button>
       </div>
-      <div class="report-month-picker">
-        <span style="font-size:13px;color:#6b7280">Месяц:</span>
-        <input type="month" id="report-month" value="${currentMonth}">
-        <button class="btn btn-blue btn-sm" onclick="loadReport()">Показать</button>
-      </div>
+      ${_reportTab==='monthly' ? `
+        <div class="report-month-picker">
+          <span style="font-size:13px;color:#6b7280">Месяц:</span>
+          <input type="month" id="report-month" value="${currentMonth}">
+          <button class="btn btn-blue btn-sm" onclick="loadReport()">Показать</button>
+        </div>
+      ` : ''}
     </div>
     <div id="report-content"><div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div></div>
   `;
-  loadReport();
+  if (_reportTab === 'monthly') loadReport();
+  else loadSummaryReport(7);
+}
+
+// ─── Summary Report ──────────────────────────────────────────────────────────
+
+let _summaryPeriod = 7;
+
+async function loadSummaryReport(days) {
+  _summaryPeriod = days;
+  const container = document.getElementById('report-content');
+  if (!container) return;
+  container.innerHTML = `<div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div>`;
+
+  try {
+    const data = await GET(`/reports/summary?period=${days}`);
+    const { global: g, employees, periodLabel } = data;
+    const eff = g.total > 0 ? Math.round(g.done / g.total * 100) : 0;
+
+    const PERIODS = [
+      { days: 1,  label: '1 день' },
+      { days: 3,  label: '3 дня'  },
+      { days: 7,  label: '7 дней' },
+      { days: 14, label: '14 дней'},
+      { days: 30, label: 'Месяц'  },
+    ];
+
+    const activeEmployees = employees.filter(e => e.stats.assigned > 0);
+
+    // Bar chart — top employees by assigned tasks
+    const maxAssigned = Math.max(...activeEmployees.map(e => e.stats.assigned), 1);
+    const bars = activeEmployees.map(e => {
+      const s = e.stats;
+      const pct = s.pctDone ?? 0;
+      const color = pct >= 80 ? '#22c55e' : pct >= 50 ? '#f59e0b' : '#ef4444';
+      const barW = Math.round(s.assigned / maxAssigned * 100);
+      const ini = e.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+      return `<div class="rpt-bar-row">
+        <div class="rpt-bar-label">
+          <div class="rpt-bar-av" style="background:${e.avatar_color||'#6366f1'}">
+            ${e.avatar_img ? `<img src="${e.avatar_img}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">` : ini}
+          </div>
+          <span class="rpt-bar-name">${e.name.split(' ')[0]}</span>
+        </div>
+        <div class="rpt-bar-track">
+          <div class="rpt-bar-fill" style="width:${barW}%">
+            ${s.done > 0 ? `<div class="rpt-bar-seg rpt-seg-done" style="width:${Math.round(s.done/s.assigned*100)}%" title="Выполнено: ${s.done}"></div>` : ''}
+            ${s.overdue > 0 ? `<div class="rpt-bar-seg rpt-seg-ov" style="width:${Math.round(s.overdue/s.assigned*100)}%" title="Просрочено: ${s.overdue}"></div>` : ''}
+          </div>
+        </div>
+        <div class="rpt-bar-nums">
+          <span class="rpt-bar-total">${s.assigned}</span>
+          <span class="rpt-bar-sub" style="color:#16a34a">${s.done}✓</span>
+          ${s.overdue > 0 ? `<span class="rpt-bar-sub" style="color:#dc2626">${s.overdue}⚠</span>` : ''}
+          <span class="rpt-bar-pct" style="color:${color}">${pct}%</span>
+        </div>
+      </div>`;
+    }).join('');
+
+    // Table rows
+    const rows = employees.map(e => {
+      const s = e.stats;
+      const pDColor = s.pctDone === null ? '#9ca3af' : s.pctDone >= 80 ? '#16a34a' : s.pctDone >= 50 ? '#d97706' : '#dc2626';
+      const pTColor = s.pctOnTime === null ? '#9ca3af' : s.pctOnTime >= 80 ? '#16a34a' : s.pctOnTime >= 50 ? '#d97706' : '#dc2626';
+      const ini = e.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+      return `<tr>
+        <td style="display:flex;align-items:center;gap:8px;padding:10px 12px">
+          <div style="width:28px;height:28px;border-radius:50%;background:${e.avatar_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0">
+            ${e.avatar_img ? `<img src="${e.avatar_img}" style="width:28px;height:28px;border-radius:50%;object-fit:cover">` : ini}
+          </div>
+          <span style="font-size:13px;font-weight:500">${e.name}</span>
+        </td>
+        <td class="sr-td-num">${s.assigned}</td>
+        <td class="sr-td-num" style="color:#16a34a;font-weight:600">${s.done}</td>
+        <td class="sr-td-num" style="color:${s.overdue>0?'#dc2626':'#6b7280'};font-weight:${s.overdue>0?'600':'400'}">${s.overdue}</td>
+        <td class="sr-td-num" style="color:${pDColor};font-weight:600">${s.pctDone !== null ? s.pctDone+'%' : '—'}</td>
+        <td class="sr-td-num" style="color:${pTColor};font-weight:600">${s.pctOnTime !== null ? s.pctOnTime+'%' : '—'}</td>
+      </tr>`;
+    }).join('');
+
+    container.innerHTML = `
+      <!-- Period tabs + Download -->
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${PERIODS.map(p => `
+            <button class="filter-btn ${_summaryPeriod===p.days?'active':''}" onclick="loadSummaryReport(${p.days})">${p.label}</button>
+          `).join('')}
+        </div>
+        <a href="/api/reports/summary/pdf?period=${days}" target="_blank" class="btn btn-outline btn-sm" style="display:inline-flex;align-items:center;gap:6px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Скачать PDF
+        </a>
+      </div>
+
+      <!-- Summary cards -->
+      <div class="stats-grid" style="margin-bottom:20px">
+        <div class="stat-card">
+          <div class="stat-icon" style="border-color:#3b82f6"></div>
+          <div><div class="stat-value">${g.total}</div><div class="stat-label">Всего задач за период</div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="border-color:#22c55e"></div>
+          <div><div class="stat-value">${g.done}</div><div class="stat-label">Выполнено (${eff}%)</div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="border-color:#ef4444"></div>
+          <div><div class="stat-value" style="color:#ef4444">${g.overdue}</div><div class="stat-label">Просрочено за период</div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="border-color:#8b5cf6"></div>
+          <div><div class="stat-value">${activeEmployees.length}</div><div class="stat-label">Активных сотрудников</div></div>
+        </div>
+      </div>
+
+      <!-- Bar chart -->
+      ${activeEmployees.length > 0 ? `
+        <div class="rpt-chart-wrap" style="margin-bottom:20px">
+          <div class="rpt-chart-header">
+            <div class="rpt-chart-title">Нагрузка по сотрудникам — ${periodLabel}</div>
+            <div class="rpt-chart-legend">
+              <span class="rpt-leg"><span class="rpt-leg-dot" style="background:#16a34a"></span>Выполнено</span>
+              <span class="rpt-leg"><span class="rpt-leg-dot" style="background:#dc2626"></span>Просрочено</span>
+            </div>
+          </div>
+          <div class="rpt-chart-bars">${bars}</div>
+        </div>
+      ` : ''}
+
+      <!-- Table -->
+      <div class="card" style="overflow:auto">
+        <table class="sr-table" style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="border-bottom:2px solid var(--border)">
+              <th style="text-align:left;padding:10px 12px;font-size:12px;color:#6b7280;font-weight:600">Сотрудник</th>
+              <th class="sr-th">Назначено</th>
+              <th class="sr-th">Выполнено</th>
+              <th class="sr-th">Просрочено</th>
+              <th class="sr-th">% выполнено</th>
+              <th class="sr-th">% в срок</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  } catch (err) {
+    container.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
+  }
 }
 
 async function loadReport() {
@@ -4066,6 +4244,10 @@ async function loadReport() {
     const totalAll = data.reduce((s, u) => s + (u.stats.total || 0), 0);
     const doneAll = data.reduce((s, u) => s + (u.stats.done || 0), 0);
     const overdueAll = data.reduce((s, u) => s + (u.stats.overdue || 0), 0);
+    const doneOnTimeAll = data.reduce((s, u) => s + (u.stats.doneOnTime || 0), 0);
+    const doneLateAll   = data.reduce((s, u) => s + (u.stats.doneLate || 0), 0);
+    const dlTotalAll    = data.reduce((s, u) => s + (u.stats.dlTotal || 0), 0);
+    const effAll = dlTotalAll > 0 ? Math.round((doneOnTimeAll * 100 + doneLateAll * 50) / dlTotalAll) : 0;
 
     container.innerHTML = `
       <div class="stats-grid" style="margin-bottom:24px">
@@ -4083,7 +4265,7 @@ async function loadReport() {
         </div>
         <div class="stat-card">
           <div class="stat-icon" style="border-color:#881337"></div>
-          <div><div class="stat-value">${totalAll > 0 ? Math.round(doneAll / totalAll * 100) : 0}%</div><div class="stat-label">Общая эффективность</div></div>
+          <div><div class="stat-value">${effAll}%</div><div class="stat-label">Общая эффективность</div></div>
         </div>
       </div>
 
@@ -4098,7 +4280,7 @@ async function loadReport() {
           const ov  = s.overdue || 0;
           const inp = s.in_progress || 0;
           const nw  = tot - don - inp - ov;
-          const pct = tot > 0 ? Math.round(don/tot*100) : 0;
+          const pct = s.score ?? (tot > 0 ? Math.round(don/tot*100) : 0);
           const barW = Math.round(tot/maxTotal*100);
           const ini = u.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
           return `<div class="rpt-bar-row" onclick="openEmployeeProfile(${u.id})" title="${u.name}: ${tot} задач">
@@ -4144,7 +4326,7 @@ async function loadReport() {
           const s = u.stats;
           const total = s.total || 0;
           const done = s.done || 0;
-          const pct = total > 0 ? Math.round(done / total * 100) : 0;
+          const pct = s.score ?? 0;
           const effColor = pct >= 80 ? '#22c55e' : pct >= 50 ? '#eab308' : '#ef4444';
 
           return `
@@ -4169,12 +4351,12 @@ async function loadReport() {
                     <div class="report-stat-lbl">Выполнено</div>
                   </div>
                   <div class="report-stat">
-                    <div class="report-stat-val" style="color:#ca8a04">${s.in_progress || 0}</div>
-                    <div class="report-stat-lbl">В работе</div>
+                    <div class="report-stat-val" style="color:#16a34a">${s.doneOnTime || 0}</div>
+                    <div class="report-stat-lbl">В срок</div>
                   </div>
                   <div class="report-stat">
-                    <div class="report-stat-val" style="color:#2563eb">${s.new_count || 0}</div>
-                    <div class="report-stat-lbl">Новых</div>
+                    <div class="report-stat-val" style="color:#d97706">${s.doneLate || 0}</div>
+                    <div class="report-stat-lbl">С опозданием</div>
                   </div>
                 </div>
 
@@ -4269,16 +4451,25 @@ function svgMonthlyBars(months) {
 
 async function renderEmployeeProfile(userId) {
   try {
-    // Fetch only this employee's tasks — much faster than loading all tasks
-    const [users, tasks] = await Promise.all([
+    // Fetch tasks + best-employee data (for consistent efficiency score)
+    const currentMonth = new Date(Date.now() + 5*3600000).toISOString().slice(0,7);
+    const [users, tasks, beData] = await Promise.all([
       GET('/users'),
-      GET('/tasks?assignee_id=' + userId)
+      GET('/tasks?assignee_id=' + userId),
+      GET('/best-employee?month=' + currentMonth)
     ]);
     const u = users.find(u => u.id === userId);
     if (!u) {
       document.getElementById('page-content').innerHTML = '<div class="empty-state"><h3>Сотрудник не найден</h3></div>';
       return;
     }
+
+    // Efficiency from best-employee endpoint (same formula + same month filter = consistent with rankings page)
+    const beUser = beData?.rankings?.find(r => r.id === userId);
+    const doneOnTime = beUser?.doneOnTime ?? 0;
+    const doneLate   = beUser?.doneLate   ?? 0;
+    const pct        = beUser?.score      ?? 0;
+    const effColor   = pct >= 80 ? '#059669' : pct >= 50 ? '#D97706' : pct > 0 ? '#DC2626' : '#94A3B8';
 
     const allTasks = tasks; // already filtered by server
     // Task is done for this user if:
@@ -4295,8 +4486,6 @@ async function renderEmployeeProfile(userId) {
     const inProg  = tasks.filter(t => !isUserDone(t) && t.status === 'in_progress').length;
     const newCnt  = tasks.filter(t => !isUserDone(t) && t.status === 'new').length;
     const overdue = tasks.filter(t => !isUserDone(t) && t.deadline && parseDeadline(t.deadline) < new Date()).length;
-    const pct = total > 0 ? Math.round(done / total * 100) : 0;
-    const effColor = pct >= 80 ? '#059669' : pct >= 50 ? '#D97706' : pct > 0 ? '#DC2626' : '#94A3B8';
 
     const now = new Date();
     const months = Array.from({ length: 6 }, (_, i) => {
@@ -4344,8 +4533,8 @@ async function renderEmployeeProfile(userId) {
         </div>
       </div>
 
-      <!-- Stats: 4 cards full width -->
-      <div class="stats-grid" style="margin:20px 0;grid-template-columns:repeat(4,1fr)">
+      <!-- Stats: 6 cards full width -->
+      <div class="stats-grid" style="margin:20px 0;grid-template-columns:repeat(6,1fr)">
         <div class="stat-card">
           <div class="stat-icon" style="border-color:#64748B"></div>
           <div><div class="stat-value"><span data-count="${total}">0</span></div><div class="stat-label">Всего задач</div></div>
@@ -4355,7 +4544,15 @@ async function renderEmployeeProfile(userId) {
           <div><div class="stat-value"><span data-count="${done}">0</span></div><div class="stat-label">Завершено</div></div>
         </div>
         <div class="stat-card">
+          <div class="stat-icon" style="border-color:#16a34a"></div>
+          <div><div class="stat-value"><span data-count="${doneOnTime}">0</span></div><div class="stat-label">В срок</div></div>
+        </div>
+        <div class="stat-card">
           <div class="stat-icon" style="border-color:#D97706"></div>
+          <div><div class="stat-value"><span data-count="${doneLate}">0</span></div><div class="stat-label">С опозданием</div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="border-color:#6366f1"></div>
           <div><div class="stat-value"><span data-count="${inProg}">0</span></div><div class="stat-label">В работе</div></div>
         </div>
         <div class="stat-card">
@@ -8464,6 +8661,13 @@ function closeWelcomeModal() {
   const overlay = document.getElementById('welcome-modal-overlay');
   if (overlay) overlay.remove();
 }
+
+// ─── Offline detection ───────────────────────────────────────────────────────
+window.addEventListener('offline', () => toast('Нет соединения с сервером', 'error'));
+window.addEventListener('online', () => {
+  toast('Соединение восстановлено', 'success');
+  refreshCurrentPage();
+});
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 if (state.token && state.user) {

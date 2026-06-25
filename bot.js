@@ -66,8 +66,18 @@ function sendTelegramNotification(telegramId, message) {
   });
 }
 
+function sendTelegramDocument(telegramId, buffer, filename, caption) {
+  if (!bot || !telegramId) return;
+  bot.sendDocument(
+    telegramId,
+    buffer,
+    { caption: caption || '📊 Отчёт MindsBar' },
+    { filename: filename || 'report.pdf', contentType: 'application/pdf' }
+  ).catch(err => console.error('Telegram document error:', err.message));
+}
+
 function processWebhookUpdate(update) {
   bot?.processUpdate(update);
 }
 
-module.exports = { sendTelegramNotification, processWebhookUpdate, WEBHOOK_PATH };
+module.exports = { sendTelegramNotification, sendTelegramDocument, processWebhookUpdate, WEBHOOK_PATH };

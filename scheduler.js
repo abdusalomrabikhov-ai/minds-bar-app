@@ -2,7 +2,8 @@ const cron = require('node-cron');
 const fs   = require('fs');
 const path = require('path');
 const { db } = require('./database');
-const { sendTelegramNotification } = require('./bot');
+const { sendTelegramNotification, sendTelegramDocument } = require('./bot');
+const { buildSummaryData, generateSummaryPDF } = require('./reports');
 
 let sseClientsRef = null;
 
@@ -162,12 +163,35 @@ function checkFinanceOverdue() {
   if (overdue.length) console.log(`[Финансы] Отправлено напоминаний о задолженности: ${overdue.length}`);
 }
 
+async function sendDailyReport() {
+  try {
+    const admins = db.prepare(
+      "SELECT telegram_id FROM users WHERE role = 'admin' AND telegram_id IS NOT NULL AND telegram_id != ''"
+    ).all();
+    if (!admins.length) return;
+
+    const data  = buildSummaryData(1);
+    const buf   = await generateSummaryPDF(data);
+    const today = new Date(Date.now() + 5 * 3600000).toISOString().slice(0, 10);
+    const fname = `daily-report-${today}.pdf`;
+    const g     = data.global;
+    const eff   = g.total > 0 ? Math.round(g.done / g.total * 100) : 0;
+    const caption = `📊 *Ежедневный отчёт MindsBar*\n${today}\n\nВсего задач: *${g.total}* | Выполнено: *${g.done}* (${eff}%) | Просрочено: *${g.overdue}*`;
+
+    admins.forEach(a => sendTelegramDocument(a.telegram_id, buf, fname, caption));
+    console.log(`[Отчёт] Ежедневный PDF отправлен ${admins.length} администратору(ам)`);
+  } catch (err) {
+    console.error('[Отчёт] Ошибка генерации PDF:', err.message);
+  }
+}
+
 function startScheduler(sseClients) {
   setSseClients(sseClients);
   cron.schedule('*/30 * * * *', checkDeadlines);
-  cron.schedule('0 2 * * *', backupDB);        // ежедневно в 02:00
-  cron.schedule('0 9 * * 1', checkFinanceOverdue); // каждый понедельник в 09:00
-  cron.schedule('0 8 1 * *', copyRecurringFinance); // 1-го числа каждого месяца
+  cron.schedule('0 2 * * *', backupDB);               // 02:00 UTC
+  cron.schedule('0 9 * * 1', checkFinanceOverdue);    // Пн 09:00 UTC
+  cron.schedule('0 8 1 * *', copyRecurringFinance);   // 1-е числа 08:00 UTC
+  cron.schedule('0 15 * * *', sendDailyReport);       // 20:00 Душанбе (UTC+5 = 15:00 UTC)
   console.log('⏰ Планировщик запущен (проверка каждые 30 минут)');
 }
 

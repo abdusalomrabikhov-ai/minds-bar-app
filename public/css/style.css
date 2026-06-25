@@ -2730,3 +2730,10 @@ body.dark .welcome-info-icon { background: var(--card-bg); }
 body.dark .welcome-info-title { color: #fca5a5; }
 body.dark .welcome-info-desc { color: #fca5a5; opacity: 0.85; }
 body.dark .donut-pct-text { fill: #F1F5F9; }
+
+/* ─── Summary Report Table ─────────────────────────────────────────────────── */
+.sr-table { width: 100%; border-collapse: collapse; }
+.sr-table tbody tr { border-bottom: 1px solid var(--border); transition: background .1s; }
+.sr-table tbody tr:hover { background: var(--bg); }
+.sr-th { text-align: center; padding: 10px 8px; font-size: 12px; color: #6b7280; font-weight: 600; white-space: nowrap; }
+.sr-td-num { text-align: center; padding: 10px 8px; font-size: 13px; }
