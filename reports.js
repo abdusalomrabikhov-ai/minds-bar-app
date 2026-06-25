@@ -48,6 +48,19 @@ function buildSummaryData(days) {
         AND t.created_at >= ? AND t.deadline IS NOT NULL AND t.deadline != ''
     `).all(user.id, user.id, user.id, startISO);
 
+    const taskList = db.prepare(`
+      SELECT DISTINCT t.id, t.title, t.status, t.deadline, t.priority,
+        p.name as project_name, p.color as project_color,
+        CASE WHEN t.status != 'done' AND t.deadline IS NOT NULL AND
+          (length(t.deadline) > 10 AND t.deadline < ? OR length(t.deadline) <= 10 AND t.deadline < ?)
+        THEN 1 ELSE 0 END as is_overdue
+      FROM tasks t
+      LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
+      LEFT JOIN projects p ON p.id = t.project_id
+      WHERE (t.assignee_id = ? OR ta.user_id = ?) AND t.created_at >= ?
+      ORDER BY CASE t.status WHEN 'done' THEN 2 ELSE 1 END, t.deadline ASC NULLS LAST
+    `).all(nowISOt, todayISO, user.id, user.id, user.id, startISO);
+
     let doneOnTime = 0, doneLate = 0;
     for (const t of dlRows) {
       const isDone  = t.status === 'done' || t.my_done === 1;
@@ -71,6 +84,7 @@ function buildSummaryData(days) {
     return {
       ...user,
       stats: { assigned, done, overdue: stats?.overdue || 0, doneOnTime, doneLate, dlTotal, pctDone, pctOnTime },
+      taskList,
     };
   });
 
@@ -191,21 +205,20 @@ async function generateSummaryPDF(data) {
       doc.font('Reg').fontSize(8).fillColor('#111827')
         .text(shortName, X + 28, ry + ROW / 2 - 4, { width: 115 });
 
-      // track background
+      // track background — use clip so all segments inherit rounding
       const trackW = Math.round(s.assigned / maxA * BAR_TRACK);
-      doc.roundedRect(BAR_X, ry + 7, BAR_TRACK, 10, 3).fill('#e2e8f0');
+      doc.roundedRect(BAR_X, ry + 7, BAR_TRACK, 10, 4).fill('#e2e8f0');
 
-      // done segment (green)
-      if (s.done > 0 && trackW > 0) {
-        const doneW = Math.round(s.done / s.assigned * trackW);
-        doc.roundedRect(BAR_X, ry + 7, doneW, 10, 3).fill('#16a34a');
-      }
-      // overdue segment (red, stacked after done)
-      if (s.overdue > 0 && trackW > 0) {
-        const doneW = Math.round(s.done / s.assigned * trackW);
-        const ovW   = Math.round(s.overdue / s.assigned * trackW);
-        doc.rect(BAR_X + doneW, ry + 7, ovW, 10).fill('#dc2626');
-      }
+      // clip subsequent drawing to rounded track shape
+      doc.save();
+      doc.roundedRect(BAR_X, ry + 7, BAR_TRACK, 10, 4).clip();
+
+      const doneW = s.done > 0 && trackW > 0 ? Math.round(s.done / s.assigned * trackW) : 0;
+      const ovW   = s.overdue > 0 && trackW > 0 ? Math.round(s.overdue / s.assigned * trackW) : 0;
+      if (doneW > 0) doc.rect(BAR_X, ry + 7, doneW, 10).fill('#16a34a');
+      if (ovW   > 0) doc.rect(BAR_X + doneW, ry + 7, ovW, 10).fill('#dc2626');
+
+      doc.restore();
 
       // count badge  (starts at BAR_X + 260 + 6 = 450)
       doc.font('Bold').fontSize(7.5).fillColor('#374151')
@@ -280,11 +293,107 @@ async function generateSummaryPDF(data) {
       }
     });
 
-    // ── FOOTER ─────────────────────────────────────────────────────────────────
+    // ── FOOTER page 1 ─────────────────────────────────────────────────────────
     const footY = tY0 + 22 + TRH + employees.length * TRH + 14;
     doc.rect(0, footY, PW, 28).fill('#0f172a');
     doc.font('Reg').fontSize(7.5).fillColor('#64748b')
       .text('MindsBar TeamTask · Автоматический отчёт · Только для внутреннего использования', X, footY + 10, { width: W, align: 'center' });
+
+    // ── PAGE 2: Task details per employee ─────────────────────────────────────
+    const activeWithTasks = employees.filter(e => e.taskList && e.taskList.length > 0);
+    if (activeWithTasks.length > 0) {
+      doc.addPage({ margin: 0, size: 'A4' });
+
+      // page 2 header
+      doc.rect(0, 0, PW, 50).fill('#0f172a');
+      doc.font('Bold').fontSize(13).fillColor('#ffffff')
+        .text('MindsBar — Детальный разбор задач', X, 14);
+      doc.font('Reg').fontSize(9).fillColor('#94a3b8')
+        .text(`Период: ${dateFrom} — ${dateTo} (${periodLabel})`, X, 32);
+      doc.rect(0, 46, PW, 4).fill('#881337');
+
+      const statusLabel = s => s === 'done' ? 'Выполнено' : s === 'in_progress' ? 'В работе' : s === 'pending_review' ? 'На проверке' : 'Новая';
+      const statusColor = s => s === 'done' ? '#16a34a' : s === 'pending_review' ? '#7c3aed' : '#d97706';
+      const fmtDl = dl => {
+        if (!dl) return '';
+        const d = new Date(dl.replace(' ', 'T'));
+        return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
+      };
+      const prioColor = p => p === 'high' ? '#dc2626' : p === 'medium' ? '#d97706' : '#16a34a';
+      const prioLabel = p => p === 'high' ? 'Выс' : p === 'medium' ? 'Ср' : 'Низ';
+
+      let py = 58;
+
+      activeWithTasks.forEach(emp => {
+        if (emp.taskList.length === 0) return;
+
+        // new page if close to bottom
+        if (py > 760) { doc.addPage({ margin: 0, size: 'A4' }); py = 20; }
+
+        // employee header
+        const av = emp.avatar_color || '#6366f1';
+        doc.roundedRect(X, py, W, 26, 5).fill(av + '22');
+        doc.rect(X, py, 4, 26).fill(av);
+        doc.circle(X + 20, py + 13, 10).fill(av);
+        const ini = emp.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+        doc.font('Bold').fontSize(6.5).fillColor('#ffffff').text(ini, X + 11, py + 9, { width: 18, align: 'center' });
+        doc.font('Bold').fontSize(10).fillColor('#111827').text(emp.name, X + 36, py + 8);
+        const s = emp.stats;
+        doc.font('Reg').fontSize(8).fillColor('#6b7280')
+          .text(`${s.assigned} задач · ${s.done} выполнено · ${s.overdue} просрочено`, X + 200, py + 9);
+        py += 30;
+
+        // task rows header
+        doc.rect(X, py, W, 16).fill('#334155');
+        doc.font('Bold').fontSize(7).fillColor('#e2e8f0');
+        doc.text('Задача', X + 4, py + 5, { width: 210 });
+        doc.text('Проект', X + 218, py + 5, { width: 120 });
+        doc.text('Статус', X + 342, py + 5, { width: 80 });
+        doc.text('Дедлайн', X + 426, py + 5, { width: 70 });
+        doc.text('Приор.', X + 498, py + 5, { width: 25 });
+        py += 16;
+
+        emp.taskList.forEach((t, ti) => {
+          if (py > 800) { doc.addPage({ margin: 0, size: 'A4' }); py = 20; }
+          const rh = 18;
+          const bg = ti % 2 === 0 ? '#ffffff' : '#f8fafc';
+          doc.rect(X, py, W, rh).fill(bg).stroke('#e5e7eb');
+
+          // overdue marker
+          if (t.is_overdue) doc.rect(X, py, 3, rh).fill('#dc2626');
+
+          const title = t.title.length > 45 ? t.title.slice(0, 43) + '…' : t.title;
+          doc.font('Reg').fontSize(7.5).fillColor('#111827').text(title, X + 6, py + 5, { width: 210 });
+
+          const proj = (t.project_name || '—').length > 22 ? (t.project_name || '').slice(0, 20) + '…' : (t.project_name || '—');
+          if (t.project_color) {
+            doc.circle(X + 222, py + 9, 4).fill(t.project_color);
+            doc.font('Reg').fontSize(7).fillColor('#374151').text(proj, X + 229, py + 5, { width: 108 });
+          } else {
+            doc.font('Reg').fontSize(7).fillColor('#9ca3af').text('—', X + 218, py + 5, { width: 120 });
+          }
+
+          const sc = statusColor(t.status);
+          doc.roundedRect(X + 342, py + 4, 72, 11, 3).fill(sc + '22');
+          doc.font('Bold').fontSize(6.5).fillColor(sc).text(statusLabel(t.status), X + 342, py + 6, { width: 72, align: 'center' });
+
+          doc.font('Reg').fontSize(7.5).fillColor(t.is_overdue ? '#dc2626' : '#374151')
+            .text(fmtDl(t.deadline) || '—', X + 426, py + 5, { width: 70 });
+
+          doc.roundedRect(X + 496, py + 5, 27, 10, 2).fill(prioColor(t.priority) + '22');
+          doc.font('Bold').fontSize(6).fillColor(prioColor(t.priority))
+            .text(prioLabel(t.priority), X + 496, py + 7, { width: 27, align: 'center' });
+
+          py += rh;
+        });
+        py += 12;
+      });
+
+      // footer page 2
+      doc.rect(0, 822, PW, 20).fill('#0f172a');
+      doc.font('Reg').fontSize(7).fillColor('#475569')
+        .text('MindsBar TeamTask · Детальный отчёт по задачам · Только для внутреннего использования', X, 828, { width: W, align: 'center' });
+    }
 
     doc.end();
   });
