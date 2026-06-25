@@ -88,97 +88,199 @@ async function generateSummaryPDF(data) {
   return new Promise((resolve, reject) => {
     const PDFDocument = require('pdfkit');
     const chunks = [];
-    const doc = new PDFDocument({ margin: 45, size: 'A4' });
+    const doc = new PDFDocument({ margin: 0, size: 'A4' });
     doc.on('data', c => chunks.push(c));
     doc.on('end',  () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    doc.registerFont('Regular', FONT_REG);
-    doc.registerFont('Bold',    FONT_BOLD);
+    doc.registerFont('Reg',  FONT_REG);
+    doc.registerFont('Bold', FONT_BOLD);
 
     const { global: g, employees, periodLabel, generatedAt } = data;
-    const W   = 505; // usable width
-    const X   = 45;  // left margin
+    const PW = 595, X = 36, W = 523;
     const eff = g.total > 0 ? Math.round(g.done / g.total * 100) : 0;
 
-    // ── Header ─────────────────────────────────────────────────────────────────
-    doc.rect(0, 0, 595, 70).fill('#1e293b');
-    doc.font('Bold').fontSize(18).fillColor('#ffffff')
-      .text('MindsBar — Сводный отчёт', X, 18);
-    doc.font('Regular').fontSize(10).fillColor('#94a3b8')
-      .text(`Период: последние ${periodLabel}   ·   Сформирован: ${generatedAt.slice(0,16).replace('T',' ')}`, X, 42);
+    // helpers
+    const effColor = pct =>
+      pct === null ? '#9ca3af' : pct >= 80 ? '#16a34a' : pct >= 50 ? '#d97706' : '#dc2626';
+    const dateStr = (() => {
+      const d = new Date(generatedAt);
+      return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
+    })();
 
-    // ── Summary cards ─────────────────────────────────────────────────────────
-    const cards = [
-      { label: 'Всего задач',    value: String(g.total),    color: '#3b82f6' },
-      { label: 'Выполнено',      value: `${g.done} (${eff}%)`, color: '#22c55e' },
-      { label: 'Просрочено',     value: String(g.overdue),  color: '#ef4444' },
-      { label: 'Сотрудников',    value: String(employees.filter(e => e.stats.assigned > 0).length), color: '#8b5cf6' },
+    // ── HEADER ─────────────────────────────────────────────────────────────────
+    doc.rect(0, 0, PW, 72).fill('#0f172a');
+    // accent stripe
+    doc.rect(0, 68, PW, 4).fill('#881337');
+    // logo dot
+    doc.circle(X + 8, 28, 8).fill('#881337');
+    doc.circle(X + 8, 28, 4).fill('#ffffff');
+    doc.font('Bold').fontSize(17).fillColor('#ffffff')
+      .text('MindsBar — Сводный отчёт', X + 22, 20);
+    doc.font('Reg').fontSize(9).fillColor('#94a3b8')
+      .text(`Период: последние ${periodLabel}   ·   ${dateStr}   ·   Сформирован: ${generatedAt.slice(11,16)}`, X + 22, 42);
+
+    // ── METRIC CARDS ───────────────────────────────────────────────────────────
+    const cardDefs = [
+      { label: 'Всего задач',    value: g.total,    sub: 'за период',         color: '#3b82f6', bg: '#eff6ff' },
+      { label: 'Выполнено',      value: g.done,     sub: `${eff}% от всех`,    color: '#16a34a', bg: '#f0fdf4' },
+      { label: 'Просрочено',     value: g.overdue,  sub: 'требуют внимания',   color: '#dc2626', bg: '#fef2f2' },
+      { label: 'Сотрудников',    value: employees.filter(e => e.stats.assigned > 0).length,
+        sub: 'активны в периоде', color: '#7c3aed', bg: '#f5f3ff' },
     ];
-    const cardW = 117, cardH = 55, cardGap = 8;
-    let cx = X;
-    const cy = 82;
-    cards.forEach(card => {
-      doc.roundedRect(cx, cy, cardW, cardH, 6).fill('#f8fafc').stroke('#e2e8f0');
-      doc.rect(cx, cy, 4, cardH).fill(card.color);
-      doc.font('Bold').fontSize(20).fillColor('#111827').text(card.value, cx + 12, cy + 8, { width: cardW - 16 });
-      doc.font('Regular').fontSize(9).fillColor('#6b7280').text(card.label, cx + 12, cy + 34, { width: cardW - 16 });
-      cx += cardW + cardGap;
+    const cW = 120, cH = 66, cGap = 9;
+    let cy = 84, cx = X;
+    cardDefs.forEach(c => {
+      // card bg
+      doc.roundedRect(cx, cy, cW, cH, 8).fill(c.bg);
+      // top color bar
+      doc.roundedRect(cx, cy, cW, 4, 2).fill(c.color);
+      // value
+      doc.font('Bold').fontSize(26).fillColor(c.color)
+        .text(String(c.value), cx, cy + 12, { width: cW, align: 'center' });
+      // label
+      doc.font('Bold').fontSize(8).fillColor('#374151')
+        .text(c.label, cx, cy + 42, { width: cW, align: 'center' });
+      // sub
+      doc.font('Reg').fontSize(7).fillColor('#9ca3af')
+        .text(c.sub, cx, cy + 53, { width: cW, align: 'center' });
+      cx += cW + cGap;
     });
 
-    // ── Table ─────────────────────────────────────────────────────────────────
-    doc.font('Bold').fontSize(12).fillColor('#111827').text('По сотрудникам', X, cy + cardH + 18);
+    // ── CHART SECTION ──────────────────────────────────────────────────────────
+    const chartY0 = cy + cH + 20;
 
-    const tY    = cy + cardH + 38;
-    const COL   = { name: X, asgn: 230, done: 285, over: 340, pctD: 390, pctT: 445 };
-    const COL_W = { name: 175, asgn: 50, done: 50, over: 50, pctD: 50, pctT: 55 };
-    const ROW_H = 22;
+    // section header band
+    doc.rect(X, chartY0, W, 22).fill('#1e293b');
+    doc.font('Bold').fontSize(9).fillColor('#ffffff')
+      .text('ГРАФИК ЭФФЕКТИВНОСТИ', X + 10, chartY0 + 7);
+    // legend
+    const legX = X + W - 195;
+    const legY = chartY0 + 7;
+    [[' Выполнено','#16a34a'],[' Просрочено','#dc2626'],[' Остальные','#cbd5e1']].forEach(([lbl, col], i) => {
+      const lx = legX + i * 65;
+      doc.rect(lx, legY + 2, 7, 7).fill(col);
+      doc.font('Reg').fontSize(7).fillColor('#ffffff').text(lbl, lx + 9, legY + 1, { width: 54 });
+    });
 
-    // header row
-    doc.rect(X, tY, W, ROW_H).fill('#1e293b');
-    doc.font('Bold').fontSize(8.5).fillColor('#ffffff');
-    const headers = [
-      ['Сотрудник',   COL.name, COL_W.name],
-      ['Назначено',   COL.asgn, COL_W.asgn],
-      ['Выполнено',   COL.done, COL_W.done],
-      ['Просрочено',  COL.over, COL_W.over],
-      ['% выполн.',   COL.pctD, COL_W.pctD],
-      ['% в срок',    COL.pctT, COL_W.pctT],
-    ];
-    headers.forEach(([label, x, w]) =>
-      doc.text(label, x + 4, tY + 7, { width: w, align: x === COL.name ? 'left' : 'center' })
+    const active = employees.filter(e => e.stats.assigned > 0)
+      .sort((a, b) => b.stats.assigned - a.stats.assigned);
+    const maxA = Math.max(...active.map(e => e.stats.assigned), 1);
+    // BAR_X=184, BAR_TRACK=260, count(32)+gap(6)+badge(34) = 72 → right edge 184+260+72=516 < 559 ✓
+    const BAR_X = X + 148, BAR_TRACK = 260, ROW = 24;
+    let ry = chartY0 + 22;
+
+    active.forEach((emp, i) => {
+      const s = emp.stats;
+      const bg = i % 2 === 0 ? '#ffffff' : '#f8fafc';
+      doc.rect(X, ry, W, ROW).fill(bg);
+
+      // avatar circle
+      const av = emp.avatar_color || '#6366f1';
+      doc.circle(X + 13, ry + ROW / 2, 10).fill(av);
+      const ini = emp.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+      doc.font('Bold').fontSize(6.5).fillColor('#ffffff')
+        .text(ini, X + 4, ry + ROW / 2 - 4, { width: 18, align: 'center' });
+
+      // name
+      const shortName = emp.name.length > 20 ? emp.name.slice(0, 18) + '…' : emp.name;
+      doc.font('Reg').fontSize(8).fillColor('#111827')
+        .text(shortName, X + 28, ry + ROW / 2 - 4, { width: 115 });
+
+      // track background
+      const trackW = Math.round(s.assigned / maxA * BAR_TRACK);
+      doc.roundedRect(BAR_X, ry + 7, BAR_TRACK, 10, 3).fill('#e2e8f0');
+
+      // done segment (green)
+      if (s.done > 0 && trackW > 0) {
+        const doneW = Math.round(s.done / s.assigned * trackW);
+        doc.roundedRect(BAR_X, ry + 7, doneW, 10, 3).fill('#16a34a');
+      }
+      // overdue segment (red, stacked after done)
+      if (s.overdue > 0 && trackW > 0) {
+        const doneW = Math.round(s.done / s.assigned * trackW);
+        const ovW   = Math.round(s.overdue / s.assigned * trackW);
+        doc.rect(BAR_X + doneW, ry + 7, ovW, 10).fill('#dc2626');
+      }
+
+      // count badge  (starts at BAR_X + 260 + 6 = 450)
+      doc.font('Bold').fontSize(7.5).fillColor('#374151')
+        .text(`${s.done}/${s.assigned}`, BAR_X + BAR_TRACK + 6, ry + ROW / 2 - 4, { width: 34 });
+
+      // efficiency badge (starts at 450+34+2 = 486, width 32 → ends at 518 < 559 ✓)
+      const pct = s.pctDone ?? 0;
+      const col = effColor(pct);
+      doc.roundedRect(BAR_X + BAR_TRACK + 42, ry + 6, 32, 13, 3).fill(col);
+      doc.font('Bold').fontSize(7).fillColor('#ffffff')
+        .text(`${pct}%`, BAR_X + BAR_TRACK + 42, ry + 9, { width: 32, align: 'center' });
+
+      ry += ROW;
+    });
+
+    if (active.length === 0) {
+      doc.font('Reg').fontSize(10).fillColor('#9ca3af')
+        .text('Нет задач за выбранный период', X, ry + 10, { width: W, align: 'center' });
+      ry += 30;
+    }
+
+    // ── TABLE SECTION ──────────────────────────────────────────────────────────
+    const tY0 = ry + 16;
+
+    doc.rect(X, tY0, W, 22).fill('#1e293b');
+    doc.font('Bold').fontSize(9).fillColor('#ffffff')
+      .text('ДЕТАЛЬНАЯ ТАБЛИЦА', X + 10, tY0 + 7);
+
+    const COL  = { name: X,     asgn: X+155, done: X+205, over: X+255, pctD: X+308, pctT: X+375, bar: X+425 };
+    const CW   = { name: 150,   asgn: 48,    done: 48,    over: 50,    pctD: 64,    pctT: 64,    bar: 70   };
+    const TRH  = 19;
+
+    // col headers
+    doc.rect(X, tY0 + 22, W, TRH).fill('#334155');
+    doc.font('Bold').fontSize(7.5).fillColor('#e2e8f0');
+    [['Сотрудник',COL.name,CW.name,'left'],['Назначено',COL.asgn,CW.asgn,'center'],
+     ['Выполнено',COL.done,CW.done,'center'],['Просрочено',COL.over,CW.over,'center'],
+     ['% выполн.',COL.pctD,CW.pctD,'center'],['% в срок',COL.pctT,CW.pctT,'center'],
+     ['Эффект.',COL.bar,CW.bar,'center'],
+    ].forEach(([lbl,x,w,align]) =>
+      doc.text(lbl, x + 3, tY0 + 28, { width: w, align })
     );
 
     // data rows
     employees.forEach((emp, i) => {
-      const s  = emp.stats;
-      const ry = tY + ROW_H + i * ROW_H;
-      doc.rect(X, ry, W, ROW_H).fill(i % 2 === 0 ? '#ffffff' : '#f8fafc').stroke('#e5e7eb');
+      const s   = emp.stats;
+      const dY  = tY0 + 22 + TRH + i * TRH;
+      doc.rect(X, dY, W, TRH).fill(i % 2 === 0 ? '#ffffff' : '#f8fafc').stroke('#e5e7eb');
 
-      doc.font('Regular').fontSize(8.5).fillColor('#111827')
-        .text(emp.name.length > 28 ? emp.name.slice(0, 26) + '…' : emp.name, COL.name + 4, ry + 7, { width: COL_W.name });
-
-      doc.text(String(s.assigned), COL.asgn + 4, ry + 7, { width: COL_W.asgn, align: 'center' });
-
+      doc.font('Reg').fontSize(7.5).fillColor('#111827')
+        .text(emp.name.length > 22 ? emp.name.slice(0,20)+'…' : emp.name, COL.name + 3, dY + 6, { width: CW.name });
+      doc.fillColor('#374151')
+        .text(String(s.assigned), COL.asgn + 3, dY + 6, { width: CW.asgn, align: 'center' });
       doc.fillColor(s.done > 0 ? '#15803d' : '#374151')
-        .text(String(s.done), COL.done + 4, ry + 7, { width: COL_W.done, align: 'center' });
-
+        .text(String(s.done), COL.done + 3, dY + 6, { width: CW.done, align: 'center' });
       doc.fillColor(s.overdue > 0 ? '#dc2626' : '#374151')
-        .text(String(s.overdue), COL.over + 4, ry + 7, { width: COL_W.over, align: 'center' });
+        .text(String(s.overdue), COL.over + 3, dY + 6, { width: CW.over, align: 'center' });
 
-      const pDoneColor = s.pctDone === null ? '#9ca3af' : s.pctDone >= 80 ? '#15803d' : s.pctDone >= 50 ? '#d97706' : '#dc2626';
-      doc.fillColor(pDoneColor)
-        .text(s.pctDone !== null ? `${s.pctDone}%` : '—', COL.pctD + 4, ry + 7, { width: COL_W.pctD, align: 'center' });
+      const pdC = effColor(s.pctDone);
+      doc.font('Bold').fontSize(7.5).fillColor(pdC)
+        .text(s.pctDone !== null ? `${s.pctDone}%` : '—', COL.pctD + 3, dY + 6, { width: CW.pctD, align: 'center' });
+      const ptC = effColor(s.pctOnTime);
+      doc.fillColor(ptC)
+        .text(s.pctOnTime !== null ? `${s.pctOnTime}%` : '—', COL.pctT + 3, dY + 6, { width: CW.pctT, align: 'center' });
 
-      const pTimeColor = s.pctOnTime === null ? '#9ca3af' : s.pctOnTime >= 80 ? '#15803d' : s.pctOnTime >= 50 ? '#d97706' : '#dc2626';
-      doc.fillColor(pTimeColor)
-        .text(s.pctOnTime !== null ? `${s.pctOnTime}%` : '—', COL.pctT + 4, ry + 7, { width: COL_W.pctT, align: 'center' });
+      // mini efficiency bar
+      const pct = s.pctDone ?? 0;
+      const barMaxW = CW.bar - 6;
+      doc.roundedRect(COL.bar + 3, dY + 6, barMaxW, 7, 2).fill('#e2e8f0');
+      if (pct > 0) {
+        doc.roundedRect(COL.bar + 3, dY + 6, Math.round(pct / 100 * barMaxW), 7, 2).fill(effColor(pct));
+      }
     });
 
-    // footer
-    const footY = tY + ROW_H + employees.length * ROW_H + 20;
-    doc.font('Regular').fontSize(8).fillColor('#9ca3af')
-      .text('MindsBar TeamTask · Автоматический отчёт', X, footY, { width: W, align: 'center' });
+    // ── FOOTER ─────────────────────────────────────────────────────────────────
+    const footY = tY0 + 22 + TRH + employees.length * TRH + 14;
+    doc.rect(0, footY, PW, 28).fill('#0f172a');
+    doc.font('Reg').fontSize(7.5).fillColor('#64748b')
+      .text('MindsBar TeamTask · Автоматический отчёт · Только для внутреннего использования', X, footY + 10, { width: W, align: 'center' });
 
     doc.end();
   });
