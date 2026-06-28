@@ -442,6 +442,18 @@ function logout() {
   location.reload();
 }
 
+// ─── Mobile Sidebar ───────────────────────────────────────────────────────────
+function openMobileSidebar() {
+  document.getElementById('sidebar').classList.add('mobile-open');
+  document.getElementById('sidebar-overlay').classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+function closeMobileSidebar() {
+  document.getElementById('sidebar').classList.remove('mobile-open');
+  document.getElementById('sidebar-overlay').classList.remove('active');
+  document.body.style.overflow = '';
+}
+
 // ─── Permissions ──────────────────────────────────────────────────────────────
 function can(perm) {
   if (state.user?.role === 'admin') return true;
@@ -765,6 +777,7 @@ function navigateTo(page, projectId = null, pushHistory = true) {
   document.querySelectorAll('.mobile-nav-item[data-page]').forEach(el => {
     el.classList.toggle('active', el.dataset.page === page);
   });
+  closeMobileSidebar();
 
   const project = projectId ? state.projects.find(p => String(p.id) === String(projectId)) : null;
   document.getElementById('page-title').textContent = project ? project.name : (PAGE_TITLES[page] || page);
@@ -4452,13 +4465,29 @@ function _svgLineChart(points, width, height, color = '#881337', fill = '#fdf2f8
     return `<text x="${xs[i].toFixed(1)}" y="${(pad.t+H+14).toFixed(1)}" text-anchor="middle" font-size="9" fill="var(--text-muted)">${p.label}</text>`;
   }).join('');
 
-  return `<svg width="${width}" height="${height}" style="width:100%;height:auto;overflow:visible">
-    ${yTicks}
-    <path d="${areaD}" fill="${fill}" opacity="0.5"/>
-    <path d="${pathD}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-    ${points.map((p, i) => `<circle cx="${xs[i].toFixed(1)}" cy="${ys[i].toFixed(1)}" r="3" fill="${color}" stroke="white" stroke-width="1.5"/>`).join('')}
-    ${xLabels}
-  </svg>`;
+  const tooltipId = 'svgtt_' + Math.random().toString(36).slice(2,7);
+  const dots = points.map((p, i) => {
+    const cx = xs[i].toFixed(1), cy = ys[i].toFixed(1);
+    const label = p.tooltip || `${p.label}: ${p.v}`;
+    return `
+      <g class="svg-dot-group" style="cursor:pointer"
+         onmouseenter="document.getElementById('${tooltipId}').style.display='block';document.getElementById('${tooltipId}').innerHTML='${label.replace(/'/g,'&#39;')}';document.getElementById('${tooltipId}').style.left=(event.offsetX+12)+'px';document.getElementById('${tooltipId}').style.top=(event.offsetY-10)+'px'"
+         onmouseleave="document.getElementById('${tooltipId}').style.display='none'">
+        <circle cx="${cx}" cy="${cy}" r="12" fill="transparent"/>
+        <circle cx="${cx}" cy="${cy}" r="3" fill="${color}" stroke="white" stroke-width="1.5"/>
+      </g>`;
+  }).join('');
+
+  return `<div style="position:relative">
+    <div id="${tooltipId}" style="display:none;position:absolute;background:#1e293b;color:#f1f5f9;font-size:11px;font-weight:600;padding:5px 9px;border-radius:7px;pointer-events:none;white-space:nowrap;z-index:99;box-shadow:0 2px 8px rgba(0,0,0,0.18)"></div>
+    <svg width="${width}" height="${height}" style="width:100%;height:auto;overflow:visible">
+      ${yTicks}
+      <path d="${areaD}" fill="${fill}" opacity="0.5"/>
+      <path d="${pathD}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      ${dots}
+      ${xLabels}
+    </svg>
+  </div>`;
 }
 
 function _svgBarGroup(weeks, width, height) {
@@ -4539,7 +4568,7 @@ async function loadAnalyticsReport(days) {
     const trendEff = totalCreated > 0 ? Math.round(totalDone / totalCreated * 100) : 0;
 
     const burndownSvg = _svgLineChart(
-      d.burndown.map(b => ({ label: b.label, v: b.open })),
+      d.burndown.map(b => ({ label: b.label, v: b.open, tooltip: `${b.label}: ${b.open} открытых задач` })),
       560, 160, '#881337', '#fdf2f8'
     );
     const trendSvg = _svgBarGroup(d.weeks, 560, 160);

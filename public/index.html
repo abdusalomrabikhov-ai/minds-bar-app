@@ -186,9 +186,15 @@
     </div>
   </aside>
 
+  <!-- Sidebar overlay for mobile -->
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeMobileSidebar()"></div>
+
   <!-- Main -->
   <main id="main-content">
     <div class="topbar">
+      <button class="mobile-burger" id="mobile-burger-btn" onclick="openMobileSidebar()" title="Меню">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
       <div class="topbar-title" id="page-title">Дашборд</div>
       <div class="topbar-actions">
         <button class="btn-notif gs-trigger-btn" onclick="openGlobalSearch()" title="Глобальный поиск (⌘K)">
