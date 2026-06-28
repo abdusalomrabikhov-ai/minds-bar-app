@@ -5,6 +5,7 @@ const rateLimit = require('express-rate-limit');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { db, initDB } = require('./database');
 const { sendTelegramNotification, processWebhookUpdate, WEBHOOK_PATH } = require('./bot');
 const { startScheduler } = require('./scheduler');
@@ -128,6 +129,42 @@ app.post('/api/auth/login', loginLimiter, (req, res) => {
 app.get('/api/auth/me', auth, (req, res) => {
   const user = db.prepare('SELECT id, name, email, role, avatar_color, avatar_img, telegram_id, permissions FROM users WHERE id = ?').get(req.user.id);
   res.json({ ...user, permissions: parsePerms(user.permissions) });
+});
+
+const resetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Слишком много попыток. Попробуйте через 15 минут.' },
+});
+
+app.post('/api/auth/reset-request', resetLimiter, (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email обязателен' });
+  const user = db.prepare('SELECT id, telegram_id FROM users WHERE email = ?').get(email.toLowerCase().trim());
+  if (!user || !user.telegram_id) {
+    // Don't reveal whether user exists; just say no Telegram
+    return res.status(400).json({ error: 'Telegram не привязан к этому аккаунту. Обратитесь к администратору.' });
+  }
+  const code = String(crypto.randomInt(100000, 999999));
+  const expires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  db.prepare('UPDATE users SET reset_code = ?, reset_code_expires = ? WHERE id = ?').run(code, expires, user.id);
+  sendTelegramNotification(user.telegram_id, `🔐 Ваш код для сброса пароля: *${code}*\n\nКод действителен 15 минут. Никому не передавайте его.`);
+  res.json({ ok: true });
+});
+
+app.post('/api/auth/reset-confirm', resetLimiter, (req, res) => {
+  const { email, code, password } = req.body;
+  if (!email || !code || !password) return res.status(400).json({ error: 'Все поля обязательны' });
+  if (password.length < 6) return res.status(400).json({ error: 'Пароль минимум 6 символов' });
+  const user = db.prepare('SELECT id, reset_code, reset_code_expires FROM users WHERE email = ?').get(email.toLowerCase().trim());
+  if (!user || !user.reset_code) return res.status(400).json({ error: 'Код недействителен' });
+  if (user.reset_code !== String(code).trim()) return res.status(400).json({ error: 'Неверный код' });
+  if (new Date(user.reset_code_expires) < new Date()) return res.status(400).json({ error: 'Код истёк. Запросите новый.' });
+  const hashed = bcrypt.hashSync(password, 10);
+  db.prepare('UPDATE users SET password = ?, reset_code = NULL, reset_code_expires = NULL WHERE id = ?').run(hashed, user.id);
+  res.json({ ok: true });
 });
 
 // ─── Projects ─────────────────────────────────────────────────────────────────
@@ -442,8 +479,38 @@ function getTaskQuery(extraWhere = '', params = []) {
   `).all(...params);
 }
 
+function getTaskCount(extraWhere = '', params = []) {
+  return db.prepare(`
+    SELECT COUNT(*) as cnt FROM tasks t
+    WHERE 1=1 ${extraWhere}
+  `).get(...params).cnt;
+}
+
+function getTaskQueryPaged(extraWhere = '', params = [], limit = 20, offset = 0) {
+  return db.prepare(`
+    SELECT t.*,
+      u.name as assignee_name, u.avatar_color as assignee_color, u.avatar_img as assignee_img,
+      p.name as project_name, p.color as project_color,
+      creator.name as creator_name
+    FROM tasks t
+    LEFT JOIN users u ON u.id = t.assignee_id
+    LEFT JOIN projects p ON p.id = t.project_id
+    LEFT JOIN users creator ON creator.id = t.created_by
+    WHERE 1=1 ${extraWhere}
+    ORDER BY
+      CASE WHEN t.status = 'done' THEN 1 ELSE 0 END ASC,
+      t.deadline ASC NULLS LAST,
+      t.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, limit, offset);
+}
+
 app.get('/api/tasks', auth, (req, res) => {
   const { project_id, assignee_id, status, my_tasks } = req.query;
+  const page  = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = 20;
+  const offset = (page - 1) * limit;
+
   let where = '';
   const params = [];
 
@@ -469,7 +536,14 @@ app.get('/api/tasks', auth, (req, res) => {
   }
   if (status) { where += ' AND t.status = ?'; params.push(status); }
 
-  res.json(enrichTasksWithAssignees(getTaskQuery(where, params)));
+  if (req.query.all === '1') {
+    // Legacy: return flat array for dashboard, reports, employee page, etc.
+    return res.json(enrichTasksWithAssignees(getTaskQuery(where, params)));
+  }
+
+  const total = getTaskCount(where, params);
+  const tasks = enrichTasksWithAssignees(getTaskQueryPaged(where, params, limit, offset));
+  res.json({ tasks, total, page, pages: Math.ceil(total / limit) || 1 });
 });
 
 function calcNextDeadline(deadline, recurrence) {
@@ -1084,7 +1158,23 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
     return { ...user, stats: { ...baseStats, doneOnTime, doneLate, dlTotal, score }, byProject };
   });
 
-  res.json(report);
+  // Global unique task counts — no double-counting of multi-assignee tasks
+  const globalWhere = month ? "WHERE strftime('%Y-%m', t.created_at) = ?" : '';
+  const globalParams = month ? [nowLocal, todayLocal, month] : [nowLocal, todayLocal];
+  const globalStats = db.prepare(`
+    SELECT
+      COUNT(DISTINCT t.id) as total,
+      COALESCE(SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END), 0) as done,
+      COALESCE(SUM(CASE WHEN t.status = 'in_progress' THEN 1 ELSE 0 END), 0) as in_progress,
+      COALESCE(SUM(CASE WHEN t.status = 'new' THEN 1 ELSE 0 END), 0) as new_count,
+      COALESCE(SUM(CASE WHEN t.status != 'done' AND t.deadline IS NOT NULL AND
+        (length(t.deadline) > 10 AND t.deadline < ? OR length(t.deadline) <= 10 AND t.deadline < ?)
+      THEN 1 ELSE 0 END), 0) as overdue
+    FROM tasks t
+    ${globalWhere}
+  `).get(...globalParams);
+
+  res.json({ global: globalStats, employees: report });
 });
 
 // ─── Summary Report (period-based) ───────────────────────────────────────────
@@ -1589,6 +1679,210 @@ app.delete('/api/finance/cleanup-future', auth, requirePerm('manage_finance'), (
 // History
 app.get('/api/finance/:id/history', auth, requirePerm('manage_finance'), (req, res) => {
   res.json(db.prepare('SELECT * FROM finance_history WHERE finance_id=? ORDER BY created_at DESC LIMIT 30').all(req.params.id));
+});
+
+// ─── Payment Checklist ────────────────────────────────────────────────────────
+
+// GET all items with check state for a given month
+app.get('/api/payment-checklist/:month', auth, requirePerm('manage_finance'), (req, res) => {
+  const { month } = req.params;
+  const rows = db.prepare(`
+    SELECT i.id, i.name, i.order_idx,
+      COALESCE(c.checked, 0)       as checked,
+      c.checked_at,
+      c.checked_by_name
+    FROM payment_checklist_items i
+    LEFT JOIN payment_checklist_checks c ON c.item_id = i.id AND c.month = ?
+    ORDER BY i.order_idx, i.id
+  `).all(month);
+  res.json(rows);
+});
+
+// POST add a new checklist item
+app.post('/api/payment-checklist/items', auth, requirePerm('manage_finance'), (req, res) => {
+  const { name } = req.body;
+  if (!name?.trim()) return res.status(400).json({ error: 'Название обязательно' });
+  const maxOrder = db.prepare('SELECT COALESCE(MAX(order_idx),0)+1 as n FROM payment_checklist_items').get().n;
+  const result = db.prepare('INSERT INTO payment_checklist_items (name, order_idx) VALUES (?, ?)').run(name.trim(), maxOrder);
+  res.json(db.prepare('SELECT * FROM payment_checklist_items WHERE id = ?').get(result.lastInsertRowid));
+});
+
+// DELETE a checklist item (cascade removes all checks)
+app.delete('/api/payment-checklist/items/:id', auth, requirePerm('manage_finance'), (req, res) => {
+  db.prepare('DELETE FROM payment_checklist_items WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// PATCH rename a checklist item
+app.patch('/api/payment-checklist/items/:id', auth, requirePerm('manage_finance'), (req, res) => {
+  const { name } = req.body;
+  if (!name?.trim()) return res.status(400).json({ error: 'Название обязательно' });
+  db.prepare('UPDATE payment_checklist_items SET name = ? WHERE id = ?').run(name.trim(), req.params.id);
+  res.json(db.prepare('SELECT * FROM payment_checklist_items WHERE id = ?').get(req.params.id));
+});
+
+// PATCH toggle check state for item in a month
+app.patch('/api/payment-checklist/:month/:itemId', auth, requirePerm('manage_finance'), (req, res) => {
+  const { month, itemId } = req.params;
+  const { checked } = req.body;
+  if (checked) {
+    const now = new Date(Date.now() + 5*3600000).toISOString().slice(0,16);
+    db.prepare(`
+      INSERT INTO payment_checklist_checks (item_id, month, checked, checked_at, checked_by_id, checked_by_name)
+      VALUES (?, ?, 1, ?, ?, ?)
+      ON CONFLICT(item_id, month) DO UPDATE SET checked=1, checked_at=excluded.checked_at,
+        checked_by_id=excluded.checked_by_id, checked_by_name=excluded.checked_by_name
+    `).run(itemId, month, now, req.user.id, req.user.name);
+  } else {
+    db.prepare('DELETE FROM payment_checklist_checks WHERE item_id=? AND month=?').run(itemId, month);
+  }
+  res.json({ ok: true });
+});
+
+// ─── HR Module ────────────────────────────────────────────────────────────────
+
+// GET all employees
+app.get('/api/hr/employees', auth, requirePerm('manage_team'), (req, res) => {
+  const { status } = req.query;
+  let q = 'SELECT * FROM hr_employees';
+  const params = [];
+  if (status) { q += ' WHERE status = ?'; params.push(status); }
+  q += ' ORDER BY status ASC, hire_date DESC';
+  res.json(db.prepare(q).all(...params));
+});
+
+// POST create employee
+app.post('/api/hr/employees', auth, requirePerm('manage_team'), (req, res) => {
+  const { full_name, position='', hire_date='', termination_date='', termination_reason='', salary=0, status='active', notes='', user_id=null } = req.body;
+  if (!full_name?.trim()) return res.status(400).json({ error: 'ФИО обязательно' });
+  const now = new Date(Date.now()+5*3600000).toISOString().slice(0,16);
+  const result = db.prepare(`
+    INSERT INTO hr_employees (user_id,full_name,position,hire_date,termination_date,termination_reason,salary,status,notes,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+  `).run(user_id||null, full_name.trim(), position, hire_date||null, termination_date||null, termination_reason, +salary||0, status, notes, now, now);
+  const emp = db.prepare('SELECT * FROM hr_employees WHERE id=?').get(result.lastInsertRowid);
+  // Seed initial position and salary history
+  if (position) db.prepare('INSERT INTO hr_position_history (employee_id,position,start_date,notes) VALUES (?,?,?,?)').run(emp.id, position, hire_date||now.slice(0,10), 'Начальная должность');
+  if (+salary > 0) db.prepare('INSERT INTO hr_salary_history (employee_id,salary,effective_date,notes) VALUES (?,?,?,?)').run(emp.id, +salary, hire_date||now.slice(0,10), 'Начальный оклад');
+  res.json(emp);
+});
+
+// GET single employee with history
+app.get('/api/hr/employees/:id', auth, requirePerm('manage_team'), (req, res) => {
+  const emp = db.prepare('SELECT * FROM hr_employees WHERE id=?').get(req.params.id);
+  if (!emp) return res.status(404).json({ error: 'Не найдено' });
+  emp.positions = db.prepare('SELECT * FROM hr_position_history WHERE employee_id=? ORDER BY start_date DESC').all(emp.id);
+  emp.salaries  = db.prepare('SELECT * FROM hr_salary_history WHERE employee_id=? ORDER BY effective_date DESC').all(emp.id);
+  res.json(emp);
+});
+
+// PATCH update employee
+app.patch('/api/hr/employees/:id', auth, requirePerm('manage_team'), (req, res) => {
+  const { full_name, position, hire_date, termination_date, termination_reason, salary, status, notes, user_id } = req.body;
+  const emp = db.prepare('SELECT * FROM hr_employees WHERE id=?').get(req.params.id);
+  if (!emp) return res.status(404).json({ error: 'Не найдено' });
+  const now = new Date(Date.now()+5*3600000).toISOString().slice(0,16);
+  db.prepare(`UPDATE hr_employees SET
+    full_name=?, position=?, hire_date=?, termination_date=?, termination_reason=?,
+    salary=?, status=?, notes=?, user_id=?, updated_at=? WHERE id=?
+  `).run(
+    full_name??emp.full_name, position??emp.position, hire_date??emp.hire_date,
+    termination_date??emp.termination_date, termination_reason??emp.termination_reason,
+    salary!=null?+salary:emp.salary, status??emp.status, notes??emp.notes,
+    user_id!==undefined?user_id:emp.user_id, now, emp.id
+  );
+  res.json(db.prepare('SELECT * FROM hr_employees WHERE id=?').get(emp.id));
+});
+
+// DELETE employee
+app.delete('/api/hr/employees/:id', auth, requirePerm('manage_team'), (req, res) => {
+  db.prepare('DELETE FROM hr_employees WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// POST add position history entry
+app.post('/api/hr/employees/:id/positions', auth, requirePerm('manage_team'), (req, res) => {
+  const { position, start_date, end_date='', notes='' } = req.body;
+  if (!position?.trim() || !start_date) return res.status(400).json({ error: 'Должность и дата обязательны' });
+  const result = db.prepare('INSERT INTO hr_position_history (employee_id,position,start_date,end_date,notes) VALUES (?,?,?,?,?)').run(req.params.id, position.trim(), start_date, end_date||null, notes);
+  // Update current position on employee record
+  db.prepare('UPDATE hr_employees SET position=?, updated_at=? WHERE id=?').run(position.trim(), new Date(Date.now()+5*3600000).toISOString().slice(0,16), req.params.id);
+  res.json(db.prepare('SELECT * FROM hr_position_history WHERE id=?').get(result.lastInsertRowid));
+});
+
+// DELETE position history entry
+app.delete('/api/hr/positions/:id', auth, requirePerm('manage_team'), (req, res) => {
+  db.prepare('DELETE FROM hr_position_history WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// POST add salary history entry
+app.post('/api/hr/employees/:id/salaries', auth, requirePerm('manage_team'), (req, res) => {
+  const { salary, effective_date, notes='' } = req.body;
+  if (!salary || !effective_date) return res.status(400).json({ error: 'Оклад и дата обязательны' });
+  const result = db.prepare('INSERT INTO hr_salary_history (employee_id,salary,effective_date,notes) VALUES (?,?,?,?)').run(req.params.id, +salary, effective_date, notes);
+  // Update current salary on employee record
+  db.prepare('UPDATE hr_employees SET salary=?, updated_at=? WHERE id=?').run(+salary, new Date(Date.now()+5*3600000).toISOString().slice(0,16), req.params.id);
+  res.json(db.prepare('SELECT * FROM hr_salary_history WHERE id=?').get(result.lastInsertRowid));
+});
+
+// DELETE salary history entry
+app.delete('/api/hr/salaries/:id', auth, requirePerm('manage_team'), (req, res) => {
+  db.prepare('DELETE FROM hr_salary_history WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ─── Workload ─────────────────────────────────────────────────────────────────
+app.get('/api/workload', auth, (req, res) => {
+  try {
+    const users = db.prepare('SELECT id, name, avatar_color, avatar_img FROM users ORDER BY name').all();
+    const projects = db.prepare('SELECT id, name, color FROM projects WHERE archived = 0 ORDER BY name').all();
+    const memberships = db.prepare('SELECT user_id, project_id FROM project_members').all();
+    const taskCounts = db.prepare(`
+      SELECT user_id, COALESCE(project_id, 0) as project_id,
+        COUNT(*) as total,
+        SUM(done_flag) as done,
+        SUM(active_flag) as active
+      FROM (
+        SELECT ta.user_id, t.project_id,
+          CASE WHEN t.status='done' OR ta.done=1 THEN 1 ELSE 0 END as done_flag,
+          CASE WHEN t.status='in_progress' THEN 1 ELSE 0 END as active_flag
+        FROM task_assignees ta JOIN tasks t ON t.id = ta.task_id
+        UNION ALL
+        SELECT t.assignee_id as user_id, t.project_id,
+          CASE WHEN t.status='done' THEN 1 ELSE 0 END as done_flag,
+          CASE WHEN t.status='in_progress' THEN 1 ELSE 0 END as active_flag
+        FROM tasks t
+        WHERE t.assignee_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM task_assignees ta2 WHERE ta2.task_id = t.id)
+      )
+      GROUP BY user_id, project_id
+    `).all();
+    res.json({ users, projects, memberships, taskCounts });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/user-projects', auth, (req, res) => {
+  try {
+    const rows = db.prepare('SELECT pm.user_id, pm.project_id, p.name, p.color FROM project_members pm JOIN projects p ON p.id = pm.project_id').all();
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/user-projects', auth, requirePerm('manage_team'), (req, res) => {
+  try {
+    const { user_id, project_id } = req.body;
+    db.prepare('INSERT OR IGNORE INTO project_members (user_id, project_id) VALUES (?, ?)').run(user_id, project_id);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/user-projects', auth, requirePerm('manage_team'), (req, res) => {
+  try {
+    const { user_id, project_id } = req.body;
+    db.prepare('DELETE FROM project_members WHERE user_id=? AND project_id=?').run(user_id, project_id);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── Feedback (anonymous) ─────────────────────────────────────────────────────

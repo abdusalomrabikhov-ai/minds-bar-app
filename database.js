@@ -298,6 +298,70 @@ function initDB() {
     created_at TEXT DEFAULT (datetime('now'))
   )`); } catch {}
 
+  try { db.exec(`CREATE TABLE IF NOT EXISTS payment_checklist_items (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    order_idx  INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+
+  try { db.exec(`CREATE TABLE IF NOT EXISTS payment_checklist_checks (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id         INTEGER NOT NULL REFERENCES payment_checklist_items(id) ON DELETE CASCADE,
+    month           TEXT NOT NULL,
+    checked         INTEGER DEFAULT 0,
+    checked_at      TEXT,
+    checked_by_id   INTEGER,
+    checked_by_name TEXT,
+    UNIQUE(item_id, month)
+  )`); } catch {}
+
+  // Seed default checklist items if table is empty
+  const checklistCount = db.prepare('SELECT COUNT(*) as c FROM payment_checklist_items').get();
+  if (checklistCount.c === 0) {
+    const insert = db.prepare('INSERT INTO payment_checklist_items (name, order_idx) VALUES (?, ?)');
+    ['Электроэнергия', 'Вода', 'Интернет', 'Вывоз мусора', 'Аренда'].forEach((name, i) => insert.run(name, i));
+  }
+
+  // ── HR Module ────────────────────────────────────────────────────────────────
+  try { db.exec(`CREATE TABLE IF NOT EXISTS hr_employees (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id            INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    full_name          TEXT NOT NULL,
+    position           TEXT NOT NULL DEFAULT '',
+    hire_date          TEXT,
+    termination_date   TEXT,
+    termination_reason TEXT DEFAULT '',
+    salary             REAL DEFAULT 0,
+    status             TEXT DEFAULT 'active',
+    notes              TEXT DEFAULT '',
+    created_at         TEXT DEFAULT (datetime('now')),
+    updated_at         TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+
+  try { db.exec(`CREATE TABLE IF NOT EXISTS hr_position_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER NOT NULL REFERENCES hr_employees(id) ON DELETE CASCADE,
+    position    TEXT NOT NULL,
+    start_date  TEXT NOT NULL,
+    end_date    TEXT,
+    notes       TEXT DEFAULT '',
+    created_at  TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+
+  try { db.exec(`CREATE TABLE IF NOT EXISTS hr_salary_history (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id    INTEGER NOT NULL REFERENCES hr_employees(id) ON DELETE CASCADE,
+    salary         REAL NOT NULL,
+    effective_date TEXT NOT NULL,
+    notes          TEXT DEFAULT '',
+    created_at     TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+
+  // Password reset via Telegram
+  try { db.exec("ALTER TABLE users ADD COLUMN reset_code TEXT DEFAULT NULL"); } catch {}
+  try { db.exec("ALTER TABLE users ADD COLUMN reset_code_expires TEXT DEFAULT NULL"); } catch {}
+
   const admin = db.prepare("SELECT id FROM users WHERE role = 'admin'").get();
   if (!admin) {
     db.prepare(`

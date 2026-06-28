@@ -66,6 +66,27 @@ function closeModal() {
   document.getElementById('modal-root').innerHTML = '';
 }
 
+function showConfirmModal({ title, message, confirmLabel = 'Удалить', confirmClass = 'btn-danger-solid', cancelLabel = 'Отмена' }) {
+  return new Promise(resolve => {
+    const html = `
+      <div class="modal" style="max-width:400px">
+        <div class="modal-header">
+          <span class="modal-title">${title}</span>
+        </div>
+        <div style="padding:0 24px 24px">
+          <p style="font-size:14px;color:var(--text-muted);margin:0 0 24px">${message}</p>
+          <div style="display:flex;gap:10px;justify-content:flex-end">
+            <button class="btn btn-outline" id="confirm-cancel-btn">${cancelLabel}</button>
+            <button class="btn ${confirmClass}" id="confirm-ok-btn">${confirmLabel}</button>
+          </div>
+        </div>
+      </div>`;
+    openModal(html);
+    document.getElementById('confirm-ok-btn').onclick = () => { closeModal(); resolve(true); };
+    document.getElementById('confirm-cancel-btn').onclick = () => { closeModal(); resolve(false); };
+  });
+}
+
 function confirmDel(msg, onYes) {
   document.getElementById('modal-root').innerHTML = `<div class="modal-overlay" style="align-items:center" onclick="if(event.target===this)closeModal()">
     <div class="modal" style="max-width:340px;width:90%">
@@ -322,6 +343,97 @@ document.getElementById('login-form').addEventListener('submit', async e => {
     btn.disabled = false;
   }
 });
+
+// ─── Password Reset ───────────────────────────────────────────────────────────
+(function() {
+  let resetEmail = '';
+
+  function showLogin() {
+    document.getElementById('login-view').style.display = '';
+    document.getElementById('reset-view').style.display = 'none';
+    const errEl = document.getElementById('login-error');
+    errEl.style.display = 'none';
+  }
+
+  function showReset() {
+    document.getElementById('login-view').style.display = 'none';
+    document.getElementById('reset-view').style.display = '';
+    document.getElementById('reset-step-1').style.display = '';
+    document.getElementById('reset-step-2').style.display = 'none';
+    const errEl = document.getElementById('login-error');
+    errEl.style.display = 'none';
+  }
+
+  function showErr(msg) {
+    const errEl = document.getElementById('login-error');
+    errEl.textContent = msg;
+    errEl.style.display = 'block';
+  }
+
+  document.getElementById('forgot-link').addEventListener('click', showReset);
+  document.getElementById('back-to-login').addEventListener('click', showLogin);
+
+  document.getElementById('reset-request-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('reset-request-btn');
+    const email = document.getElementById('reset-email').value.trim();
+    if (!email) return showErr('Введите email');
+    const errEl = document.getElementById('login-error');
+    errEl.style.display = 'none';
+    btn.textContent = 'Отправляю...';
+    btn.disabled = true;
+    try {
+      await fetch('/api/auth/reset-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      }).then(async r => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Ошибка');
+      });
+      resetEmail = email;
+      document.getElementById('reset-step-1').style.display = 'none';
+      document.getElementById('reset-step-2').style.display = '';
+    } catch (err) {
+      showErr(err.message);
+    } finally {
+      btn.textContent = 'Отправить код';
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById('reset-confirm-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('reset-confirm-btn');
+    const code = document.getElementById('reset-code').value.trim();
+    const password = document.getElementById('reset-password').value;
+    if (!code || !password) return showErr('Заполните все поля');
+    const errEl = document.getElementById('login-error');
+    errEl.style.display = 'none';
+    btn.textContent = 'Сохраняю...';
+    btn.disabled = true;
+    try {
+      await fetch('/api/auth/reset-confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resetEmail, code, password })
+      }).then(async r => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Ошибка');
+      });
+      showLogin();
+      const errEl2 = document.getElementById('login-error');
+      errEl2.style.background = '#dcfce7';
+      errEl2.style.color = '#15803d';
+      errEl2.style.borderColor = '#86efac';
+      errEl2.textContent = 'Пароль изменён! Войдите с новым паролем.';
+      errEl2.style.display = 'block';
+    } catch (err) {
+      showErr(err.message);
+    } finally {
+      btn.textContent = 'Сменить пароль';
+      btn.disabled = false;
+    }
+  });
+})();
 
 function logout() {
   POST('/auth/logout').catch(() => {});
@@ -650,6 +762,9 @@ function navigateTo(page, projectId = null, pushHistory = true) {
   } else {
     document.querySelectorAll(`[data-page="${page}"]`).forEach(el => el.classList.add('active'));
   }
+  document.querySelectorAll('.mobile-nav-item[data-page]').forEach(el => {
+    el.classList.toggle('active', el.dataset.page === page);
+  });
 
   const project = projectId ? state.projects.find(p => String(p.id) === String(projectId)) : null;
   document.getElementById('page-title').textContent = project ? project.name : (PAGE_TITLES[page] || page);
@@ -1324,7 +1439,7 @@ function renderDashboardCharts(tasks) {
 async function renderEmployeeDashboard() {
   const content = document.getElementById('page-content');
   try {
-    const tasks = await GET('/tasks');
+    const tasks = await GET('/tasks?all=1');
     const uid = state.user.id;
     const myTasks = tasks.filter(t =>
       t.assignee_id === uid || (t.multi_assignees || []).some(a => a.id === uid)
@@ -1426,7 +1541,7 @@ async function renderDashboard() {
   }
   dashTasksLimit = 10;
   try {
-    const tasks = await GET('/tasks');
+    const tasks = await GET('/tasks?all=1');
     const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
     const todayEnd   = new Date(); todayEnd.setHours(23, 59, 59, 999);
     const tomorrowEnd = new Date(todayEnd.getTime() + 24 * 60 * 60 * 1000);
@@ -1523,8 +1638,9 @@ let myTasksMode = false;
 let dashPeriod = 'month';
 let activityDays = 30;
 let upcomingWeekOffset = 0;
-let tasksDisplayLimit = 10;
-let allFetchedTasks = [];
+let tasksCurrentPage = 1;
+let tasksTotalPages = 1;
+let tasksTotalCount = 0;
 let dashTasksLimit = 10;
 let dashRecentTasks = [];
 
@@ -1551,7 +1667,7 @@ function navigateToTasksWithFilter(filter) {
 
 function applyMyTasksFilter(filter) {
   tasksFilter = { status: '', priority: '', search: '', assignee_id: String(state.user.id), overdue: false, ...filter };
-  tasksDisplayLimit = 10;
+  tasksCurrentPage = 1;
 
   // Update active filter buttons
   document.querySelectorAll('.filter-btn').forEach(btn => {
@@ -1575,7 +1691,7 @@ function applyMyTasksFilter(filter) {
 }
 
 async function renderTasksPage() {
-  tasksDisplayLimit = 10;
+  tasksCurrentPage = 1;
   const isAdmin = state.user.role === 'admin';
   const showEmployeeFilter = isAdmin && !myTasksMode;
   const employeeOptions = showEmployeeFilter
@@ -1623,14 +1739,21 @@ function setTaskFilter(key, val) {
   if (key === 'overdue' && val) tasksFilter.status = '';
   tasksFilter[key] = val;
   if (myTasksMode) tasksFilter.assignee_id = ''; // server already filters by user (assignee OR creator)
+  tasksCurrentPage = 1;
   renderTasksPage();
 }
 
+function goTasksPage(p) {
+  tasksCurrentPage = p;
+  loadAndRenderTasks();
+}
+
 async function loadAndRenderTasks() {
+  const container = document.getElementById('tasks-list-container');
+  if (container) container.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div>';
   try {
     if (myTasksMode) {
-      // my_tasks=1 ensures only current user's own tasks (even for manage_team users)
-      const allUserTasks = await GET('/tasks?my_tasks=1');
+      const allUserTasks = await GET('/tasks?all=1&my_tasks=1');
       const summaryEl = document.getElementById('mytasks-summary');
       if (summaryEl) {
         summaryEl.innerHTML = renderMyTasksSummary(allUserTasks);
@@ -1638,57 +1761,73 @@ async function loadAndRenderTasks() {
       }
     }
 
-    let url = '/tasks';
-    const params = [];
+    const params = ['page=' + tasksCurrentPage];
     if (tasksFilter.status) params.push('status=' + tasksFilter.status);
     if (myTasksMode) {
-      params.push('my_tasks=1'); // always show only current user's own tasks
+      params.push('my_tasks=1');
     } else if (tasksFilter.assignee_id) {
       params.push('assignee_id=' + tasksFilter.assignee_id);
     }
-    if (params.length) url += '?' + params.join('&');
-    let tasks = await GET(url);
-    if (tasksFilter.overdue) tasks = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date());
-    if (tasksFilter.priority) tasks = tasks.filter(t => t.priority === tasksFilter.priority);
-    if (tasksFilter.search) {
-      const q = tasksFilter.search.toLowerCase();
-      tasks = tasks.filter(t => t.title.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q));
+
+    // Client-side-only filters (overdue, priority, search) need all=1 to work
+    const needsAll = tasksFilter.overdue || tasksFilter.priority || tasksFilter.search;
+    let tasks, total, pages, page;
+    if (needsAll) {
+      params.push('all=1');
+      let all = await GET('/tasks?' + params.join('&'));
+      if (tasksFilter.overdue) all = all.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date());
+      if (tasksFilter.priority) all = all.filter(t => t.priority === tasksFilter.priority);
+      if (tasksFilter.search) {
+        const q = tasksFilter.search.toLowerCase();
+        all = all.filter(t => t.title.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q));
+      }
+      tasks = all;
+      total = all.length;
+      pages = 1;
+      page  = 1;
+    } else {
+      const data = await GET('/tasks?' + params.join('&'));
+      tasks = data.tasks;
+      total = data.total;
+      pages = data.pages;
+      page  = data.page;
+      tasksTotalPages = pages;
+      tasksTotalCount = total;
     }
-    allFetchedTasks = tasks;
-    renderTasksList();
+
+    renderTasksList(tasks, total, page, pages);
   } catch {}
 }
 
-function renderTasksList() {
+function renderTasksList(tasks = [], total = 0, page = 1, pages = 1) {
   const container = document.getElementById('tasks-list-container');
   if (!container) return;
 
-  if (allFetchedTasks.length === 0) {
+  if (!tasks.length) {
     container.innerHTML = `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.clip,44)}</div><h3>Задач нет</h3><p>Попробуйте изменить фильтры</p></div>`;
     return;
   }
 
-  const visible   = allFetchedTasks.slice(0, tasksDisplayLimit);
-  const remaining = allFetchedTasks.length - tasksDisplayLimit;
+  let paginationHtml = '';
+  if (pages > 1) {
+    const btns = [];
+    if (page > 1) btns.push(`<button class="page-btn" onclick="goTasksPage(${page-1})">←</button>`);
+    for (let i = 1; i <= pages; i++) {
+      if (i === 1 || i === pages || (i >= page - 2 && i <= page + 2)) {
+        btns.push(`<button class="page-btn ${i === page ? 'active' : ''}" onclick="goTasksPage(${i})">${i}</button>`);
+      } else if (i === page - 3 || i === page + 3) {
+        btns.push(`<span class="page-dots">…</span>`);
+      }
+    }
+    if (page < pages) btns.push(`<button class="page-btn" onclick="goTasksPage(${page+1})">→</button>`);
+    paginationHtml = `<div class="tasks-pagination">${btns.join('')}<span class="page-total">Всего: ${total}</span></div>`;
+  }
 
   container.innerHTML = `
-    <div class="tasks-list">${visible.map(t => taskCard(t)).join('')}</div>
-    ${remaining > 0 ? `
-      <div class="tasks-show-more">
-        <button class="tasks-show-more-btn" onclick="showMoreTasks()">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          Показать ещё ${Math.min(remaining, 10)} задач
-          <span class="tasks-show-more-count">${remaining} осталось</span>
-        </button>
-      </div>
-    ` : allFetchedTasks.length > 10 ? `<div class="tasks-all-shown">Показаны все ${allFetchedTasks.length} задач</div>` : ''}
+    <div class="tasks-list">${tasks.map(t => taskCard(t)).join('')}</div>
+    ${paginationHtml}
   `;
   attachTaskCardListeners();
-}
-
-function showMoreTasks() {
-  tasksDisplayLimit += 10;
-  renderTasksList();
 }
 
 // ─── Project Page ─────────────────────────────────────────────────────────────
@@ -1737,7 +1876,7 @@ async function renderProjectPage(projectId) {
     if (canEdit) await api('POST', `/projects/${projectId}/sync-content-tasks`, {}).catch(() => {});
 
     const [allTasks, members] = await Promise.all([
-      GET('/tasks?project_id=' + projectId),
+      GET('/tasks?all=1&project_id=' + projectId),
       GET('/projects/' + projectId + '/members')
     ]);
     const doneCount = allTasks.filter(t => t.status === 'done').length;
@@ -2644,7 +2783,7 @@ function attachTaskCardListeners() {
 async function openTaskDetail(taskId) {
   try {
     const [tasks, comments, history] = await Promise.all([
-      GET('/tasks?_force=1'),
+      GET('/tasks?all=1&_force=1'),
       GET('/tasks/' + taskId + '/comments'),
       GET('/tasks/' + taskId + '/history').catch(() => []),
     ]);
@@ -2811,30 +2950,48 @@ async function deleteTask(taskId) {
 }
 
 // ─── Task Create/Edit Modal ───────────────────────────────────────────────────
-function initCustomDatepicker(inputId, initial) {
+function initCustomDatepicker(inputId, initial, options = {}) {
   const trigger = document.getElementById('cdp-trig-' + inputId);
   const dp      = document.getElementById('cdp-drop-' + inputId);
   const hidden  = document.getElementById(inputId);
   if (!trigger || !dp || !hidden) return;
 
+  const dateOnly = options.dateOnly || false;
+
   const MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь',
                   'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   const WDS = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
 
-  let sel  = initial ? new Date(initial) : null;
+  const parseInitial = v => {
+    if (!v) return null;
+    if (dateOnly && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      const [y, m, d] = v.split('-').map(Number);
+      return new Date(y, m - 1, d);
+    }
+    return new Date(v);
+  };
+
+  let sel  = parseInitial(initial);
   let vy   = sel ? sel.getFullYear() : new Date().getFullYear();
   let vm   = sel ? sel.getMonth()    : new Date().getMonth();
   let isOpen = false;
-  let hour = sel ? sel.getHours()   : 9;
-  let min  = sel ? sel.getMinutes() : 0;
+  let hour = (!dateOnly && sel) ? sel.getHours()   : 9;
+  let min  = (!dateOnly && sel) ? sel.getMinutes() : 0;
 
   const p2 = n => String(n).padStart(2,'0');
-  const toISO = d => d ? `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}` : '';
-  const fmtD  = d => `${p2(d.getDate())}.${p2(d.getMonth()+1)}.${d.getFullYear()}  ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  const toISO = d => d
+    ? (dateOnly
+        ? `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`
+        : `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`)
+    : '';
+  const fmtD = d => dateOnly
+    ? `${p2(d.getDate())}.${p2(d.getMonth()+1)}.${d.getFullYear()}`
+    : `${p2(d.getDate())}.${p2(d.getMonth()+1)}.${d.getFullYear()}  ${p2(d.getHours())}:${p2(d.getMinutes())}`;
 
   function updateTrigger() {
     const txt = trigger.querySelector('.cdp-trigger-text');
-    txt.innerHTML = sel ? fmtD(sel) : '<span class="cdp-placeholder">Выберите дату и время</span>';
+    const placeholder = dateOnly ? 'Выберите дату' : 'Выберите дату и время';
+    txt.innerHTML = sel ? fmtD(sel) : `<span class="cdp-placeholder">${placeholder}</span>`;
     hidden.value = toISO(sel);
   }
 
@@ -2872,6 +3029,7 @@ function initCustomDatepicker(inputId, initial) {
       <div class="cdp-grid">
         ${WDS.map(w=>`<div class="cdp-wd">${w}</div>`).join('')}${cells}
       </div>
+      ${dateOnly ? '' : `
       <div class="cdp-divider"></div>
       <div class="cdp-time-row">
         <span class="cdp-time-lbl">${svgI(SVG_PATHS.clock,12)} Время</span>
@@ -2886,7 +3044,7 @@ function initCustomDatepicker(inputId, initial) {
           <input class="cdp-tnum" id="cdp-m-${inputId}" type="text" value="${p2(min)}" maxlength="2">
           <button class="cdp-tbtn" id="cdp-md-${inputId}">${dnSvg}</button>
         </div>
-      </div>
+      </div>`}
       <div class="cdp-foot">
         <button class="cdp-clear-btn" id="cdp-clr-${inputId}">Очистить</button>
         <button class="cdp-ok-btn"    id="cdp-ok-${inputId}">Готово</button>
@@ -2911,19 +3069,21 @@ function initCustomDatepicker(inputId, initial) {
     }));
     dp.querySelector(`#cdp-prev-${inputId}`).addEventListener('click', e => { sp(e); vm--; if(vm<0){vm=11;vy--;} renderCal(); });
     dp.querySelector(`#cdp-next-${inputId}`).addEventListener('click', e => { sp(e); vm++; if(vm>11){vm=0;vy++;} renderCal(); });
-    dp.querySelector(`#cdp-hu-${inputId}`).addEventListener('click', e => { sp(e); hour=(hour+1)%24; dp.querySelector(`#cdp-h-${inputId}`).value=p2(hour); syncTime(); });
-    dp.querySelector(`#cdp-hd-${inputId}`).addEventListener('click', e => { sp(e); hour=(hour+23)%24; dp.querySelector(`#cdp-h-${inputId}`).value=p2(hour); syncTime(); });
-    dp.querySelector(`#cdp-mu-${inputId}`).addEventListener('click', e => { sp(e); min=(min+5)%60; dp.querySelector(`#cdp-m-${inputId}`).value=p2(min); syncTime(); });
-    dp.querySelector(`#cdp-md-${inputId}`).addEventListener('click', e => { sp(e); min=(min+55)%60; dp.querySelector(`#cdp-m-${inputId}`).value=p2(min); syncTime(); });
-    dp.querySelector(`#cdp-h-${inputId}`).addEventListener('change', syncTime);
-    dp.querySelector(`#cdp-m-${inputId}`).addEventListener('change', syncTime);
+    if (!dateOnly) {
+      dp.querySelector(`#cdp-hu-${inputId}`).addEventListener('click', e => { sp(e); hour=(hour+1)%24; dp.querySelector(`#cdp-h-${inputId}`).value=p2(hour); syncTime(); });
+      dp.querySelector(`#cdp-hd-${inputId}`).addEventListener('click', e => { sp(e); hour=(hour+23)%24; dp.querySelector(`#cdp-h-${inputId}`).value=p2(hour); syncTime(); });
+      dp.querySelector(`#cdp-mu-${inputId}`).addEventListener('click', e => { sp(e); min=(min+5)%60; dp.querySelector(`#cdp-m-${inputId}`).value=p2(min); syncTime(); });
+      dp.querySelector(`#cdp-md-${inputId}`).addEventListener('click', e => { sp(e); min=(min+55)%60; dp.querySelector(`#cdp-m-${inputId}`).value=p2(min); syncTime(); });
+      dp.querySelector(`#cdp-h-${inputId}`).addEventListener('change', syncTime);
+      dp.querySelector(`#cdp-m-${inputId}`).addEventListener('change', syncTime);
+    }
     dp.querySelector(`#cdp-clr-${inputId}`).addEventListener('click', e => { sp(e); sel=null; updateTrigger(); renderCal(); });
     dp.querySelector(`#cdp-ok-${inputId}`).addEventListener('click',  e => { sp(e); closeDp(); });
   }
 
   function positionDp() {
     const r = trigger.getBoundingClientRect();
-    const dpH = 400; // calendar + time picker height
+    const dpH = dateOnly ? 330 : 400;
     const spaceBelow = window.innerHeight - r.bottom;
     const spaceAbove = r.top;
     // Open upward if not enough space below, but enough above
@@ -2949,7 +3109,7 @@ async function openTaskModal(taskId = null, defaultProjectId = null) {
   let task = null;
   if (taskId) {
     try {
-      const tasks = await GET('/tasks');
+      const tasks = await GET('/tasks?all=1');
       task = tasks.find(t => String(t.id) === String(taskId));
     } catch {}
   }
@@ -4253,19 +4413,20 @@ async function loadReport() {
     const container = document.getElementById('report-content');
     if (!container) return;
 
-    if (data.length === 0) {
+    const employees = data.employees || data; // backward compat
+    const gStats    = data.global || null;
+
+    if (employees.length === 0) {
       container.innerHTML = `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.users,44)}</div><h3>Нет сотрудников</h3><p>Добавьте сотрудников в разделе «Команда»</p></div>`;
       return;
     }
 
-    // Summary row
-    const totalAll = data.reduce((s, u) => s + (u.stats.total || 0), 0);
-    const doneAll = data.reduce((s, u) => s + (u.stats.done || 0), 0);
-    const overdueAll = data.reduce((s, u) => s + (u.stats.overdue || 0), 0);
-    const doneOnTimeAll = data.reduce((s, u) => s + (u.stats.doneOnTime || 0), 0);
-    const doneLateAll   = data.reduce((s, u) => s + (u.stats.doneLate || 0), 0);
-    const dlTotalAll    = data.reduce((s, u) => s + (u.stats.dlTotal || 0), 0);
-    const effAll = dlTotalAll > 0 ? Math.round((doneOnTimeAll * 100 + doneLateAll * 50) / dlTotalAll) : 0;
+    // Summary row — use server-side unique counts to avoid double-counting multi-assignee tasks
+    const totalAll   = gStats ? (gStats.total || 0)       : employees.reduce((s, u) => s + (u.stats.total || 0), 0);
+    const doneAll    = gStats ? (gStats.done || 0)        : employees.reduce((s, u) => s + (u.stats.done || 0), 0);
+    const overdueAll = gStats ? (gStats.overdue || 0)     : employees.reduce((s, u) => s + (u.stats.overdue || 0), 0);
+    const inpAll     = gStats ? (gStats.in_progress || 0) : employees.reduce((s, u) => s + (u.stats.in_progress || 0), 0);
+    const effAll     = totalAll > 0 ? Math.round(doneAll / totalAll * 100) : 0;
 
     container.innerHTML = `
       <div class="stats-grid" style="margin-bottom:24px">
@@ -4289,7 +4450,7 @@ async function loadReport() {
 
       <!-- Workload chart -->
       ${totalAll > 0 ? (() => {
-        const sorted = [...data].filter(u => u.stats.total > 0).sort((a,b) => b.stats.total - a.stats.total);
+        const sorted = [...employees].filter(u => u.stats.total > 0).sort((a,b) => b.stats.total - a.stats.total);
         const maxTotal = Math.max(...sorted.map(u => u.stats.total), 1);
         const bars = sorted.map(u => {
           const s = u.stats;
@@ -4340,7 +4501,7 @@ async function loadReport() {
       })() : ''}
 
       <div class="report-grid">
-        ${data.map(u => {
+        ${employees.map(u => {
           const s = u.stats;
           const total = s.total || 0;
           const done = s.done || 0;
@@ -4473,7 +4634,7 @@ async function renderEmployeeProfile(userId) {
     const currentMonth = new Date(Date.now() + 5*3600000).toISOString().slice(0,7);
     const [users, tasks, beData] = await Promise.all([
       GET('/users'),
-      GET('/tasks?assignee_id=' + userId),
+      GET('/tasks?all=1&assignee_id=' + userId),
       GET('/best-employee?month=' + currentMonth)
     ]);
     const u = users.find(u => u.id === userId);
@@ -4665,11 +4826,26 @@ function empTasksToggle(hiddenCount) {
 }
 
 // ─── Team Page ────────────────────────────────────────────────────────────────
+function teamSetTab(t) {
+  _teamTab = t;
+  try { sessionStorage.setItem('team_tab', t); } catch {}
+  renderTeamPage();
+}
+
 async function renderTeamPage() {
+  if (_teamTab === 'hr') { await _renderHrPage(); return; }
+  if (_teamTab === 'workload') { await _renderWorkloadPage(); return; }
   const isAdmin = state.user.role === 'admin';
   try {
-    const [users, tasks] = await Promise.all([GET('/users'), GET('/tasks')]);
+    const [users, tasks, userProjects] = await Promise.all([GET('/users'), GET('/tasks?all=1'), GET('/user-projects')]);
     state.users = users;
+
+    // Project memberships per user
+    const projsByUser = {};
+    for (const m of userProjects) {
+      if (!projsByUser[m.user_id]) projsByUser[m.user_id] = [];
+      projsByUser[m.user_id].push(m);
+    }
 
     // Group task counts by assignee — include both single and multi-assignee tasks
     const tasksByUser = {};
@@ -4690,8 +4866,14 @@ async function renderTeamPage() {
       }
     });
 
+    const canManageHr = isAdmin || (state.user.permissions?.manage_team);
     document.getElementById('page-content').innerHTML = `
-      <div class="section-header">
+      <div class="team-tabs-bar">
+        <button class="fin-tab ${_teamTab==='members'?'active':''}" onclick="teamSetTab('members')">Сотрудники</button>
+        ${canManageHr ? `<button class="fin-tab ${_teamTab==='hr'?'active':''}" onclick="teamSetTab('hr')">Кадры</button>` : ''}
+        <button class="fin-tab ${_teamTab==='workload'?'active':''}" onclick="teamSetTab('workload')">Нагрузка</button>
+      </div>
+      <div class="section-header" style="margin-top:16px">
         <div class="section-title">Участники команды (${users.length})</div>
         ${isAdmin ? `<button class="btn btn-blue btn-sm" onclick="openUserModal()">＋ Добавить сотрудника</button>` : ''}
       </div>
@@ -4706,12 +4888,18 @@ async function renderTeamPage() {
           const s = tasksByUser[u.id] || { total: 0, done: 0, in_progress: 0, new_count: 0 };
           const pct = s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
           const effColor = pct >= 80 ? '#22c55e' : pct >= 50 ? '#eab308' : pct > 0 ? '#ef4444' : '#d1d5db';
+          const uProjs = projsByUser[u.id] || [];
+          const projLabel = uProjs.length === 0 ? '' :
+            uProjs.length === 1 ? '1 проект' :
+            uProjs.length >= 2 && uProjs.length <= 4 ? `${uProjs.length} проекта` :
+            `${uProjs.length} проектов`;
           return `
           <div class="member-card clickable" data-name="${(u.name+' '+u.email).toLowerCase()}" onclick="openEmployeeProfile(${u.id})">
             ${avatar(u.name, u.avatar_color, 'avatar-lg', u.avatar_img || '')}
             <div class="member-name">${u.name}</div>
             <div class="member-email">${u.email}</div>
             <span class="member-role ${rl.cls}">${rl.text}</span>
+            ${uProjs.length > 0 ? `<div class="member-proj-chips">${uProjs.map(p => `<span class="member-proj-dot" style="background:${p.color}" title="${_escHtml(p.name)}"></span>`).join('')}<span class="member-proj-label">${projLabel}</span></div>` : ''}
             ${tags ? `<div class="perm-tags">${tags}</div>` : ''}
             ${s.total > 0 ? `
               <div class="member-progress">
@@ -4741,6 +4929,682 @@ async function renderTeamPage() {
     document.getElementById('page-content').innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
   }
 }
+
+// ─── HR Кадры ─────────────────────────────────────────────────────────────────
+
+async function _renderHrPage() {
+  const content = document.getElementById('page-content');
+  const isAdmin = state.user.role === 'admin' || state.user.permissions?.manage_team;
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  try {
+    const employees = await GET('/hr/employees');
+    const active = employees.filter(e => e.status === 'active');
+    const terminated = employees.filter(e => e.status === 'terminated');
+
+    const fmtDate = d => d ? d.slice(0,10) : '—';
+    const fmtSalary = s => s ? Math.round(+s).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' сом' : '—';
+    const statusBadge = s => s === 'active'
+      ? `<span class="hr-badge hr-badge--active">Работает</span>`
+      : `<span class="hr-badge hr-badge--terminated">Уволен</span>`;
+
+    const row = e => `
+      <tr class="hr-tr" onclick="openHrEmployeeView(${e.id})">
+        <td class="hr-td"><div class="hr-name">${_escHtml(e.full_name)}</div></td>
+        <td class="hr-td">${_escHtml(e.position||'—')}</td>
+        <td class="hr-td">${fmtDate(e.hire_date)}</td>
+        <td class="hr-td">${fmtDate(e.termination_date)}</td>
+        <td class="hr-td">${fmtSalary(e.salary)}</td>
+        <td class="hr-td">${statusBadge(e.status)}</td>
+        <td class="hr-td hr-actions" onclick="event.stopPropagation()">
+          <button class="icon-btn" onclick="openHrEmployeeModal(${e.id})" title="Редактировать">${svgI(SVG_PATHS.edit,14)}</button>
+          <button class="icon-btn icon-btn--danger" onclick="deleteHrEmployee(${e.id})" title="Удалить">${svgI(SVG_PATHS.trash,14)}</button>
+        </td>
+      </tr>`;
+
+    const table = list => list.length === 0 ? '' : `
+      <table class="hr-table">
+        <thead><tr>
+          <th class="hr-th">ФИО</th>
+          <th class="hr-th">Должность</th>
+          <th class="hr-th">Принят</th>
+          <th class="hr-th">Уволен</th>
+          <th class="hr-th">Оклад</th>
+          <th class="hr-th">Статус</th>
+          <th class="hr-th" style="width:72px"></th>
+        </tr></thead>
+        <tbody>${list.map(row).join('')}</tbody>
+      </table>`;
+
+    content.innerHTML = `
+      <div class="team-tabs-bar">
+        <button class="fin-tab ${_teamTab==='members'?'active':''}" onclick="teamSetTab('members')">Сотрудники</button>
+        <button class="fin-tab ${_teamTab==='hr'?'active':''}" onclick="teamSetTab('hr')">Кадры</button>
+        <button class="fin-tab ${_teamTab==='workload'?'active':''}" onclick="teamSetTab('workload')">Нагрузка</button>
+      </div>
+      <div class="hr-wrap">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 10px">
+          <div class="section-title">База сотрудников</div>
+          ${isAdmin ? `<button class="btn btn-blue btn-sm" onclick="openHrEmployeeModal(null)">＋ Добавить запись</button>` : ''}
+        </div>
+        <div class="dash-stat-cards" style="margin-bottom:20px">
+          <div class="dash-stat-card">
+            <div class="dsc-label">Всего сотрудников</div>
+            <div class="dsc-value">${employees.length}</div>
+            <div class="dsc-sub">в кадровой базе</div>
+          </div>
+          <div class="dash-stat-card">
+            <div class="dsc-label">Активных</div>
+            <div class="dsc-value dsc-value--green">${active.length}</div>
+            <div class="dsc-sub">работают сейчас</div>
+          </div>
+          <div class="dash-stat-card">
+            <div class="dsc-label">Уволенных</div>
+            <div class="dsc-value${terminated.length > 0 ? ' dsc-value--red' : ''}">${terminated.length}</div>
+            <div class="dsc-sub">за всё время</div>
+          </div>
+        </div>
+
+        ${active.length > 0 ? `<div class="hr-section-title">Работающие (${active.length})</div>${table(active)}` : ''}
+        ${terminated.length > 0 ? `<div class="hr-section-title" style="margin-top:24px">Уволенные (${terminated.length})</div>${table(terminated)}` : ''}
+        ${employees.length === 0 ? `<div class="empty-state"><h3>Нет записей</h3><p>Добавьте первого сотрудника в кадровую базу</p></div>` : ''}
+      </div>`;
+  } catch(err) {
+    content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
+  }
+}
+
+function _buildSalaryChart(salaries) {
+  if (!salaries || salaries.length === 0) return '';
+  const sorted = [...salaries].sort((a,b) => a.effective_date.localeCompare(b.effective_date));
+  const W = 600, H = 120, PL = 58, PR = 12, PT = 12, PB = 26;
+  const cW = W - PL - PR, cH = H - PT - PB;
+  const MONTHS_SHORT = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const fmtN = n => Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  const salaryValues = [...new Set(sorted.map(s => +s.salary))].sort((a,b) => a-b);
+  const maxS = salaryValues[salaryValues.length-1];
+  const minS = salaryValues[0];
+  const sRange = (maxS - minS) || maxS || 1;
+  const yPad = sRange * 0.12;
+  const yMin = Math.max(0, minS - yPad);
+  const yMax = maxS + yPad;
+  const yRange = (yMax - yMin) || 1;
+  const today = new Date();
+  const firstDate = new Date(sorted[0].effective_date);
+  const lastDate = new Date(Math.max(today.getTime(), new Date(sorted[sorted.length-1].effective_date).getTime() + 30*24*3600*1000));
+  const totalMs = (lastDate - firstDate) || 1;
+  const xP = d => +(PL + ((new Date(d) - firstDate) / totalMs) * cW).toFixed(1);
+  const yP = s => +(PT + cH - ((+s - yMin) / yRange) * cH).toFixed(1);
+  // step path
+  let d = '';
+  for (let i = 0; i < sorted.length; i++) {
+    const x1 = xP(sorted[i].effective_date), y1 = yP(sorted[i].salary);
+    const x2 = i < sorted.length - 1 ? xP(sorted[i+1].effective_date) : PL + cW;
+    d += (i === 0 ? `M${x1},${y1}` : `L${x1},${y1}`) + ` L${x2},${y1}`;
+  }
+  // area fill (below the step)
+  const areaD = d + ` L${PL+cW},${PT+cH} L${xP(sorted[0].effective_date)},${PT+cH} Z`;
+  // y-axis grid at actual salary values
+  const gridSVG = salaryValues.map(v => {
+    const yg = yP(v).toFixed(1);
+    return `<line x1="${PL}" y1="${yg}" x2="${PL+cW}" y2="${yg}" stroke="var(--border)" stroke-width="0.8"/>
+<text x="${PL-5}" y="${yg}" font-size="9" fill="var(--text-muted)" text-anchor="end" dominant-baseline="middle">${fmtN(v)}</text>`;
+  }).join('\n');
+  // dots + x labels
+  const dotsSVG = sorted.map(s => {
+    const x = xP(s.effective_date), y = yP(s.salary);
+    const dObj = new Date(s.effective_date);
+    const lbl = `${MONTHS_SHORT[dObj.getMonth()]} ${dObj.getFullYear()}`;
+    return `<circle cx="${x}" cy="${y}" r="4" fill="#22c55e" stroke="var(--card-bg)" stroke-width="2"/>
+<text x="${x}" y="${H-3}" font-size="8.5" fill="var(--text-muted)" text-anchor="middle">${lbl}</text>`;
+  }).join('\n');
+  return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--card-bg);overflow:hidden;margin-bottom:14px">
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block">
+      ${gridSVG}
+      <defs><linearGradient id="salGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#22c55e" stop-opacity="0.18"/><stop offset="100%" stop-color="#22c55e" stop-opacity="0"/></linearGradient></defs>
+      <path d="${areaD}" fill="url(#salGrad)"/>
+      <path d="${d}" fill="none" stroke="#22c55e" stroke-width="2" stroke-linejoin="round"/>
+      ${dotsSVG}
+    </svg>
+  </div>`;
+}
+
+async function openHrEmployeeView(id) {
+  const emp = await GET('/hr/employees/' + id);
+  const fmtDate = d => d ? d.slice(0,10) : '—';
+  const fmtSalary = s => Math.round(+s).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' сом';
+  const isAdmin = state.user.role === 'admin' || state.user.permissions?.manage_team;
+
+  const posRows = emp.positions.map(p => `
+    <tr>
+      <td style="padding:8px 12px;font-size:13px">${_escHtml(p.position)}</td>
+      <td style="padding:8px 12px;font-size:13px;color:var(--text-muted)">${fmtDate(p.start_date)}</td>
+      <td style="padding:8px 12px;font-size:13px;color:var(--text-muted)">${p.end_date?fmtDate(p.end_date):'сейчас'}</td>
+      <td style="padding:8px 12px;font-size:12px;color:var(--text-muted)">${_escHtml(p.notes||'')}</td>
+      ${isAdmin?`<td style="padding:8px 12px"><button class="icon-btn icon-btn--danger" onclick="deleteHrPositionEntry(${p.id})" title="Удалить">${svgI(SVG_PATHS.trash,12)}</button></td>`:''}
+    </tr>`).join('');
+
+  const salRows = emp.salaries.map(s => `
+    <tr>
+      <td style="padding:8px 12px;font-size:13px;font-weight:600">${fmtSalary(s.salary)}</td>
+      <td style="padding:8px 12px;font-size:13px;color:var(--text-muted)">${fmtDate(s.effective_date)}</td>
+      <td style="padding:8px 12px;font-size:12px;color:var(--text-muted)">${_escHtml(s.notes||'')}</td>
+      ${isAdmin?`<td style="padding:8px 12px"><button class="icon-btn icon-btn--danger" onclick="deleteHrSalaryEntry(${s.id})" title="Удалить">${svgI(SVG_PATHS.trash,12)}</button></td>`:''}
+    </tr>`).join('');
+
+  openModal(`
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <span class="modal-title">${_escHtml(emp.full_name)}</span>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="hr-view-meta">
+          <div class="hr-view-meta-item"><span class="hr-view-label">Должность</span><span>${_escHtml(emp.position||'—')}</span></div>
+          <div class="hr-view-meta-item"><span class="hr-view-label">Принят</span><span>${fmtDate(emp.hire_date)}</span></div>
+          <div class="hr-view-meta-item"><span class="hr-view-label">Оклад</span><span style="font-weight:600;color:var(--primary)">${fmtSalary(emp.salary)}</span></div>
+          <div class="hr-view-meta-item"><span class="hr-view-label">Статус</span><span>${emp.status==='active'?'<span class="hr-badge hr-badge--active">Работает</span>':'<span class="hr-badge hr-badge--terminated">Уволен</span>'}</span></div>
+          ${emp.termination_date?`<div class="hr-view-meta-item"><span class="hr-view-label">Уволен</span><span>${fmtDate(emp.termination_date)}</span></div>`:''}
+          ${emp.termination_reason?`<div class="hr-view-meta-item hr-view-meta-item--full"><span class="hr-view-label">Причина ухода</span><span>${_escHtml(emp.termination_reason)}</span></div>`:''}
+          ${emp.notes?`<div class="hr-view-meta-item hr-view-meta-item--full"><span class="hr-view-label">Заметки</span><span>${_escHtml(emp.notes)}</span></div>`:''}
+        </div>
+
+        <div class="hr-history-section">
+          <div class="hr-history-header">
+            <span class="hr-history-title">История должностей</span>
+            ${isAdmin?`<button class="btn btn-outline btn-sm" onclick="openAddPositionModal(${emp.id})">＋ Добавить</button>`:''}
+          </div>
+          ${emp.positions.length>0?`<table style="width:100%;border-collapse:collapse">
+            <thead><tr style="border-bottom:1px solid var(--border)">
+              <th style="padding:6px 12px;font-size:11px;color:var(--text-muted);text-align:left;font-weight:600">ДОЛЖНОСТЬ</th>
+              <th style="padding:6px 12px;font-size:11px;color:var(--text-muted);text-align:left;font-weight:600">С</th>
+              <th style="padding:6px 12px;font-size:11px;color:var(--text-muted);text-align:left;font-weight:600">ПО</th>
+              <th style="padding:6px 12px;font-size:11px;color:var(--text-muted);text-align:left;font-weight:600">ЗАМЕТКА</th>
+              ${isAdmin?'<th></th>':''}
+            </tr></thead>
+            <tbody>${posRows}</tbody>
+          </table>`:`<div style="padding:16px;text-align:center;font-size:13px;color:var(--text-muted)">Нет записей</div>`}
+        </div>
+
+        <div class="hr-history-section">
+          <div class="hr-history-header">
+            <span class="hr-history-title">История оклада</span>
+            ${isAdmin?`<button class="btn btn-outline btn-sm" onclick="openAddSalaryModal(${emp.id})">＋ Добавить</button>`:''}
+          </div>
+          ${emp.salaries.length >= 1 ? _buildSalaryChart(emp.salaries) : ''}
+          ${emp.salaries.length>0?`<table style="width:100%;border-collapse:collapse">
+            <thead><tr style="border-bottom:1px solid var(--border)">
+              <th style="padding:6px 12px;font-size:11px;color:var(--text-muted);text-align:left;font-weight:600">ОКЛАД</th>
+              <th style="padding:6px 12px;font-size:11px;color:var(--text-muted);text-align:left;font-weight:600">С ДАТЫ</th>
+              <th style="padding:6px 12px;font-size:11px;color:var(--text-muted);text-align:left;font-weight:600">ЗАМЕТКА</th>
+              ${isAdmin?'<th></th>':''}
+            </tr></thead>
+            <tbody>${salRows}</tbody>
+          </table>`:`<div style="padding:16px;text-align:center;font-size:13px;color:var(--text-muted)">Нет записей</div>`}
+        </div>
+
+        ${isAdmin?`<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
+          <button class="btn btn-outline" onclick="openHrEmployeeModal(${emp.id});closeModal()">Редактировать</button>
+          <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
+        </div>`:`<div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="btn btn-outline" onclick="closeModal()">Закрыть</button></div>`}
+      </div>
+    </div>`);
+}
+
+// ─── Workload page ────────────────────────────────────────────────────────────
+async function _renderWorkloadPage() {
+  const content = document.getElementById('page-content');
+  const isAdmin = state.user.role === 'admin' || state.user.permissions?.manage_team;
+  const canManageHr = isAdmin;
+
+  const tabsBar = `
+    <div class="team-tabs-bar">
+      <button class="fin-tab ${_teamTab==='members'?'active':''}" onclick="teamSetTab('members')">Сотрудники</button>
+      ${canManageHr ? `<button class="fin-tab ${_teamTab==='hr'?'active':''}" onclick="teamSetTab('hr')">Кадры</button>` : ''}
+      <button class="fin-tab ${_teamTab==='workload'?'active':''}" onclick="teamSetTab('workload')">Нагрузка</button>
+    </div>`;
+
+  content.innerHTML = tabsBar + '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+
+  try {
+    const { users, projects, memberships, taskCounts } = await GET('/workload');
+
+    const projById = Object.fromEntries(projects.map(p => [p.id, p]));
+
+    const tcMap = {};
+    for (const tc of taskCounts) {
+      if (!tcMap[tc.user_id]) tcMap[tc.user_id] = {};
+      tcMap[tc.user_id][tc.project_id] = { total: tc.total || 0, done: tc.done || 0, active: tc.active || 0 };
+    }
+
+    const memberMap = {};
+    for (const m of memberships) {
+      if (!memberMap[m.user_id]) memberMap[m.user_id] = [];
+      memberMap[m.user_id].push(m.project_id);
+    }
+
+    const rows = users.map(u => {
+      const assignedIds = memberMap[u.id] || [];
+      const allTc = Object.values(tcMap[u.id] || {});
+      const totalTasks = allTc.reduce((s, t) => s + t.total, 0);
+      const doneTasks  = allTc.reduce((s, t) => s + t.done, 0);
+      const activeTasks = allTc.reduce((s, t) => s + t.active, 0);
+      const pct = totalTasks > 0 ? Math.round(doneTasks / totalTasks * 100) : 0;
+      const barColor = pct >= 80 ? '#22c55e' : pct >= 50 ? '#eab308' : pct > 0 ? '#ef4444' : 'var(--border)';
+
+      const chips = assignedIds.map(pid => {
+        const p = projById[pid];
+        if (!p) return '';
+        const tc = tcMap[u.id]?.[pid] || { total: 0, done: 0 };
+        return `<span class="wl-chip" style="--chip-c:${p.color}">
+          <span class="wl-chip-dot" style="background:${p.color}"></span>
+          <span class="wl-chip-name">${_escHtml(p.name)}</span>
+          <span class="wl-chip-count">${tc.done}/${tc.total}</span>
+          ${isAdmin ? `<button class="wl-chip-rm" onclick="event.stopPropagation();removeUserProject(${u.id},${pid})" title="Убрать">×</button>` : ''}
+        </span>`;
+      }).join('');
+
+      const addBtn = isAdmin
+        ? `<button class="wl-add-btn" onclick="openAddProjectModal(${u.id})" title="Добавить проект">＋</button>`
+        : '';
+
+      const projCount = assignedIds.filter(pid => projById[pid]).length;
+      const projCountLabel = projCount === 0 ? '' :
+        projCount === 1 ? '1 проект' :
+        projCount >= 2 && projCount <= 4 ? `${projCount} проекта` : `${projCount} проектов`;
+      const projSummary = projCount > 0
+        ? `<div class="wl-proj-summary">
+            ${assignedIds.filter(pid => projById[pid]).map(pid => `<span class="wl-chip-dot" style="background:${projById[pid].color}"></span>`).join('')}
+            <span class="wl-proj-summary-lbl">${projCountLabel}</span>
+          </div>`
+        : '';
+
+      const statsCell = totalTasks > 0
+        ? `<div class="wl-stats">
+            <div class="wl-stats-row">
+              <span class="wl-stats-num">${totalTasks} зад.</span>
+              <span class="wl-stats-pct" style="color:${barColor}">${pct}%</span>
+            </div>
+            <div class="wl-bar-bg"><div class="wl-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
+            <div class="wl-stats-sub">${activeTasks} в работе · ${doneTasks} готово</div>
+          </div>`
+        : `<span style="color:var(--text-muted);font-size:12px">Нет задач</span>`;
+
+      return `<tr class="wl-row">
+        <td class="wl-td wl-user-cell">
+          <div class="wl-user-inner">
+            ${avatar(u.name, u.avatar_color, 'avatar-sm', u.avatar_img || '')}
+            <span class="wl-user-name">${_escHtml(u.name)}</span>
+          </div>
+        </td>
+        <td class="wl-td wl-proj-cell">
+          <div class="wl-chips">${chips}${addBtn}</div>
+          ${projSummary}
+        </td>
+        <td class="wl-td wl-stats-cell">${statsCell}</td>
+      </tr>`;
+    }).join('');
+
+    // Compact summary — sorted by project count desc
+    const summaryData = users
+      .map(u => ({ u, count: (memberMap[u.id] || []).filter(pid => projById[pid]).length, ids: (memberMap[u.id] || []).filter(pid => projById[pid]) }))
+      .sort((a, b) => b.count - a.count);
+
+    const maxCount = summaryData[0]?.count || 1;
+
+    const summaryItems = summaryData.map(({ u, count, ids }, i) => {
+      const pct = maxCount > 0 ? Math.round(count / maxCount * 100) : 0;
+      const dots = ids.map(pid => `<span style="width:8px;height:8px;border-radius:50%;background:${projById[pid].color};flex-shrink:0;display:inline-block"></span>`).join('');
+      const countLabel = count === 0 ? '<span style="color:var(--text-muted);font-size:11px">нет проектов</span>'
+        : count === 1 ? `<span class="wl-sum-badge">1 проект</span>`
+        : count >= 2 && count <= 4 ? `<span class="wl-sum-badge">${count} проекта</span>`
+        : `<span class="wl-sum-badge">${count} проектов</span>`;
+      const rankColor = i === 0 ? '#f59e0b' : i === 1 ? '#9ca3af' : i === 2 ? '#b45309' : 'var(--text-muted)';
+      return `
+        <div class="wl-sum-row">
+          <span class="wl-sum-rank" style="color:${rankColor}">${i + 1}</span>
+          ${avatar(u.name, u.avatar_color, 'avatar-xs', u.avatar_img || '')}
+          <span class="wl-sum-name">${_escHtml(u.name)}</span>
+          <div class="wl-sum-dots">${dots}</div>
+          ${countLabel}
+          <div class="wl-sum-bar-wrap">
+            <div class="wl-sum-bar" style="width:${pct}%"></div>
+          </div>
+        </div>`;
+    }).join('');
+
+    content.innerHTML = `
+      ${tabsBar}
+      <div style="margin-top:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div class="section-title">Нагрузка сотрудников по проектам</div>
+          <button class="btn btn-outline btn-sm" onclick="exportWorkloadPDF()" style="display:inline-flex;align-items:center;gap:6px">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> PDF
+          </button>
+        </div>
+        <table class="hr-table wl-table">
+          <thead><tr>
+            <th class="hr-th" style="width:220px">СОТРУДНИК</th>
+            <th class="hr-th">ПРОЕКТЫ</th>
+            <th class="hr-th" style="width:220px">ЗАДАЧИ</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div style="margin-top:28px">
+        <div class="section-title" style="margin-bottom:14px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)">Сводка по проектам</div>
+        <div class="wl-summary">${summaryItems}</div>
+      </div>`;
+  } catch(err) {
+    content.innerHTML = tabsBar + `<div class="empty-state"><h3>Ошибка загрузки</h3><p>${err.message}</p></div>`;
+  }
+}
+
+async function openAddProjectModal(userId) {
+  const { projects, memberships } = await GET('/workload');
+  const assigned = new Set(memberships.filter(m => m.user_id === userId).map(m => m.project_id));
+  const available = projects.filter(p => !assigned.has(p.id));
+  if (!available.length) { toast('Все проекты уже назначены', 'info'); return; }
+  const opts = available.map(p =>
+    `<button class="wl-proj-pick-btn" onclick="addUserProject(${userId},${p.id})" style="border-left:3px solid ${p.color}">
+      <span class="wl-chip-dot" style="background:${p.color};flex-shrink:0"></span>
+      ${_escHtml(p.name)}
+    </button>`
+  ).join('');
+  openModal(`<div class="modal" style="max-width:340px">
+    <div class="modal-header">
+      <span class="modal-title">Добавить проект</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body"><div style="display:flex;flex-direction:column;gap:6px">${opts}</div></div>
+  </div>`);
+}
+
+async function addUserProject(userId, projectId) {
+  await api('POST', '/user-projects', { user_id: userId, project_id: projectId });
+  closeModal();
+  _renderWorkloadPage();
+}
+
+async function removeUserProject(userId, projectId) {
+  await api('DELETE', '/user-projects', { user_id: userId, project_id: projectId });
+  _renderWorkloadPage();
+}
+
+async function exportWorkloadPDF() {
+  try {
+    const { users, projects, memberships, taskCounts } = await GET('/workload');
+    const projById = Object.fromEntries(projects.map(p => [p.id, p]));
+    const memberMap = {};
+    for (const m of memberships) {
+      if (!memberMap[m.user_id]) memberMap[m.user_id] = [];
+      memberMap[m.user_id].push(m.project_id);
+    }
+    const tcMap = {};
+    for (const tc of taskCounts) {
+      if (!tcMap[tc.user_id]) tcMap[tc.user_id] = {};
+      tcMap[tc.user_id][tc.project_id] = { total: tc.total || 0, done: tc.done || 0 };
+    }
+
+    const now = new Date().toLocaleString('ru-RU', { day:'2-digit', month:'long', year:'numeric' });
+
+    const tableRows = users.map(u => {
+      const assignedIds = (memberMap[u.id] || []).filter(pid => projById[pid]);
+      const allTc = Object.values(tcMap[u.id] || {});
+      const total = allTc.reduce((s, t) => s + t.total, 0);
+      const done  = allTc.reduce((s, t) => s + t.done, 0);
+      const pct   = total > 0 ? Math.round(done / total * 100) : 0;
+      const projList = assignedIds.length > 0
+        ? assignedIds.map(pid => {
+            const p = projById[pid];
+            const tc = tcMap[u.id]?.[pid] || { total: 0, done: 0 };
+            return `<span style="display:inline-flex;align-items:center;gap:4px;margin:2px 4px 2px 0;padding:2px 7px;border-radius:12px;border:1px solid ${p.color}40;background:${p.color}15;font-size:11px">
+              <span style="width:7px;height:7px;border-radius:50%;background:${p.color};display:inline-block"></span>${p.name} <span style="color:#6b7280">${tc.done}/${tc.total}</span></span>`;
+          }).join('')
+        : '<span style="color:#9ca3af;font-size:11px">—</span>';
+      const countText = assignedIds.length === 0 ? '—'
+        : assignedIds.length === 1 ? '1 проект'
+        : assignedIds.length <= 4 ? `${assignedIds.length} проекта`
+        : `${assignedIds.length} проектов`;
+      const pctColor = pct >= 80 ? '#16a34a' : pct >= 50 ? '#ca8a04' : pct > 0 ? '#dc2626' : '#9ca3af';
+      return `<tr>
+        <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:600;white-space:nowrap">${u.name}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0">${projList}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:center;font-weight:700;color:#374151">${countText}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${total > 0 ? `${total} зад.` : '—'}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:center;font-weight:700;color:${pctColor}">${total > 0 ? pct + '%' : '—'}</td>
+      </tr>`;
+    }).join('');
+
+    const summaryRows = [...users]
+      .map(u => ({ u, count: (memberMap[u.id] || []).filter(pid => projById[pid]).length }))
+      .sort((a, b) => b.count - a.count)
+      .map(({ u, count }, i) => {
+        const medal = `${i+1}.`;
+        const dots = (memberMap[u.id] || []).filter(pid => projById[pid])
+          .map(pid => `<span style="width:9px;height:9px;border-radius:50%;background:${projById[pid].color};display:inline-block;margin-right:2px"></span>`).join('');
+        const label = count === 0 ? 'нет проектов' : count === 1 ? '1 проект' : count <= 4 ? `${count} проекта` : `${count} проектов`;
+        return `<tr><td style="padding:7px 12px;border-bottom:1px solid #f1f5f9">${medal}</td>
+          <td style="padding:7px 12px;border-bottom:1px solid #f1f5f9;font-weight:600">${u.name}</td>
+          <td style="padding:7px 12px;border-bottom:1px solid #f1f5f9">${dots}</td>
+          <td style="padding:7px 12px;border-bottom:1px solid #f1f5f9;color:#6b7280">${label}</td></tr>`;
+      }).join('');
+
+    const win = window.open('', '_blank', 'width=1100,height=800');
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>
+      <style>
+        *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+        body{font-family:system-ui,-apple-system,sans-serif;font-size:12px;padding:28px;color:#111827}
+        h1{font-size:18px;font-weight:700;margin:0 0 4px}
+        .meta{color:#6b7280;font-size:11px;margin-bottom:24px}
+        h2{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;margin:28px 0 10px}
+        table{width:100%;border-collapse:collapse}
+        th{background:#f8fafc;padding:9px 12px;text-align:left;border-bottom:2px solid #e2e8f0;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280}
+        .summary-section{page-break-before:always;break-before:page}
+        @media print{@page{size:A4 landscape;margin:0}body{padding:24px}}
+      </style></head><body>
+      <h1>Нагрузка сотрудников по проектам</h1>
+      <div class="meta">Дата формирования: ${now} · MindsBar</div>
+      <h2>Детальная таблица</h2>
+      <table><thead><tr>
+        <th>Сотрудник</th><th>Проекты</th><th style="text-align:center">Кол-во проектов</th><th style="text-align:center">Задачи</th><th style="text-align:center">Выполнено</th>
+      </tr></thead><tbody>${tableRows}</tbody></table>
+      <div class="summary-section">
+        <h2>Сводка по нагрузке</h2>
+        <table><thead><tr>
+          <th style="width:40px">#</th><th>Сотрудник</th><th>Проекты</th><th>Итого</th>
+        </tr></thead><tbody>${summaryRows}</tbody></table>
+      </div>
+      <script>window.onload=()=>window.print()<\/script></body></html>`);
+    win.document.close();
+  } catch(err) { toast('Ошибка PDF: ' + err.message, 'error'); }
+}
+
+function openHrEmployeeModal(id = null) {
+  const isEdit = id !== null;
+  const doOpen = (emp=null) => {
+    openModal(`
+      <div class="modal">
+        <div class="modal-header">
+          <span class="modal-title">${isEdit?'Редактировать сотрудника':'Добавить сотрудника'}</span>
+          <button class="modal-close" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-grid-2">
+            <div class="form-group">
+              <label class="form-label">ФИО *</label>
+              <input id="hr-full-name" class="input" value="${_escHtml(emp?.full_name||'')}" placeholder="Фамилия Имя">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Должность</label>
+              <input id="hr-position" class="input" value="${_escHtml(emp?.position||'')}" placeholder="Менеджер, Дизайнер...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Дата приёма</label>
+              <div class="cdp-wrap"><button type="button" class="cdp-trigger" id="cdp-trig-hr-hire-date">${svgI(SVG_PATHS.cal,13,'style="color:var(--text-muted);flex-shrink:0"')}<span class="cdp-trigger-text"></span><span class="cdp-chevron">${svgI('<polyline points="6 9 12 15 18 9"/>',12)}</span></button><div class="cdp-dropdown hidden" id="cdp-drop-hr-hire-date"></div><input type="hidden" id="hr-hire-date"></div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Оклад (сом)</label>
+              <input id="hr-salary" class="input" type="number" min="0" value="${emp?.salary||''}" placeholder="0">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Статус</label>
+              <select id="hr-status" class="input">
+                <option value="active" ${(emp?.status||'active')==='active'?'selected':''}>Работает</option>
+                <option value="terminated" ${emp?.status==='terminated'?'selected':''}>Уволен</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Дата увольнения</label>
+              <div class="cdp-wrap"><button type="button" class="cdp-trigger" id="cdp-trig-hr-termination-date">${svgI(SVG_PATHS.cal,13,'style="color:var(--text-muted);flex-shrink:0"')}<span class="cdp-trigger-text"></span><span class="cdp-chevron">${svgI('<polyline points="6 9 12 15 18 9"/>',12)}</span></button><div class="cdp-dropdown hidden" id="cdp-drop-hr-termination-date"></div><input type="hidden" id="hr-termination-date"></div>
+            </div>
+            <div class="form-group form-group--full">
+              <label class="form-label">Причина ухода</label>
+              <input id="hr-termination-reason" class="input" value="${_escHtml(emp?.termination_reason||'')}" placeholder="По собственному желанию...">
+            </div>
+            <div class="form-group form-group--full">
+              <label class="form-label">Заметки</label>
+              <textarea id="hr-notes" class="input" rows="2" placeholder="Дополнительная информация...">${_escHtml(emp?.notes||'')}</textarea>
+            </div>
+          </div>
+          <div class="modal-footer" style="margin-top:20px">
+            <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+            <button class="btn btn-blue" onclick="saveHrEmployee(${id||'null'})">${isEdit?'Сохранить':'Добавить'}</button>
+          </div>
+        </div>
+      </div>`);
+    initCustomDatepicker('hr-hire-date', emp?.hire_date||'', {dateOnly:true});
+    initCustomDatepicker('hr-termination-date', emp?.termination_date||'', {dateOnly:true});
+  };
+  if (isEdit) GET('/hr/employees/'+id).then(doOpen);
+  else doOpen();
+}
+
+async function saveHrEmployee(id) {
+  const data = {
+    full_name: document.getElementById('hr-full-name')?.value.trim(),
+    position:  document.getElementById('hr-position')?.value.trim(),
+    hire_date: document.getElementById('hr-hire-date')?.value || null,
+    salary:    +document.getElementById('hr-salary')?.value || 0,
+    status:    document.getElementById('hr-status')?.value,
+    termination_date:   document.getElementById('hr-termination-date')?.value || null,
+    termination_reason: document.getElementById('hr-termination-reason')?.value.trim(),
+    notes:     document.getElementById('hr-notes')?.value.trim(),
+  };
+  if (!data.full_name) return alert('Введите ФИО');
+  try {
+    if (id) await api('PATCH', '/hr/employees/'+id, data);
+    else     await api('POST',  '/hr/employees', data);
+    closeModal();
+    await _renderHrPage();
+  } catch(err) { alert(err.message); }
+}
+
+async function deleteHrEmployee(id) {
+  const ok = await showConfirmModal({ title:'Удалить запись?', message:'Запись сотрудника и вся история будут удалены безвозвратно.', confirmLabel:'Удалить' });
+  if (!ok) return;
+  await api('DELETE', '/hr/employees/'+id);
+  await _renderHrPage();
+}
+
+function openAddPositionModal(empId) {
+  closeModal();
+  openModal(`
+    <div class="modal" style="max-width:440px">
+      <div class="modal-header">
+        <span class="modal-title">Новая должность</span>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group"><label class="form-label">Должность *</label>
+          <input id="hr-pos-title" class="input" placeholder="Старший менеджер..."></div>
+        <div class="form-grid-2" style="margin-top:12px">
+          <div class="form-group"><label class="form-label">Дата начала *</label>
+            <div class="cdp-wrap"><button type="button" class="cdp-trigger" id="cdp-trig-hr-pos-start">${svgI(SVG_PATHS.cal,13,'style="color:var(--text-muted);flex-shrink:0"')}<span class="cdp-trigger-text"></span><span class="cdp-chevron">${svgI('<polyline points="6 9 12 15 18 9"/>',12)}</span></button><div class="cdp-dropdown hidden" id="cdp-drop-hr-pos-start"></div><input type="hidden" id="hr-pos-start"></div>
+          </div>
+          <div class="form-group"><label class="form-label">Дата окончания</label>
+            <div class="cdp-wrap"><button type="button" class="cdp-trigger" id="cdp-trig-hr-pos-end">${svgI(SVG_PATHS.cal,13,'style="color:var(--text-muted);flex-shrink:0"')}<span class="cdp-trigger-text"></span><span class="cdp-chevron">${svgI('<polyline points="6 9 12 15 18 9"/>',12)}</span></button><div class="cdp-dropdown hidden" id="cdp-drop-hr-pos-end"></div><input type="hidden" id="hr-pos-end"></div>
+          </div>
+        </div>
+        <div class="form-group" style="margin-top:12px"><label class="form-label">Заметка</label>
+          <input id="hr-pos-notes" class="input" placeholder="Повышение..."></div>
+        <div class="modal-footer" style="margin-top:20px">
+          <button class="btn btn-outline" onclick="openHrEmployeeView(${empId})">Отмена</button>
+          <button class="btn btn-blue" onclick="saveHrPosition(${empId})">Сохранить</button>
+        </div>
+      </div>
+    </div>`);
+  initCustomDatepicker('hr-pos-start', '', {dateOnly:true});
+  initCustomDatepicker('hr-pos-end', '', {dateOnly:true});
+}
+
+async function saveHrPosition(empId) {
+  const data = {
+    position:   document.getElementById('hr-pos-title')?.value.trim(),
+    start_date: document.getElementById('hr-pos-start')?.value,
+    end_date:   document.getElementById('hr-pos-end')?.value || null,
+    notes:      document.getElementById('hr-pos-notes')?.value.trim(),
+  };
+  if (!data.position || !data.start_date) return alert('Заполните должность и дату начала');
+  try {
+    await api('POST', `/hr/employees/${empId}/positions`, data);
+    openHrEmployeeView(empId);
+  } catch(err) { alert(err.message); }
+}
+
+async function deleteHrPositionEntry(posId) {
+  const ok = await showConfirmModal({ title:'Удалить запись?', message:'Запись из истории должностей будет удалена.', confirmLabel:'Удалить' });
+  if (!ok) return;
+  await api('DELETE', '/hr/positions/'+posId);
+  // Reopen same employee — find from DOM context
+  closeModal(); await _renderHrPage();
+}
+
+function openAddSalaryModal(empId) {
+  closeModal();
+  openModal(`
+    <div class="modal" style="max-width:400px">
+      <div class="modal-header">
+        <span class="modal-title">Новый оклад</span>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group"><label class="form-label">Оклад (сом) *</label>
+          <input id="hr-sal-amount" class="input" type="number" min="0" placeholder="0"></div>
+        <div class="form-group" style="margin-top:12px"><label class="form-label">Дата изменения *</label>
+          <div class="cdp-wrap"><button type="button" class="cdp-trigger" id="cdp-trig-hr-sal-date">${svgI(SVG_PATHS.cal,13,'style="color:var(--text-muted);flex-shrink:0"')}<span class="cdp-trigger-text"></span><span class="cdp-chevron">${svgI('<polyline points="6 9 12 15 18 9"/>',12)}</span></button><div class="cdp-dropdown hidden" id="cdp-drop-hr-sal-date"></div><input type="hidden" id="hr-sal-date"></div>
+        </div>
+        <div class="form-group" style="margin-top:12px"><label class="form-label">Заметка</label>
+          <input id="hr-sal-notes" class="input" placeholder="Плановое повышение..."></div>
+        <div class="modal-footer" style="margin-top:20px">
+          <button class="btn btn-outline" onclick="openHrEmployeeView(${empId})">Отмена</button>
+          <button class="btn btn-blue" onclick="saveHrSalary(${empId})">Сохранить</button>
+        </div>
+      </div>
+    </div>`);
+  initCustomDatepicker('hr-sal-date', '', {dateOnly:true});
+}
+
+async function saveHrSalary(empId) {
+  const data = {
+    salary:         +document.getElementById('hr-sal-amount')?.value,
+    effective_date: document.getElementById('hr-sal-date')?.value,
+    notes:          document.getElementById('hr-sal-notes')?.value.trim(),
+  };
+  if (!data.salary || !data.effective_date) return alert('Заполните оклад и дату');
+  try {
+    await api('POST', `/hr/employees/${empId}/salaries`, data);
+    openHrEmployeeView(empId);
+  } catch(err) { alert(err.message); }
+}
+
+async function deleteHrSalaryEntry(salId) {
+  const ok = await showConfirmModal({ title:'Удалить запись?', message:'Запись из истории оклада будет удалена.', confirmLabel:'Удалить' });
+  if (!ok) return;
+  await api('DELETE', '/hr/salaries/'+salId);
+  closeModal(); await _renderHrPage();
+}
+
+// ─── End HR Module ────────────────────────────────────────────────────────────
 
 async function openUserModal(userId = null) {
   let user = null;
@@ -5244,6 +6108,7 @@ const FIN_CURRENCIES   = ['TJS', 'USD', 'RUB', 'EUR'];
 
 let _finMonth  = (() => { try { return sessionStorage.getItem('fin_month') || new Date().toISOString().slice(0, 7); } catch { return new Date().toISOString().slice(0, 7); } })();
 let _finTab    = (() => { try { return sessionStorage.getItem('fin_tab') || 'month'; } catch { return 'month'; } })();
+let _teamTab   = (() => { try { return sessionStorage.getItem('team_tab') || 'members'; } catch { return 'members'; } })();
 let _finFilter = { status: '', payment_type: '', direction: '', search: '' };
 
 const fmtMoney = v => {
@@ -5255,9 +6120,10 @@ async function renderFinancePage() {
   const content = document.getElementById('page-content');
   content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
   try {
-    if (_finTab === 'annual')   { await _renderFinanceAnnual(); return; }
-    if (_finTab === 'projects') { await _renderFinanceProjects(); return; }
-    if (_finTab === 'expenses') { await _renderExpensesPage(); return; }
+    if (_finTab === 'annual')    { await _renderFinanceAnnual(); return; }
+    if (_finTab === 'projects')  { await _renderFinanceProjects(); return; }
+    if (_finTab === 'expenses')  { await _renderExpensesPage(); return; }
+    if (_finTab === 'checklist') { await _renderFinanceChecklist(); return; }
     const params = new URLSearchParams({ month: _finMonth });
     if (_finFilter.status)       params.set('status', _finFilter.status);
     if (_finFilter.payment_type) params.set('payment_type', _finFilter.payment_type);
@@ -5314,7 +6180,7 @@ function _renderFinance(rows) {
   const tabs = [
     { key:'month', label:'Доходы' },
     { key:'expenses', label:'Расходы' }, { key:'projects', label:'По проектам' },
-    { key:'annual', label:'Годовой отчёт' },
+    { key:'checklist', label:'Чеклист' }, { key:'annual', label:'Годовой отчёт' },
   ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
 
   const filterBar = `
@@ -5550,6 +6416,178 @@ function finSetTab(t) {
   renderFinancePage();
 }
 
+// ─── Finance Payment Checklist ────────────────────────────────────────────────
+
+async function _renderFinanceChecklist() {
+  const content = document.getElementById('page-content');
+  const isAdmin = state.user.role === 'admin' || state.user.role === 'manager';
+  const [y, m] = _finMonth.split('-');
+  const fmtYM = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  const prevMonth = fmtYM(new Date(+y, +m-2, 1));
+  const nextMonth = fmtYM(new Date(+y, +m,   1));
+  const MONTH_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const monthLabel = MONTH_RU[+m-1] + ' ' + y;
+
+  const tabs = [
+    { key:'month', label:'Доходы' }, { key:'expenses', label:'Расходы' },
+    { key:'projects', label:'По проектам' }, { key:'checklist', label:'Чеклист' },
+    { key:'annual', label:'Годовой отчёт' },
+  ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
+
+  try {
+    const items = await GET('/payment-checklist/' + _finMonth);
+    const checkedCount = items.filter(i => i.checked).length;
+    const total = items.length;
+    const pct = total > 0 ? Math.round(checkedCount / total * 100) : 0;
+    const pctColor = pct === 100 ? '#059669' : pct >= 50 ? '#D97706' : '#DC2626';
+
+    const listHtml = items.length === 0
+      ? `<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13.5px">Список пуст — добавьте платежи</div>`
+      : items.map(item => `
+        <div class="pcl-row ${item.checked ? 'pcl-row--done' : ''}" id="pcl-row-${item.id}">
+          <button class="pcl-checkbox ${item.checked ? 'pcl-checkbox--checked' : ''}"
+            onclick="togglePaymentCheck(${item.id}, ${!!item.checked})" title="${item.checked ? 'Снять отметку' : 'Отметить как оплачено'}">
+            ${item.checked ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>` : ''}
+          </button>
+          <div class="pcl-name">${_escHtml(item.name)}</div>
+          ${item.checked
+            ? `<div class="pcl-meta">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                ${item.checked_at ? item.checked_at.slice(0,10) : ''}
+                ${item.checked_by_name ? '· ' + item.checked_by_name : ''}
+               </div>`
+            : '<div class="pcl-meta"></div>'}
+          ${isAdmin ? `
+          <button class="pcl-edit-btn" onclick="startEditChecklistItem(${item.id},'${_escHtml(item.name).replace(/'/g,"\\'")} ')" title="Переименовать">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="pcl-del-btn" onclick="deleteChecklistItem(${item.id})" title="Удалить">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+          </button>` : ''}
+        </div>`).join('');
+
+    content.innerHTML = `
+      <div class="fin-page">
+        <div class="fin-tabs-bar">${tabs}</div>
+        <div class="fin-header">
+          <div class="fin-month-nav">
+            <button class="fin-nav-btn" onclick="finSetMonth('${prevMonth}')">‹</button>
+            <span class="fin-month-title">${monthLabel}</span>
+            <button class="fin-nav-btn" onclick="finSetMonth('${nextMonth}')">›</button>
+            ${_finMonth !== new Date().toISOString().slice(0,7) ? `<button class="btn btn-outline btn-sm" onclick="finSetMonth('${new Date().toISOString().slice(0,7)}')" style="font-size:11px;padding:4px 10px;margin-left:6px">Этот месяц</button>` : ''}
+          </div>
+        </div>
+        <div class="pcl-wrap">
+          <div class="pcl-header">
+            <div class="pcl-progress-info">
+              <span class="pcl-progress-nums" style="color:${pctColor}">${checkedCount} / ${total}</span>
+              <span class="pcl-progress-label">оплачено</span>
+            </div>
+            <div class="pcl-progress-bar-wrap">
+              <div class="pcl-progress-bar" style="width:${pct}%;background:${pctColor}"></div>
+            </div>
+          </div>
+          <div class="pcl-list">${listHtml}</div>
+          ${isAdmin ? `
+            <div class="pcl-add-row" id="pcl-add-row">
+              <button class="pcl-add-btn" onclick="showChecklistAddInput()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Добавить платёж
+              </button>
+            </div>
+            <div class="pcl-add-form hidden" id="pcl-add-form">
+              <input class="pcl-add-input" id="pcl-add-input" placeholder="Название платежа..." maxlength="80"
+                onkeydown="if(event.key==='Enter')addChecklistItem();if(event.key==='Escape')hideChecklistAddInput()">
+              <button class="btn btn-blue btn-sm" onclick="addChecklistItem()">Добавить</button>
+              <button class="btn btn-outline btn-sm" onclick="hideChecklistAddInput()">Отмена</button>
+            </div>` : ''}
+        </div>
+      </div>`;
+  } catch(err) {
+    content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
+  }
+}
+
+async function togglePaymentCheck(itemId, currentlyChecked) {
+  const newChecked = !currentlyChecked;
+  // Optimistic update
+  const row = document.getElementById('pcl-row-' + itemId);
+  if (row) {
+    row.classList.toggle('pcl-row--done', newChecked);
+    const cb = row.querySelector('.pcl-checkbox');
+    if (cb) {
+      cb.classList.toggle('pcl-checkbox--checked', newChecked);
+      cb.innerHTML = newChecked
+        ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
+        : '';
+      cb.onclick = () => togglePaymentCheck(itemId, newChecked);
+    }
+  }
+  try {
+    await api('PATCH', `/payment-checklist/${_finMonth}/${itemId}`, { checked: newChecked });
+    // Soft reload to update meta (date/name)
+    await _renderFinanceChecklist();
+  } catch(err) {
+    // Revert on error
+    await _renderFinanceChecklist();
+  }
+}
+
+function showChecklistAddInput() {
+  document.getElementById('pcl-add-row')?.classList.add('hidden');
+  const form = document.getElementById('pcl-add-form');
+  if (form) { form.classList.remove('hidden'); document.getElementById('pcl-add-input')?.focus(); }
+}
+function hideChecklistAddInput() {
+  document.getElementById('pcl-add-row')?.classList.remove('hidden');
+  document.getElementById('pcl-add-form')?.classList.add('hidden');
+}
+function startEditChecklistItem(id, currentName) {
+  const nameEl = document.querySelector(`#pcl-row-${id} .pcl-name`);
+  if (!nameEl) return;
+  const name = currentName.trim();
+  nameEl.innerHTML = `
+    <input class="pcl-inline-input" id="pcl-edit-${id}" value="${_escHtml(name)}" maxlength="80"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();saveEditChecklistItem(${id})}if(event.key==='Escape')_renderFinanceChecklist()">
+    <button class="btn btn-blue btn-sm" style="padding:3px 10px;font-size:12px" onclick="saveEditChecklistItem(${id})">Сохранить</button>
+    <button class="btn btn-outline btn-sm" style="padding:3px 10px;font-size:12px" onclick="_renderFinanceChecklist()">✕</button>`;
+  const inp = document.getElementById(`pcl-edit-${id}`);
+  inp?.focus();
+  inp?.select();
+}
+async function saveEditChecklistItem(id) {
+  const inp = document.getElementById(`pcl-edit-${id}`);
+  const name = inp?.value.trim();
+  if (!name) return;
+  try {
+    await api('PATCH', `/payment-checklist/items/${id}`, { name });
+    await _renderFinanceChecklist();
+  } catch(err) { alert(err.message); }
+}
+
+async function addChecklistItem() {
+  const input = document.getElementById('pcl-add-input');
+  const name = input?.value.trim();
+  if (!name) return;
+  try {
+    await api('POST', '/payment-checklist/items', { name });
+    await _renderFinanceChecklist();
+  } catch(err) { alert(err.message); }
+}
+async function deleteChecklistItem(id) {
+  const ok = await showConfirmModal({
+    title: 'Удалить пункт?',
+    message: 'Пункт будет удалён из чеклиста всех месяцев. Это действие нельзя отменить.',
+    confirmLabel: 'Удалить',
+    confirmClass: 'btn-danger',
+  });
+  if (!ok) return;
+  try {
+    await api('DELETE', '/payment-checklist/items/' + id);
+    await _renderFinanceChecklist();
+  } catch(err) { alert(err.message); }
+}
+
 function _finLiveSearch(q) {
   _finFilter.search = q;
   const ql = q.toLowerCase().trim();
@@ -5580,7 +6618,8 @@ async function _renderExpensesPage() {
   const monthLabel = MONTH_NAMES[+m-1] + ' ' + y;
   const tabs = [
     { key:'month', label:'Доходы' }, { key:'expenses', label:'Расходы' },
-    { key:'projects', label:'По проектам' }, { key:'annual', label:'Годовой отчёт' },
+    { key:'projects', label:'По проектам' }, { key:'checklist', label:'Чеклист' },
+    { key:'annual', label:'Годовой отчёт' },
   ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
 
   const [expenses, finRows] = await Promise.all([
@@ -5750,7 +6789,7 @@ async function _renderFinanceProjects() {
   const tabs = [
     { key:'month', label:'Доходы' },
     { key:'expenses', label:'Расходы' }, { key:'projects', label:'По проектам' },
-    { key:'annual', label:'Годовой отчёт' },
+    { key:'checklist', label:'Чеклист' }, { key:'annual', label:'Годовой отчёт' },
   ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
   content.innerHTML = `<div class="fin-page">
     <div class="fin-tabs-bar">${tabs}</div>
@@ -5802,8 +6841,8 @@ async function _renderFinanceAnnual() {
   const data = await GET('/finance/annual-combined?year=' + year);
   const MONTH_NAMES = ['Янв','Фев','Мар','Апр','Май','Июнь','Июль','Авг','Сен','Окт','Ноя','Дек'];
   const tabs = [
-    { key:'month', label:'По месяцам' },
-    { key:'projects', label:'По проектам' },
+    { key:'month', label:'Доходы' }, { key:'expenses', label:'Расходы' },
+    { key:'projects', label:'По проектам' }, { key:'checklist', label:'Чеклист' },
     { key:'annual', label:'Годовой отчёт' },
   ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
 
@@ -7478,14 +8517,16 @@ async function exportB2CExcel(courseId) {
 
 // ─── Team Tasks Page (for manage_team users) ─────────────────────────────────
 let _teamTasksFilter = { status: '', assignee_id: '', search: '', overdue: false };
-let _teamTasksCache  = []; // cached tasks to avoid re-fetching on search
+let _teamTasksCache    = []; // assigned tasks for list display
+let _teamTasksAllCache = []; // all tasks for global stat cards
 
 async function renderTeamTasksPage() {
   const content = document.getElementById('page-content');
   content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
   try {
-    const [allTasks, users] = await Promise.all([GET('/tasks'), GET('/users')]);
+    const [allTasks, users] = await Promise.all([GET('/tasks?all=1'), GET('/users')]);
     state.users = users;
+    _teamTasksAllCache = allTasks;
     _teamTasksCache = allTasks.filter(t => t.assignee_id || (t.multi_assignees||[]).length);
 
     const employeeOptions = `<option value="">Все сотрудники</option>` +
@@ -7550,17 +8591,20 @@ function _renderTeamTasksList() {
     btn.classList.toggle('active', active);
   });
 
-  // Update stats
-  const total    = tasks.length;
-  const done     = tasks.filter(t => t.status === 'done').length;
-  const inProg   = tasks.filter(t => t.status === 'in_progress').length;
-  const overdueN = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date()).length;
-  const statsEl  = document.getElementById('tt-stats');
+  // Global stats — always from full task list (same as Dashboard) to ensure consistent numbers
+  const allT    = _teamTasksAllCache;
+  const total   = allT.length;
+  const done    = allT.filter(t => t.status === 'done').length;
+  const inProg  = allT.filter(t => t.status === 'in_progress').length;
+  const overdueN = allT.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date()).length;
+  const eff     = total > 0 ? Math.round(done / total * 100) : 0;
+  const statsEl = document.getElementById('tt-stats');
   if (statsEl) statsEl.innerHTML = `
     <div class="dash-stat-card"><div class="dsc-label">Всего задач</div><div class="dsc-value">${total}</div></div>
     <div class="dash-stat-card"><div class="dsc-label">Выполнено</div><div class="dsc-value dsc-value--green">${done}</div></div>
     <div class="dash-stat-card"><div class="dsc-label">В работе</div><div class="dsc-value" style="color:#D97706">${inProg}</div></div>
-    <div class="dash-stat-card"><div class="dsc-label">Просрочено</div><div class="dsc-value ${overdueN>0?'dsc-value--red':''}">${overdueN}</div></div>`;
+    <div class="dash-stat-card"><div class="dsc-label">Просрочено</div><div class="dsc-value ${overdueN>0?'dsc-value--red':''}">${overdueN}</div></div>
+    <div class="dash-stat-card"><div class="dsc-label">Эффективность</div><div class="dsc-value dsc-value--green">${eff}%</div></div>`;
 
   // Update task list
   const listEl = document.getElementById('tt-task-list');
@@ -8407,7 +9451,7 @@ async function openGlobalSearch() {
 
   // Load tasks once
   if (!_gsAllTasks) {
-    try { _gsAllTasks = await GET('/tasks'); } catch { _gsAllTasks = []; }
+    try { _gsAllTasks = await GET('/tasks?all=1'); } catch { _gsAllTasks = []; }
   }
 
   let selectedIdx = -1;
