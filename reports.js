@@ -400,4 +400,135 @@ async function generateSummaryPDF(data) {
   });
 }
 
-module.exports = { buildSummaryData, generateSummaryPDF };
+async function generateAnalyticsPDF(data) {
+  return new Promise((resolve, reject) => {
+    const PDFDocument = require('pdfkit');
+    const chunks = [];
+    const doc = new PDFDocument({ margin: 0, size: 'A4' });
+    doc.on('data', c => chunks.push(c));
+    doc.on('end',  () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.registerFont('Reg',  FONT_REG);
+    doc.registerFont('Bold', FONT_BOLD);
+
+    const PW = 595, X = 36, W = 523;
+    const { days, avgHours, weeks, burndown, statusBreak, priorityBreak } = data;
+
+    const periodLabel =
+      days <= 7  ? `${days} дней` :
+      days === 14 ? '14 дней' :
+      days === 30 ? 'Месяц' :
+      days === 90 ? '3 месяца' :
+      days === 180 ? '6 месяцев' :
+      days === 365 ? 'Год' : `${days} дней`;
+
+    const now = new Date(Date.now() + 5*3600000);
+    const dateStr = `${String(now.getDate()).padStart(2,'0')}.${String(now.getMonth()+1).padStart(2,'0')}.${now.getFullYear()}`;
+
+    // Header
+    doc.rect(0, 0, PW, 72).fill('#0f172a');
+    doc.rect(0, 68, PW, 4).fill('#881337');
+    doc.circle(X + 8, 28, 8).fill('#881337');
+    doc.circle(X + 8, 28, 4).fill('#ffffff');
+    doc.font('Bold').fontSize(17).fillColor('#ffffff')
+      .text('MindsBar — Аналитика', X + 22, 20);
+    doc.font('Reg').fontSize(9).fillColor('#94a3b8')
+      .text(`Период: ${periodLabel}   ·   Сформирован: ${dateStr}`, X + 22, 42);
+
+    let y = 88;
+
+    // KPI cards
+    const totalCreated = weeks.reduce((s, w) => s + w.created, 0);
+    const totalDone    = weeks.reduce((s, w) => s + w.done, 0);
+    const trendEff     = totalCreated > 0 ? Math.round(totalDone / totalCreated * 100) : 0;
+    const avgStr = avgHours == null ? '—'
+      : avgHours < 24 ? `${avgHours} ч`
+      : `${Math.floor(avgHours/24)} дн ${avgHours%24} ч`;
+
+    const cards = [
+      { label: 'Ср. время выполнения', value: avgStr,        color: '#881337', bg: '#fdf2f8' },
+      { label: 'Создано задач',         value: totalCreated,  color: '#3b82f6', bg: '#eff6ff' },
+      { label: 'Выполнено',             value: totalDone,     color: '#16a34a', bg: '#f0fdf4' },
+      { label: 'Эффективность',         value: `${trendEff}%`,color: trendEff>=80?'#16a34a':trendEff>=50?'#d97706':'#dc2626', bg: '#f9fafb' },
+    ];
+
+    const cW = 120, cH = 62, cGap = 9;
+    let cx = X;
+    cards.forEach(c => {
+      doc.roundedRect(cx, y, cW, cH, 8).fill(c.bg);
+      doc.roundedRect(cx, y, cW, 4, 2).fill(c.color);
+      doc.font('Bold').fontSize(22).fillColor(c.color)
+        .text(String(c.value), cx, y + 12, { width: cW, align: 'center' });
+      doc.font('Reg').fontSize(8).fillColor('#6b7280')
+        .text(c.label, cx, y + 40, { width: cW, align: 'center' });
+      cx += cW + cGap;
+    });
+    y += cH + 16;
+
+    // Section: Weekly trend table
+    doc.font('Bold').fontSize(11).fillColor('#0f172a').text('Тренд по неделям', X, y);
+    y += 16;
+    doc.font('Bold').fontSize(8).fillColor('#6b7280');
+    doc.text('Неделя',   X,       y, { width: 80  });
+    doc.text('Создано',  X + 90,  y, { width: 80  });
+    doc.text('Выполнено',X + 180, y, { width: 80  });
+    y += 12;
+    doc.moveTo(X, y).lineTo(X + W, y).lineWidth(0.5).stroke('#e5e7eb');
+    y += 6;
+
+    weeks.forEach((w, i) => {
+      const bg = i % 2 === 0 ? '#f9fafb' : '#ffffff';
+      doc.rect(X, y - 2, W, 16).fill(bg);
+      doc.font('Reg').fontSize(8).fillColor('#374151');
+      doc.text(w.label,     X,       y, { width: 80 });
+      doc.text(String(w.created),  X + 90,  y, { width: 80 });
+      doc.text(String(w.done),     X + 180, y, { width: 80 });
+      y += 16;
+    });
+    y += 10;
+
+    // Section: Status breakdown
+    doc.font('Bold').fontSize(11).fillColor('#0f172a').text('По статусу', X, y);
+    y += 16;
+    const statusNames = { new: 'Новые', in_progress: 'В работе', done: 'Готово', pending_review: 'На проверке' };
+    const statusColors2 = { new: '#3b82f6', in_progress: '#f59e0b', done: '#22c55e', pending_review: '#8b5cf6' };
+    statusBreak.forEach((s, i) => {
+      const bg = i % 2 === 0 ? '#f9fafb' : '#ffffff';
+      doc.rect(X, y - 2, W/2 - 8, 16).fill(bg);
+      doc.circle(X + 7, y + 5, 4).fill(statusColors2[s.status] || '#9ca3af');
+      doc.font('Reg').fontSize(8).fillColor('#374151')
+        .text(statusNames[s.status] || s.status, X + 16, y, { width: 120 });
+      doc.font('Bold').fontSize(8).fillColor('#111827')
+        .text(String(s.cnt), X + W/2 - 40, y, { width: 30, align: 'right' });
+      y += 16;
+    });
+    y += 10;
+
+    // Section: Priority breakdown
+    if (y > 720) { doc.addPage(); y = 36; }
+    doc.font('Bold').fontSize(11).fillColor('#0f172a').text('По приоритету', X, y);
+    y += 16;
+    const priorityColors2 = { high: '#ef4444', medium: '#f59e0b', low: '#22c55e' };
+    const priorityNames2  = { high: 'Срочные', medium: 'Средние', low: 'Низкий' };
+    priorityBreak.forEach((p, i) => {
+      const bg = i % 2 === 0 ? '#f9fafb' : '#ffffff';
+      doc.rect(X, y - 2, W/2 - 8, 16).fill(bg);
+      doc.circle(X + 7, y + 5, 4).fill(priorityColors2[p.priority] || '#9ca3af');
+      doc.font('Reg').fontSize(8).fillColor('#374151')
+        .text(priorityNames2[p.priority] || p.priority, X + 16, y, { width: 120 });
+      doc.font('Bold').fontSize(8).fillColor('#111827')
+        .text(String(p.cnt), X + W/2 - 40, y, { width: 30, align: 'right' });
+      y += 16;
+    });
+
+    // Footer
+    doc.rect(0, 822, PW, 20).fill('#0f172a');
+    doc.font('Reg').fontSize(7).fillColor('#475569')
+      .text('MindsBar TeamTask · Аналитика · Только для внутреннего использования', X, 828, { width: W, align: 'center' });
+
+    doc.end();
+  });
+}
+
+module.exports = { buildSummaryData, generateSummaryPDF, generateAnalyticsPDF };

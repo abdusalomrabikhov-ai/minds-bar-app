@@ -4493,6 +4493,25 @@ function _svgBarGroup(weeks, width, height) {
   </svg>`;
 }
 
+async function downloadAnalyticsPDF(days) {
+  try {
+    toast('Генерирую PDF...', '');
+    const res = await fetch(`/api/reports/analytics/pdf?period=${days}`, {
+      headers: { Authorization: 'Bearer ' + state.token }
+    });
+    if (!res.ok) { toast('Ошибка генерации PDF', 'error'); return; }
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `analytics-${days}d.pdf`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
 async function loadAnalyticsReport(days) {
   _analyticsPeriod = days;
   const container = document.getElementById('report-content');
@@ -4503,10 +4522,12 @@ async function loadAnalyticsReport(days) {
     const d = await GET('/reports/analytics?period=' + days);
 
     const PERIODS = [
-      { days: 7,  label: '7 дней'  },
-      { days: 14, label: '14 дней' },
-      { days: 30, label: 'Месяц'   },
-      { days: 90, label: '3 мес.'  },
+      { days: 7,   label: '7 дней'  },
+      { days: 14,  label: '14 дней' },
+      { days: 30,  label: 'Месяц'   },
+      { days: 90,  label: '3 мес.'  },
+      { days: 180, label: '6 мес.'  },
+      { days: 365, label: 'Год'     },
     ];
 
     const avgStr = d.avgHours == null ? '—'
@@ -4549,9 +4570,15 @@ async function loadAnalyticsReport(days) {
     ).join('');
 
     container.innerHTML = `
-      <!-- Period tabs -->
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:20px">
-        ${PERIODS.map(p => `<button class="filter-btn ${_analyticsPeriod===p.days?'active':''}" onclick="loadAnalyticsReport(${p.days})">${p.label}</button>`).join('')}
+      <!-- Period tabs + PDF -->
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:20px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${PERIODS.map(p => `<button class="filter-btn ${_analyticsPeriod===p.days?'active':''}" onclick="loadAnalyticsReport(${p.days})">${p.label}</button>`).join('')}
+        </div>
+        <button onclick="downloadAnalyticsPDF(${days})" class="btn btn-outline btn-sm" style="display:inline-flex;align-items:center;gap:6px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Скачать PDF
+        </button>
       </div>
 
       <!-- KPI cards -->

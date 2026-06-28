@@ -1179,7 +1179,7 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
 
 // ─── Summary Report (period-based) ───────────────────────────────────────────
 
-const { buildSummaryData, generateSummaryPDF } = require('./reports');
+const { buildSummaryData, generateSummaryPDF, generateAnalyticsPDF } = require('./reports');
 
 app.get('/api/reports/summary', auth, requirePerm('reports'), (req, res) => {
   const days = Math.min(Math.max(parseInt(req.query.period || '7'), 1), 365);
@@ -1274,6 +1274,47 @@ app.get('/api/reports/analytics', auth, requirePerm('reports'), (req, res) => {
   `).all(fromDate);
 
   res.json({ avgHours, weeks, burndown, statusBreak, priorityBreak, days });
+});
+
+app.get('/api/reports/analytics/pdf', auth, requirePerm('reports'), async (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.period || '30'), 7), 365);
+    // reuse analytics data builder inline
+    const TZ = 5 * 3600000;
+    const nowLocal = new Date(Date.now() + TZ);
+    const fromDate = new Date(nowLocal.getTime() - days * 86400000).toISOString().slice(0, 10);
+
+    const avgRows = db.prepare(`SELECT t.created_at, t.updated_at FROM tasks t WHERE t.status='done' AND t.created_at>=? AND t.updated_at IS NOT NULL`).all(fromDate);
+    let avgHours = null;
+    if (avgRows.length > 0) {
+      const total = avgRows.reduce((s, r) => {
+        const diff = (new Date(r.updated_at.replace(' ','T')) - new Date(r.created_at.replace(' ','T'))) / 3600000;
+        return s + (diff > 0 ? diff : 0);
+      }, 0);
+      avgHours = Math.round(total / avgRows.length);
+    }
+
+    const weekCount = Math.ceil(days / 7);
+    const weeks = [];
+    for (let w = weekCount-1; w >= 0; w--) {
+      const wEnd   = new Date(nowLocal.getTime() - w*7*86400000);
+      const wStart = new Date(wEnd.getTime() - 7*86400000);
+      const ws = wStart.toISOString().slice(0,10), we = wEnd.toISOString().slice(0,10);
+      const created = db.prepare(`SELECT COUNT(*) as cnt FROM tasks WHERE date(created_at)>? AND date(created_at)<=?`).get(ws,we).cnt;
+      const done    = db.prepare(`SELECT COUNT(*) as cnt FROM tasks WHERE status='done' AND date(updated_at)>? AND date(updated_at)<=?`).get(ws,we).cnt;
+      weeks.push({ label: ws.slice(5), created, done });
+    }
+
+    const statusBreak   = db.prepare(`SELECT status, COUNT(*) as cnt FROM tasks WHERE date(created_at)>=? GROUP BY status`).all(fromDate);
+    const priorityBreak = db.prepare(`SELECT priority, COUNT(*) as cnt FROM tasks WHERE date(created_at)>=? GROUP BY priority`).all(fromDate);
+
+    const buf = await generateAnalyticsPDF({ days, avgHours, weeks, burndown: [], statusBreak, priorityBreak });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="analytics-${days}d.pdf"`);
+    res.end(buf);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── SSE ──────────────────────────────────────────────────────────────────────
