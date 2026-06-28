@@ -5685,7 +5685,10 @@ async function _renderDutyPage() {
   el.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;padding:60px 0;color:var(--text-muted)">Загрузка...</div>`;
 
   try {
-    const [data, users] = await Promise.all([GET('/duty'), GET('/users')]);
+    const [data, users] = await Promise.all([
+      GET('/duty').catch(e => { throw new Error('/duty: ' + e.message); }),
+      GET('/users').catch(e => { throw new Error('/users: ' + e.message); })
+    ]);
     const userMap = {};
     users.forEach(u => { userMap[u.id] = u; });
 
@@ -5766,7 +5769,14 @@ async function _renderDutyPage() {
       <div id="duty-weeks-list">${weeksHtml}</div>
     `;
   } catch(e) {
-    document.getElementById('page-content').innerHTML = `<div style="color:red;padding:40px">Ошибка: ${e.message}</div>`;
+    const errEl = document.getElementById('page-content');
+    if (errEl) errEl.innerHTML = `
+      <div class="team-tabs-bar">
+        <button class="fin-tab" onclick="teamSetTab('members')">Сотрудники</button>
+        <button class="fin-tab" onclick="teamSetTab('workload')">Нагрузка</button>
+        <button class="fin-tab active">Дежурства</button>
+      </div>
+      <div style="color:#ef4444;padding:40px 20px;font-size:13px">Ошибка загрузки: ${_escHtml(e.message)}</div>`;
   }
 }
 
