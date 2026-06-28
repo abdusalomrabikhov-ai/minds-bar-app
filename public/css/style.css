@@ -1464,6 +1464,7 @@ input, textarea, select { font: inherit; }
   .stats-grid { grid-template-columns: 1fr 1fr; }
   .task-detail-meta { grid-template-columns: 1fr; }
   .dash-charts { grid-template-columns: 1fr; }
+  #report-content [style*="grid-template-columns:1fr 1fr"] { grid-template-columns: 1fr !important; }
   .mytasks-charts { grid-template-columns: 1fr; }
   .dash-summary { flex-direction: column; gap: 10px; }
   .dash-summary-item { border-right: none; border-bottom: 1px solid rgba(255,255,255,0.08); padding: 8px 0; }

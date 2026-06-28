@@ -2921,9 +2921,19 @@ async function openTaskDetail(taskId) {
     `);
 
 
-    document.getElementById('comment-input')?.addEventListener('keydown', e => {
-      if (e.key === 'Enter') submitComment(t.id);
-    });
+    const commentInput = document.getElementById('comment-input');
+    if (commentInput) {
+      const draftKey = 'tt_comment_draft_' + t.id;
+      const saved = localStorage.getItem(draftKey);
+      if (saved) commentInput.value = saved;
+      commentInput.addEventListener('input', () => {
+        if (commentInput.value.trim()) localStorage.setItem(draftKey, commentInput.value);
+        else localStorage.removeItem(draftKey);
+      });
+      commentInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') submitComment(t.id);
+      });
+    }
 
   } catch (err) { toast(err.message, 'error'); }
 }
@@ -2933,6 +2943,7 @@ async function submitComment(taskId) {
   if (!input?.value.trim()) return;
   try {
     await POST('/tasks/' + taskId + '/comments', { text: input.value.trim() });
+    localStorage.removeItem('tt_comment_draft_' + taskId);
     openTaskDetail(taskId);
   } catch (err) { toast(err.message, 'error'); }
 }
@@ -4216,7 +4227,7 @@ function renderUserActivityContent(userId, data, days) {
   `;
 }
 
-let _reportTab = 'monthly'; // 'monthly' | 'summary'
+let _reportTab = 'monthly'; // 'monthly' | 'summary' | 'analytics'
 
 async function renderReportsPage() {
   const now = new Date(Date.now() + 5*3600000);
@@ -4224,9 +4235,10 @@ async function renderReportsPage() {
 
   document.getElementById('page-content').innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="filter-btn ${_reportTab==='monthly'?'active':''}" onclick="_reportTab='monthly';renderReportsPage()">Эффективность</button>
         <button class="filter-btn ${_reportTab==='summary'?'active':''}" onclick="_reportTab='summary';renderReportsPage()">Сводные отчёты</button>
+        <button class="filter-btn ${_reportTab==='analytics'?'active':''}" onclick="_reportTab='analytics';renderReportsPage()">📊 Аналитика</button>
       </div>
       ${_reportTab==='monthly' ? `
         <div class="report-month-picker">
@@ -4239,6 +4251,7 @@ async function renderReportsPage() {
     <div id="report-content"><div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div></div>
   `;
   if (_reportTab === 'monthly') loadReport();
+  else if (_reportTab === 'analytics') loadAnalyticsReport(30);
   else loadSummaryReport(7);
 }
 
@@ -4399,6 +4412,194 @@ async function loadSummaryReport(days) {
           </thead>
           <tbody>${rows}</tbody>
         </table>
+      </div>
+    `;
+  } catch (err) {
+    container.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
+  }
+}
+
+// ─── Analytics Report ────────────────────────────────────────────────────────
+
+let _analyticsPeriod = 30;
+
+function _svgLineChart(points, width, height, color = '#881337', fill = '#fdf2f8') {
+  if (!points.length) return '';
+  const maxV = Math.max(...points.map(p => p.v), 1);
+  const minV = Math.min(...points.map(p => p.v), 0);
+  const range = maxV - minV || 1;
+  const pad = { t: 10, r: 8, b: 28, l: 32 };
+  const W = width - pad.l - pad.r;
+  const H = height - pad.t - pad.b;
+  const xs = points.map((_, i) => pad.l + (i / (points.length - 1 || 1)) * W);
+  const ys = points.map(p => pad.t + H - ((p.v - minV) / range) * H);
+
+  const pathD = xs.map((x, i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${ys[i].toFixed(1)}`).join(' ');
+  const areaD = `${pathD} L${xs[xs.length-1].toFixed(1)},${(pad.t+H).toFixed(1)} L${xs[0].toFixed(1)},${(pad.t+H).toFixed(1)} Z`;
+
+  // Y axis ticks
+  const yTicks = [0, 0.5, 1].map(f => {
+    const v = Math.round(minV + f * range);
+    const y = pad.t + H - f * H;
+    return `<line x1="${pad.l}" y1="${y.toFixed(1)}" x2="${pad.l+W}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3,3"/>
+            <text x="${(pad.l-4).toFixed(1)}" y="${(y+4).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-muted)">${v}</text>`;
+  }).join('');
+
+  // X axis labels (show max 6)
+  const step = Math.ceil(points.length / 6);
+  const xLabels = points.map((p, i) => {
+    if (i % step !== 0 && i !== points.length - 1) return '';
+    return `<text x="${xs[i].toFixed(1)}" y="${(pad.t+H+14).toFixed(1)}" text-anchor="middle" font-size="9" fill="var(--text-muted)">${p.label}</text>`;
+  }).join('');
+
+  return `<svg width="${width}" height="${height}" style="width:100%;height:auto;overflow:visible">
+    ${yTicks}
+    <path d="${areaD}" fill="${fill}" opacity="0.5"/>
+    <path d="${pathD}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${points.map((p, i) => `<circle cx="${xs[i].toFixed(1)}" cy="${ys[i].toFixed(1)}" r="3" fill="${color}" stroke="white" stroke-width="1.5"/>`).join('')}
+    ${xLabels}
+  </svg>`;
+}
+
+function _svgBarGroup(weeks, width, height) {
+  if (!weeks.length) return '';
+  const maxV = Math.max(...weeks.map(w => Math.max(w.created, w.done)), 1);
+  const pad = { t: 10, r: 8, b: 28, l: 32 };
+  const W = width - pad.l - pad.r;
+  const H = height - pad.t - pad.b;
+  const bw = W / weeks.length;
+  const barW = Math.max(bw * 0.35, 4);
+
+  const bars = weeks.map((w, i) => {
+    const x = pad.l + i * bw + bw / 2;
+    const hC = (w.created / maxV) * H;
+    const hD = (w.done / maxV) * H;
+    return `
+      <rect x="${(x - barW - 1).toFixed(1)}" y="${(pad.t + H - hC).toFixed(1)}" width="${barW.toFixed(1)}" height="${hC.toFixed(1)}" fill="#6366f1" rx="2" opacity="0.8"/>
+      <rect x="${(x + 1).toFixed(1)}"         y="${(pad.t + H - hD).toFixed(1)}" width="${barW.toFixed(1)}" height="${hD.toFixed(1)}" fill="#22c55e" rx="2" opacity="0.8"/>
+      <text x="${x.toFixed(1)}" y="${(pad.t+H+14).toFixed(1)}" text-anchor="middle" font-size="9" fill="var(--text-muted)">${w.label}</text>`;
+  }).join('');
+
+  // Y ticks
+  const yTicks = [0, 0.5, 1].map(f => {
+    const v = Math.round(f * maxV);
+    const y = pad.t + H - f * H;
+    return `<line x1="${pad.l}" y1="${y.toFixed(1)}" x2="${pad.l+W}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3,3"/>
+            <text x="${(pad.l-4).toFixed(1)}" y="${(y+4).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-muted)">${v}</text>`;
+  }).join('');
+
+  return `<svg width="${width}" height="${height}" style="width:100%;height:auto;overflow:visible">
+    ${yTicks}${bars}
+  </svg>`;
+}
+
+async function loadAnalyticsReport(days) {
+  _analyticsPeriod = days;
+  const container = document.getElementById('report-content');
+  if (!container) return;
+  container.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div>';
+
+  try {
+    const d = await GET('/reports/analytics?period=' + days);
+
+    const PERIODS = [
+      { days: 7,  label: '7 дней'  },
+      { days: 14, label: '14 дней' },
+      { days: 30, label: 'Месяц'   },
+      { days: 90, label: '3 мес.'  },
+    ];
+
+    const avgStr = d.avgHours == null ? '—'
+      : d.avgHours < 24 ? d.avgHours + ' ч'
+      : Math.round(d.avgHours / 24) + ' дн ' + (d.avgHours % 24) + ' ч';
+
+    const totalCreated = d.weeks.reduce((s, w) => s + w.created, 0);
+    const totalDone    = d.weeks.reduce((s, w) => s + w.done, 0);
+    const trendEff = totalCreated > 0 ? Math.round(totalDone / totalCreated * 100) : 0;
+
+    const burndownSvg = _svgLineChart(
+      d.burndown.map(b => ({ label: b.label, v: b.open })),
+      560, 160, '#881337', '#fdf2f8'
+    );
+    const trendSvg = _svgBarGroup(d.weeks, 560, 160);
+
+    // Status donut data
+    const statusMap = { new: 'Новые', in_progress: 'В работе', done: 'Готово', pending_review: 'На проверке' };
+    const statusColors = { new: '#3b82f6', in_progress: '#f59e0b', done: '#22c55e', pending_review: '#8b5cf6' };
+    const statusRows = d.statusBreak.map(s =>
+      `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="width:10px;height:10px;border-radius:3px;background:${statusColors[s.status]||'#9ca3af'}"></div>
+          <span style="font-size:13px">${statusMap[s.status]||s.status}</span>
+        </div>
+        <span style="font-size:13px;font-weight:700">${s.cnt}</span>
+      </div>`
+    ).join('');
+
+    const priorityColors = { high: '#ef4444', medium: '#f59e0b', low: '#22c55e' };
+    const priorityNames  = { high: 'Срочные', medium: 'Средние', low: 'Низкий' };
+    const priorityRows = d.priorityBreak.map(p =>
+      `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="width:10px;height:10px;border-radius:3px;background:${priorityColors[p.priority]||'#9ca3af'}"></div>
+          <span style="font-size:13px">${priorityNames[p.priority]||p.priority}</span>
+        </div>
+        <span style="font-size:13px;font-weight:700">${p.cnt}</span>
+      </div>`
+    ).join('');
+
+    container.innerHTML = `
+      <!-- Period tabs -->
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:20px">
+        ${PERIODS.map(p => `<button class="filter-btn ${_analyticsPeriod===p.days?'active':''}" onclick="loadAnalyticsReport(${p.days})">${p.label}</button>`).join('')}
+      </div>
+
+      <!-- KPI cards -->
+      <div class="stats-grid" style="margin-bottom:20px">
+        <div class="stat-card">
+          <div><div class="stat-value">${avgStr}</div><div class="stat-label">Среднее время выполнения</div></div>
+        </div>
+        <div class="stat-card">
+          <div><div class="stat-value">${totalCreated}</div><div class="stat-label">Создано задач за период</div></div>
+        </div>
+        <div class="stat-card">
+          <div><div class="stat-value">${totalDone}</div><div class="stat-label">Выполнено за период</div></div>
+        </div>
+        <div class="stat-card">
+          <div><div class="stat-value" style="color:${trendEff>=80?'#16a34a':trendEff>=50?'#d97706':'#dc2626'}">${trendEff}%</div><div class="stat-label">Эффективность периода</div></div>
+        </div>
+      </div>
+
+      <!-- Charts row -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <!-- Burndown -->
+        <div class="card" style="padding:16px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text)">Burndown — открытые задачи</div>
+          ${burndownSvg || '<div style="color:var(--text-muted);font-size:13px">Нет данных</div>'}
+        </div>
+        <!-- Weekly trend -->
+        <div class="card" style="padding:16px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <span style="font-size:13px;font-weight:700;color:var(--text)">Тренд по неделям</span>
+            <div style="display:flex;gap:10px;font-size:11px">
+              <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#6366f1;margin-right:4px"></span>Создано</span>
+              <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#22c55e;margin-right:4px"></span>Выполнено</span>
+            </div>
+          </div>
+          ${trendSvg || '<div style="color:var(--text-muted);font-size:13px">Нет данных</div>'}
+        </div>
+      </div>
+
+      <!-- Breakdown row -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="card" style="padding:16px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text)">По статусу</div>
+          ${statusRows || '<div style="color:var(--text-muted);font-size:13px">Нет данных</div>'}
+        </div>
+        <div class="card" style="padding:16px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text)">По приоритету</div>
+          ${priorityRows || '<div style="color:var(--text-muted);font-size:13px">Нет данных</div>'}
+        </div>
       </div>
     `;
   } catch (err) {

@@ -1200,6 +1200,82 @@ app.get('/api/reports/summary/pdf', auth, requirePerm('reports'), async (req, re
   }
 });
 
+// ─── Analytics Report ─────────────────────────────────────────────────────────
+
+app.get('/api/reports/analytics', auth, requirePerm('reports'), (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.period || '30'), 7), 365);
+  const TZ = 5 * 3600000;
+  const nowLocal = new Date(Date.now() + TZ);
+  const fromDate = new Date(nowLocal.getTime() - days * 86400000).toISOString().slice(0, 10);
+
+  // Average completion time (created_at → updated_at for done tasks), in hours
+  const avgRows = db.prepare(`
+    SELECT t.created_at, t.updated_at
+    FROM tasks t
+    WHERE t.status = 'done'
+      AND t.created_at >= ?
+      AND t.updated_at IS NOT NULL
+  `).all(fromDate);
+
+  let avgHours = null;
+  if (avgRows.length > 0) {
+    const total = avgRows.reduce((sum, r) => {
+      const diff = (new Date(r.updated_at.replace(' ', 'T')) - new Date(r.created_at.replace(' ', 'T'))) / 3600000;
+      return sum + (diff > 0 ? diff : 0);
+    }, 0);
+    avgHours = Math.round(total / avgRows.length);
+  }
+
+  // Weekly trend: tasks created and done per week for last N days
+  const weekCount = Math.ceil(days / 7);
+  const weeks = [];
+  for (let w = weekCount - 1; w >= 0; w--) {
+    const wEnd   = new Date(nowLocal.getTime() - w * 7 * 86400000);
+    const wStart = new Date(wEnd.getTime() - 7 * 86400000);
+    const wStartStr = wStart.toISOString().slice(0, 10);
+    const wEndStr   = wEnd.toISOString().slice(0, 10);
+    const label = wStartStr.slice(5); // MM-DD
+
+    const created = db.prepare(
+      `SELECT COUNT(*) as cnt FROM tasks WHERE date(created_at) > ? AND date(created_at) <= ?`
+    ).get(wStartStr, wEndStr).cnt;
+
+    const done = db.prepare(
+      `SELECT COUNT(*) as cnt FROM tasks WHERE status='done' AND date(updated_at) > ? AND date(updated_at) <= ?`
+    ).get(wStartStr, wEndStr).cnt;
+
+    weeks.push({ label, created, done });
+  }
+
+  // Burndown: cumulative open tasks over time (daily for last 30 days, weekly for more)
+  const burndown = [];
+  const bucketDays = days <= 30 ? 1 : 7;
+  const buckets = Math.ceil(days / bucketDays);
+  for (let i = buckets - 1; i >= 0; i--) {
+    const atDate = new Date(nowLocal.getTime() - i * bucketDays * 86400000).toISOString().slice(0, 10);
+    const open = db.prepare(`
+      SELECT COUNT(*) as cnt FROM tasks
+      WHERE date(created_at) <= ?
+        AND (status != 'done' OR date(updated_at) > ?)
+    `).get(atDate, atDate).cnt;
+    burndown.push({ label: atDate.slice(5), open });
+  }
+
+  // Status breakdown
+  const statusBreak = db.prepare(`
+    SELECT status, COUNT(*) as cnt FROM tasks
+    WHERE date(created_at) >= ? GROUP BY status
+  `).all(fromDate);
+
+  // Priority breakdown
+  const priorityBreak = db.prepare(`
+    SELECT priority, COUNT(*) as cnt FROM tasks
+    WHERE date(created_at) >= ? GROUP BY priority
+  `).all(fromDate);
+
+  res.json({ avgHours, weeks, burndown, statusBreak, priorityBreak, days });
+});
+
 // ─── SSE ──────────────────────────────────────────────────────────────────────
 
 app.get('/api/events', auth, (req, res) => {
