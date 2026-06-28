@@ -2192,6 +2192,48 @@ app.post('/api/admin/broadcast', auth, adminOnly, (req, res) => {
 });
 
 // SPA fallback
+// ─── Duty Schedule ────────────────────────────────────────────────────────────
+app.get('/api/duty', auth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT d.*, u.avatar_color, u.avatar_img
+    FROM duty_schedule d
+    LEFT JOIN users u ON u.id = d.user_id
+    ORDER BY d.week_start, d.employee_name
+  `).all();
+  // Group by week
+  const weeks = {};
+  for (const r of rows) {
+    if (!weeks[r.week_start]) weeks[r.week_start] = [];
+    weeks[r.week_start].push(r);
+  }
+  res.json({ weeks });
+});
+
+app.post('/api/duty', auth, requirePerm('manage_team'), (req, res) => {
+  const { entries } = req.body; // [{week_start, employee_name, user_id, comment}]
+  if (!Array.isArray(entries) || entries.length === 0) return res.status(400).json({ error: 'entries required' });
+  const ins = db.prepare('INSERT INTO duty_schedule (week_start, employee_name, user_id, comment) VALUES (?,?,?,?)');
+  for (const e of entries) ins.run(e.week_start, e.employee_name, e.user_id || null, e.comment || '');
+  res.json({ ok: true });
+});
+
+app.delete('/api/duty/:id', auth, requirePerm('manage_team'), (req, res) => {
+  db.prepare('DELETE FROM duty_schedule WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// Clear entire week and replace
+app.put('/api/duty/week/:week_start', auth, requirePerm('manage_team'), (req, res) => {
+  const { week_start } = req.params;
+  const { entries } = req.body;
+  db.prepare('DELETE FROM duty_schedule WHERE week_start=?').run(week_start);
+  if (Array.isArray(entries) && entries.length > 0) {
+    const ins = db.prepare('INSERT INTO duty_schedule (week_start, employee_name, user_id, comment) VALUES (?,?,?,?)');
+    for (const e of entries) ins.run(week_start, e.employee_name, e.user_id || null, e.comment || '');
+  }
+  res.json({ ok: true });
+});
+
 app.get('*', (req, res) => {
   if (!req.path.startsWith('/api')) {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));

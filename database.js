@@ -362,6 +362,17 @@ function initDB() {
   try { db.exec("ALTER TABLE users ADD COLUMN reset_code TEXT DEFAULT NULL"); } catch {}
   try { db.exec("ALTER TABLE users ADD COLUMN reset_code_expires TEXT DEFAULT NULL"); } catch {}
 
+  // Duty schedule
+  try { db.exec(`CREATE TABLE IF NOT EXISTS duty_schedule (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    week_start  TEXT NOT NULL,
+    employee_name TEXT NOT NULL,
+    user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    comment     TEXT DEFAULT '',
+    created_at  TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+  try { db.exec("CREATE INDEX IF NOT EXISTS idx_duty_week ON duty_schedule(week_start)"); } catch {}
+
   const admin = db.prepare("SELECT id FROM users WHERE role = 'admin'").get();
   if (!admin) {
     db.prepare(`

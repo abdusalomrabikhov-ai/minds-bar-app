@@ -1451,6 +1451,45 @@ input, textarea, select { font: inherit; }
 }
 .employee-filter select:focus { border-color: var(--primary); }
 
+/* ─── Duty Schedule ─────────────────────────────────────────────────────── */
+.duty-week {
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px;
+  padding: 18px 20px; margin-bottom: 16px;
+  transition: box-shadow 0.15s;
+}
+.duty-week-current {
+  border-color: #86efac;
+  box-shadow: 0 0 0 3px rgba(134,239,172,0.18);
+}
+.duty-week-past { opacity: 0.6; }
+.duty-week-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px;
+}
+.duty-week-title {
+  font-size: 14px; font-weight: 700; color: var(--text);
+  display: flex; align-items: center; gap: 7px;
+}
+.duty-cards-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+.duty-card {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; position: relative;
+}
+.duty-card-info { flex: 1; min-width: 0; }
+.duty-card-name { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.duty-card-comment { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.duty-del-btn {
+  background: none; border: none; cursor: pointer; color: var(--text-muted);
+  font-size: 12px; padding: 2px 5px; border-radius: 5px; flex-shrink: 0;
+  opacity: 0; transition: opacity 0.15s;
+}
+.duty-card:hover .duty-del-btn { opacity: 1; }
+.duty-del-btn:hover { background: #fee2e2; color: #ef4444; }
+
 /* ─── Responsive ────────────────────────────────────────────────────────── */
 @media (max-width: 900px) {
   .dash-charts { grid-template-columns: 1fr 1fr; }

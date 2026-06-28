@@ -5092,6 +5092,7 @@ function teamSetTab(t) {
 async function renderTeamPage() {
   if (_teamTab === 'hr') { await _renderHrPage(); return; }
   if (_teamTab === 'workload') { await _renderWorkloadPage(); return; }
+  if (_teamTab === 'duty') { await _renderDutyPage(); return; }
   const isAdmin = state.user.role === 'admin';
   try {
     const [users, tasks, userProjects] = await Promise.all([GET('/users'), GET('/tasks?all=1'), GET('/user-projects')]);
@@ -5129,6 +5130,7 @@ async function renderTeamPage() {
         <button class="fin-tab ${_teamTab==='members'?'active':''}" onclick="teamSetTab('members')">Сотрудники</button>
         ${canManageHr ? `<button class="fin-tab ${_teamTab==='hr'?'active':''}" onclick="teamSetTab('hr')">Кадры</button>` : ''}
         <button class="fin-tab ${_teamTab==='workload'?'active':''}" onclick="teamSetTab('workload')">Нагрузка</button>
+        <button class="fin-tab ${_teamTab==='duty'?'active':''}" onclick="teamSetTab('duty')">Дежурства</button>
       </div>
       <div class="section-header" style="margin-top:16px">
         <div class="section-title">Участники команды (${users.length})</div>
@@ -5674,6 +5676,181 @@ async function exportWorkloadPDF() {
       <script>window.onload=()=>window.print()<\/script></body></html>`);
     win.document.close();
   } catch(err) { toast('Ошибка PDF: ' + err.message, 'error'); }
+}
+
+// ─── Duty Schedule Page ───────────────────────────────────────────────────────
+async function _renderDutyPage() {
+  const isAdmin = state.user.role === 'admin' || state.user.permissions?.manage_team;
+  const el = document.getElementById('page-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;padding:60px 0;color:var(--text-muted)">Загрузка...</div>`;
+
+  try {
+    const [data, users] = await Promise.all([GET('/duty'), GET('/users')]);
+    const userMap = {};
+    users.forEach(u => { userMap[u.id] = u; });
+
+    const weekKeys = Object.keys(data.weeks).sort();
+    const today = new Date().toISOString().slice(0,10);
+
+    // Determine current week Monday
+    const todayD = new Date(today);
+    const day = todayD.getDay();
+    const diffToMon = (day === 0 ? -6 : 1 - day);
+    const thisWeekStart = new Date(todayD);
+    thisWeekStart.setDate(todayD.getDate() + diffToMon);
+    const thisWeekStr = thisWeekStart.toISOString().slice(0,10);
+
+    const fmtWeek = (ws) => {
+      const d = new Date(ws + 'T00:00:00');
+      const d2 = new Date(d); d2.setDate(d.getDate() + 6);
+      const months = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+      if (d.getMonth() === d2.getMonth()) {
+        return `${d.getDate()}–${d2.getDate()} ${months[d.getMonth()]}`;
+      }
+      return `${d.getDate()} ${months[d.getMonth()]} – ${d2.getDate()} ${months[d2.getMonth()]}`;
+    };
+
+    const avatarCircle = (name, u) => {
+      if (u?.avatar_img) return `<img src="${u.avatar_img}" style="width:32px;height:32px;border-radius:50%;object-fit:cover">`;
+      const color = u?.avatar_color || '#6366f1';
+      const initials = name.split(' ').slice(0,2).map(p=>p[0]||'').join('').toUpperCase();
+      return `<div style="width:32px;height:32px;border-radius:50%;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">${initials}</div>`;
+    };
+
+    const weeksHtml = weekKeys.length === 0
+      ? `<div class="empty-state"><div class="empty-state-icon">📅</div><div>График дежурств не добавлен</div></div>`
+      : weekKeys.map(ws => {
+          const entries = data.weeks[ws];
+          const isCurrent = ws === thisWeekStr;
+          const isPast = ws < thisWeekStr;
+          const badge = isCurrent
+            ? `<span style="background:#dcfce7;color:#16a34a;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;margin-left:8px">Текущая</span>`
+            : isPast ? `<span style="background:#f1f5f9;color:#9ca3af;font-size:10px;padding:2px 8px;border-radius:20px;margin-left:8px">Прошла</span>` : '';
+
+          const cards = entries.map(e => {
+            const u = e.user_id ? userMap[e.user_id] : null;
+            return `<div class="duty-card">
+              ${avatarCircle(e.employee_name, u)}
+              <div class="duty-card-info">
+                <div class="duty-card-name">${_escHtml(e.employee_name)}</div>
+                ${e.comment ? `<div class="duty-card-comment">${_escHtml(e.comment)}</div>` : ''}
+              </div>
+              ${isAdmin ? `<button class="duty-del-btn" onclick="deleteDutyEntry(${e.id})" title="Удалить">✕</button>` : ''}
+            </div>`;
+          }).join('');
+
+          return `<div class="duty-week ${isCurrent?'duty-week-current':''} ${isPast?'duty-week-past':''}">
+            <div class="duty-week-header">
+              <div class="duty-week-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                Неделя ${fmtWeek(ws)}
+                ${badge}
+              </div>
+              <div style="color:var(--text-muted);font-size:12px">${entries.length} ${entries.length===1?'дежурный':entries.length<5?'дежурных':'дежурных'}</div>
+            </div>
+            <div class="duty-cards-grid">${cards || '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">Нет дежурных</div>'}</div>
+          </div>`;
+        }).join('');
+
+    el.innerHTML = `
+      <div class="team-tabs-bar">
+        <button class="fin-tab" onclick="teamSetTab('members')">Сотрудники</button>
+        ${isAdmin ? `<button class="fin-tab" onclick="teamSetTab('hr')">Кадры</button>` : ''}
+        <button class="fin-tab" onclick="teamSetTab('workload')">Нагрузка</button>
+        <button class="fin-tab active" onclick="teamSetTab('duty')">Дежурства</button>
+      </div>
+      <div class="section-header" style="margin-top:16px">
+        <div class="section-title">График дежурств</div>
+        ${isAdmin ? `<button class="btn btn-blue btn-sm" onclick="openAddDutyModal()">＋ Добавить дежурство</button>` : ''}
+      </div>
+      <div id="duty-weeks-list">${weeksHtml}</div>
+    `;
+  } catch(e) {
+    document.getElementById('page-content').innerHTML = `<div style="color:red;padding:40px">Ошибка: ${e.message}</div>`;
+  }
+}
+
+async function deleteDutyEntry(id) {
+  if (!confirm('Удалить запись?')) return;
+  await api('DELETE', `/duty/${id}`);
+  _renderDutyPage();
+}
+
+function openAddDutyModal() {
+  const users = state.users || [];
+  const todayD = new Date();
+  const day = todayD.getDay();
+  const diffToMon = (day === 0 ? -6 : 1 - day);
+  const mon = new Date(todayD); mon.setDate(todayD.getDate() + diffToMon);
+  const defaultWeek = mon.toISOString().slice(0,10);
+
+  openModal(`<div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <span class="modal-title">Добавить дежурство</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Неделя (начало — понедельник)</label>
+        <input id="duty-week" type="date" class="input" value="${defaultWeek}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Сотрудник</label>
+        <select id="duty-user" class="input">
+          <option value="">— Выбрать из команды —</option>
+          ${users.map(u=>`<option value="${u.id}" data-name="${_escHtml(u.name)}">${_escHtml(u.name)}</option>`).join('')}
+          <option value="__custom__">Другой (ввести вручную)</option>
+        </select>
+      </div>
+      <div class="form-group" id="duty-custom-wrap" style="display:none">
+        <label class="form-label">ФИО (вручную)</label>
+        <input id="duty-custom-name" class="input" placeholder="Фамилия И.О.">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Комментарий</label>
+        <input id="duty-comment" class="input" placeholder="Необязательно">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+      <button class="btn btn-blue" onclick="saveDutyEntry()">Добавить</button>
+    </div>
+  </div>`);
+  document.getElementById('duty-user').addEventListener('change', e => {
+    document.getElementById('duty-custom-wrap').style.display = e.target.value === '__custom__' ? '' : 'none';
+  });
+}
+
+async function saveDutyEntry() {
+  const weekRaw = document.getElementById('duty-week').value;
+  const userSel = document.getElementById('duty-user').value;
+  const customName = document.getElementById('duty-custom-name')?.value?.trim();
+  const comment = document.getElementById('duty-comment').value.trim();
+  if (!weekRaw) return toast('Укажите неделю', 'error');
+
+  // Snap to Monday
+  const d = new Date(weekRaw + 'T00:00:00');
+  const diff = (d.getDay() === 0 ? -6 : 1 - d.getDay());
+  d.setDate(d.getDate() + diff);
+  const week_start = d.toISOString().slice(0,10);
+
+  let employee_name = '';
+  let user_id = null;
+  if (userSel === '__custom__') {
+    if (!customName) return toast('Введите ФИО', 'error');
+    employee_name = customName;
+  } else if (userSel) {
+    const opt = document.querySelector(`#duty-user option[value="${userSel}"]`);
+    employee_name = opt?.dataset?.name || opt?.textContent || '';
+    user_id = parseInt(userSel);
+  } else {
+    return toast('Выберите сотрудника', 'error');
+  }
+
+  await api('POST', '/duty', { entries: [{ week_start, employee_name, user_id, comment }] });
+  closeModal();
+  toast('Дежурство добавлено');
+  _renderDutyPage();
 }
 
 function openHrEmployeeModal(id = null) {
