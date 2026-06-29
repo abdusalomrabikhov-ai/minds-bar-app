@@ -7689,7 +7689,7 @@ const FIN_DIRECTION_COLOR = { marketing: '#7c3aed', b2b: '#0284c7', b2c: '#6366f
 const FIN_CURRENCIES   = ['TJS', 'USD', 'RUB', 'EUR'];
 
 let _finMonth  = (() => { try { return sessionStorage.getItem('fin_month') || new Date().toISOString().slice(0, 7); } catch { return new Date().toISOString().slice(0, 7); } })();
-let _finTab    = (() => { try { const t = sessionStorage.getItem('fin_tab'); return (t && t !== 'timesheet') ? t : 'month'; } catch { return 'month'; } })();
+let _finTab    = (() => { try { return sessionStorage.getItem('fin_tab') || 'month'; } catch { return 'month'; } })();
 let _teamTab   = (() => { try { const t = sessionStorage.getItem('team_tab'); return (t && t !== 'timesheet') ? t : 'members'; } catch { return 'members'; } })();
 let _finFilter = { status: '', payment_type: '', direction: '', search: '' };
 
@@ -7997,7 +7997,7 @@ async function finSetMonth(m) {
 }
 function finSetTab(t) {
   _finTab = t;
-  try { if (t !== 'timesheet') sessionStorage.setItem('fin_tab', t); } catch {}
+  try { sessionStorage.setItem('fin_tab', t); } catch {}
   renderFinancePage();
 }
 
