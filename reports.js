@@ -4,12 +4,24 @@ const { db } = require('./database');
 const FONT_REG  = path.join(__dirname, 'fonts', 'gothampro.ttf');
 const FONT_BOLD = path.join(__dirname, 'fonts', 'gothampro_bold.ttf');
 
-function buildSummaryData(days) {
+function buildSummaryData(days, fromOverride, toOverride) {
   const nowLocal   = new Date(Date.now() + 5 * 3600000); // UTC+5
-  const startLocal = new Date(nowLocal.getTime() - days * 86400000);
-  const nowISOt    = nowLocal.toISOString().slice(0, 19);
-  const todayISO   = nowLocal.toISOString().slice(0, 10);
-  const startISO   = startLocal.toISOString().slice(0, 19).replace('T', ' ');
+  // Use date strings directly; created_at stored as UTC so we compensate by
+  // computing the UTC equivalent of start-of-day and end-of-day in UTC+5
+  const startLocal = fromOverride
+    ? new Date(fromOverride + 'T00:00:00+05:00')
+    : new Date(nowLocal.getTime() - days * 86400000);
+  const endLocal   = toOverride
+    ? new Date(toOverride + 'T23:59:59+05:00')
+    : nowLocal;
+  const nowISOt  = endLocal.toISOString().slice(0, 19).replace('T', ' ');
+  const startISO = startLocal.toISOString().slice(0, 19).replace('T', ' ');
+  // Overdue = deadline strictly before today 00:00 UTC+5
+  const todayStartLocal = new Date();
+  todayStartLocal.setHours(0, 0, 0, 0);
+  const todayStartUTC = new Date(todayStartLocal.getTime() - 5 * 3600000);
+  const todayStartISO = todayStartUTC.toISOString().slice(0, 19).replace('T', ' ');
+  const todayISO = todayStartUTC.toISOString().slice(0, 10);
 
   const global = db.prepare(`
     SELECT
@@ -19,8 +31,8 @@ function buildSummaryData(days) {
         (length(t.deadline) > 10 AND t.deadline < ? OR length(t.deadline) <= 10 AND t.deadline < ?)
       THEN 1 ELSE 0 END), 0) as overdue
     FROM tasks t
-    WHERE t.created_at >= ?
-  `).get(nowISOt, todayISO, startISO);
+    WHERE t.created_at >= ? AND t.created_at <= ?
+  `).get(todayStartISO, todayISO, startISO, nowISOt);
 
   const employees = db.prepare(
     "SELECT id, name, avatar_color, avatar_img FROM users WHERE role = 'employee' ORDER BY name"
@@ -36,8 +48,8 @@ function buildSummaryData(days) {
         THEN 1 ELSE 0 END), 0) as overdue
       FROM tasks t
       LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
-      WHERE (t.assignee_id = ? OR ta.user_id = ?) AND t.created_at >= ?
-    `).get(nowISOt, todayISO, user.id, user.id, user.id, startISO);
+      WHERE (t.assignee_id = ? OR ta.user_id = ?) AND t.created_at >= ? AND t.created_at <= ?
+    `).get(todayStartISO, todayISO, user.id, user.id, user.id, startISO, nowISOt);
 
     const dlRows = db.prepare(`
       SELECT DISTINCT t.id, t.status, t.deadline, t.updated_at,
@@ -45,8 +57,8 @@ function buildSummaryData(days) {
       FROM tasks t
       LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
       WHERE (t.assignee_id = ? OR ta.user_id = ?)
-        AND t.created_at >= ? AND t.deadline IS NOT NULL AND t.deadline != ''
-    `).all(user.id, user.id, user.id, startISO);
+        AND t.created_at >= ? AND t.created_at <= ? AND t.deadline IS NOT NULL AND t.deadline != ''
+    `).all(user.id, user.id, user.id, startISO, nowISOt);
 
     const taskList = db.prepare(`
       SELECT DISTINCT t.id, t.title, t.status, t.deadline, t.priority,
@@ -57,9 +69,9 @@ function buildSummaryData(days) {
       FROM tasks t
       LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
       LEFT JOIN projects p ON p.id = t.project_id
-      WHERE (t.assignee_id = ? OR ta.user_id = ?) AND t.created_at >= ?
+      WHERE (t.assignee_id = ? OR ta.user_id = ?) AND t.created_at >= ? AND t.created_at <= ?
       ORDER BY CASE t.status WHEN 'done' THEN 2 ELSE 1 END, t.deadline ASC NULLS LAST
-    `).all(nowISOt, todayISO, user.id, user.id, user.id, startISO);
+    `).all(todayStartISO, todayISO, user.id, user.id, user.id, startISO, nowISOt);
 
     let doneOnTime = 0, doneLate = 0;
     for (const t of dlRows) {
@@ -88,16 +100,17 @@ function buildSummaryData(days) {
     };
   });
 
-  const periodLabel =
-    days === 1  ? '1 день'   :
-    days === 3  ? '3 дня'    :
-    days === 7  ? '7 дней'   :
-    days === 14 ? '14 дней'  :
-    days === 30 ? 'Месяц'    : `${days} дней`;
-
   const fmt = d => `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
   const dateFrom = fmt(startLocal);
-  const dateTo   = fmt(nowLocal);
+  const dateTo   = fmt(endLocal);
+
+  const periodLabel = (fromOverride || toOverride)
+    ? `${dateFrom} — ${dateTo}`
+    : days === 1  ? '1 день'   :
+      days === 3  ? '3 дня'    :
+      days === 7  ? '7 дней'   :
+      days === 14 ? '14 дней'  :
+      days === 30 ? 'Месяц'    : `${days} дней`;
 
   return { global, employees: perEmployee, period: days, periodLabel, generatedAt: nowISOt, dateFrom, dateTo };
 }

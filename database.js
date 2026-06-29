@@ -362,6 +362,39 @@ function initDB() {
   try { db.exec("ALTER TABLE users ADD COLUMN reset_code TEXT DEFAULT NULL"); } catch {}
   try { db.exec("ALTER TABLE users ADD COLUMN reset_code_expires TEXT DEFAULT NULL"); } catch {}
 
+  // Google Calendar tokens per user
+  try { db.exec(`CREATE TABLE IF NOT EXISTS google_tokens (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    access_token TEXT NOT NULL,
+    refresh_token TEXT,
+    expiry_date  INTEGER,
+    updated_at   TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+
+  // Local calendar
+  try { db.exec(`CREATE TABLE IF NOT EXISTS calendar_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    location    TEXT DEFAULT '',
+    start_dt    TEXT NOT NULL,
+    end_dt      TEXT NOT NULL,
+    created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at  TEXT DEFAULT (datetime('now')),
+    updated_at  TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+  try { db.exec(`CREATE TABLE IF NOT EXISTS calendar_attendees (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL REFERENCES calendar_events(id) ON DELETE CASCADE,
+    user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(event_id, user_id)
+  )`); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_cal_ev_start ON calendar_events(start_dt)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_cal_ev_creator ON calendar_events(created_by)'); } catch {}
+  try { db.exec("ALTER TABLE calendar_events ADD COLUMN recurrence TEXT DEFAULT 'none'"); } catch {}
+  try { db.exec("ALTER TABLE calendar_events ADD COLUMN recurrence_until TEXT DEFAULT NULL"); } catch {}
+
   // Duty schedule
   try { db.exec(`CREATE TABLE IF NOT EXISTS duty_schedule (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -372,6 +405,70 @@ function initDB() {
     created_at  TEXT DEFAULT (datetime('now'))
   )`); } catch {}
   try { db.exec("CREATE INDEX IF NOT EXISTS idx_duty_week ON duty_schedule(week_start)"); } catch {}
+
+  // ── Timesheet (Табель рабочего времени) ──────────────────────────────────────
+  try { db.exec(`CREATE TABLE IF NOT EXISTS timesheet_employees (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    name        TEXT NOT NULL,
+    position    TEXT DEFAULT '',
+    salary      INTEGER DEFAULT 0,
+    color       TEXT DEFAULT '#6366f1',
+    is_active   INTEGER DEFAULT 1,
+    created_at  TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+
+  try { db.exec(`CREATE TABLE IF NOT EXISTS timesheet_records (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER NOT NULL REFERENCES timesheet_employees(id) ON DELETE CASCADE,
+    date        TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'work',
+    hours       INTEGER DEFAULT 8,
+    note        TEXT DEFAULT '',
+    UNIQUE(employee_id, date)
+  )`); } catch {}
+
+  try { db.exec(`CREATE TABLE IF NOT EXISTS timesheet_holidays (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    date        TEXT NOT NULL UNIQUE,
+    name        TEXT NOT NULL,
+    is_custom   INTEGER DEFAULT 0
+  )`); } catch {}
+
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_ts_records_emp ON timesheet_records(employee_id)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_ts_records_date ON timesheet_records(date)'); } catch {}
+
+  // Seed Tajikistan public holidays for a window of years around current year
+  {
+    const seedHolidays = [
+      ['01-01', 'Новый год'],
+      ['03-08', '8 марта'],
+      ['03-21', 'Навруз'],
+      ['03-22', 'Навруз'],
+      ['03-23', 'Навруз'],
+      ['05-09', 'День Победы'],
+      ['06-27', 'День национального единства'],
+      ['09-09', 'День независимости'],
+      ['11-06', 'День Конституции'],
+      ['12-31', 'Новый год (канун)'],
+    ];
+    const insertHol = db.prepare('INSERT OR IGNORE INTO timesheet_holidays (date, name, is_custom) VALUES (?, ?, 0)');
+    const curYear = new Date().getFullYear();
+    for (let yr = curYear - 1; yr <= curYear + 2; yr++) {
+      for (const [md, name] of seedHolidays) {
+        insertHol.run(`${yr}-${md}`, name);
+      }
+    }
+  }
+
+  try { db.exec(`CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    endpoint   TEXT NOT NULL UNIQUE,
+    p256dh     TEXT NOT NULL,
+    auth       TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
 
   const admin = db.prepare("SELECT id FROM users WHERE role = 'admin'").get();
   if (!admin) {

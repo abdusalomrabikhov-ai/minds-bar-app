@@ -625,7 +625,7 @@ async function initApp() {
     navigateTo('activity');
     openUserActivityPage(parseInt(parts[1]), userActivityPeriod);
   } else {
-    const VALID_PAGES = new Set(['dashboard','tasks','mytasks','team-tasks','team','reports','settings','activity','review','finance-log','ideahast','kids','b2c','finance','best-employee','schedule']);
+    const VALID_PAGES = new Set(['dashboard','tasks','mytasks','team-tasks','team','reports','settings','activity','review','finance-log','ideahast','kids','b2c','finance','best-employee','schedule','duty','calendar','timesheet']);
     navigateTo(saved && VALID_PAGES.has(saved) ? saved : 'dashboard');
   }
 }
@@ -743,7 +743,10 @@ const PAGE_TITLES = {
   team: 'Команда',
   reports: 'Отчёты',
   'best-employee': 'Лучший сотрудник',
+  timesheet: 'Табель',
   schedule: 'Расписание',
+  duty: 'График дежурств',
+  calendar: 'Календарь',
   settings: 'Настройки',
   employee: 'Профиль сотрудника',
   activity: 'Активность',
@@ -813,7 +816,10 @@ function navigateTo(page, projectId = null, pushHistory = true) {
     case 'b2c': renderB2CPage(); break;
     case 'finance': renderFinancePage(); break;
     case 'best-employee': renderBestEmployeePage(); break;
+    case 'timesheet': renderTimesheetPage(); break;
     case 'schedule': renderSchedulePage(); break;
+    case 'duty': _renderDutyPage(); break;
+    case 'calendar': renderCalendarPage(); break;
   }
 }
 
@@ -1335,7 +1341,8 @@ function renderDashboardCharts(tasks) {
   const done = tasks.filter(t => t.status === 'done').length;
   const inp = tasks.filter(t => t.status === 'in_progress').length;
   const nw = tasks.filter(t => t.status === 'new').length;
-  const ov = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date()).length;
+  const _todayStart = new Date(); _todayStart.setHours(0,0,0,0);
+  const ov = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < _todayStart).length;
   const pct = total > 0 ? Math.round(done / total * 100) : 0;
 
   const donutSlices = [
@@ -1355,13 +1362,19 @@ function renderDashboardCharts(tasks) {
   const projs = Object.entries(projMap).sort((a, b) => b[1].total - a[1].total);
   const maxP = projs.length ? Math.max(...projs.map(([, s]) => s.total)) : 1;
 
-  // Employee stats
+  // Employee stats (includes multi_assignees)
   const empMap = {};
+  const _addEmpStat = (name, id, color, img, isDone) => {
+    if (!name) return;
+    if (!empMap[name]) empMap[name] = { total: 0, done: 0, color: color || '#881337', id, img: img || '' };
+    empMap[name].total++;
+    if (isDone) empMap[name].done++;
+  };
   tasks.forEach(t => {
-    if (!t.assignee_name) return;
-    if (!empMap[t.assignee_name]) empMap[t.assignee_name] = { total: 0, done: 0, color: t.assignee_color || '#881337', id: t.assignee_id, img: t.assignee_img || '' };
-    empMap[t.assignee_name].total++;
-    if (t.status === 'done') empMap[t.assignee_name].done++;
+    _addEmpStat(t.assignee_name, t.assignee_id, t.assignee_color, t.assignee_img, t.status === 'done');
+    (t.multi_assignees || []).forEach(a => {
+      if (a.id !== t.assignee_id) _addEmpStat(a.full_name, a.id, a.color, a.avatar_img, t.status === 'done');
+    });
   });
   // Обогатить avatar_img из state.users если не пришёл с задачей
   Object.values(empMap).forEach(s => {
@@ -1554,7 +1567,8 @@ async function renderDashboard() {
   }
   dashTasksLimit = 10;
   try {
-    const tasks = await GET('/tasks?all=1');
+    const monthParam = _dashMonth !== 'all' ? '&created_month=' + _dashMonth : '';
+    const tasks = await GET('/tasks?all=1' + monthParam);
     const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
     const todayEnd   = new Date(); todayEnd.setHours(23, 59, 59, 999);
     const tomorrowEnd = new Date(todayEnd.getTime() + 24 * 60 * 60 * 1000);
@@ -1571,7 +1585,31 @@ async function renderDashboard() {
     const periodNames = [['week','Неделя'],['month','Месяц'],['3month','3 мес.'],['6month','6 мес.'],['year','1 год']];
     const periodLabels = { week: 'за неделю', month: 'за месяц', '3month': 'за 3 месяца', '6month': 'за 6 месяцев', year: 'за год' };
 
+    // Month slider
+    const _MNAMES = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+    const _nowD = new Date(Date.now() + 5*3600000);
+    const _curM = _nowD.toISOString().slice(0,7);
+    const _winS = -2 + _dashWinOffset;
+    const _vis5 = Array.from({length:5},(_,i)=>{
+      const d = new Date(_nowD.getFullYear(), _nowD.getMonth() + _winS + i, 1);
+      return d.toISOString().slice(0,7);
+    });
+    const _arrowD = (dir, disabled) =>
+      `<button class="be-arrow-btn ${disabled?'disabled':''}" onclick="${disabled?'':`dashShiftWindow(${dir})`}">${dir<0?'‹':'›'}</button>`;
+    const _dashMonthBar = `<div class="be-month-bar" style="margin-bottom:16px">
+      <button class="be-month-tab ${_dashMonth==='all'?'active':''}" onclick="setDashMonth('all')">Все</button>
+      ${_arrowD(-1, _dashWinOffset<=-24)}
+      ${_vis5.map(m => {
+        const isCur = m===_curM, isSel = m===_dashMonth;
+        return `<button class="be-month-tab ${isSel?'active':''} ${isCur&&!isSel?'be-month-tab-current':''}" onclick="setDashMonth('${m}')">
+          ${_MNAMES[+m.split('-')[1]-1]} ${m.split('-')[0]}${isCur?'<span class="be-tab-now">сейчас</span>':''}
+        </button>`;
+      }).join('')}
+      ${_arrowD(1, _dashWinOffset>=24)}
+    </div>`;
+
     document.getElementById('page-content').innerHTML = `
+      ${_dashMonthBar}
       ${renderDashboardCharts(tasks)}
 
       ${totalUrgent > 0 ? `
@@ -1649,6 +1687,8 @@ function showMoreDashTasks() {
 let tasksFilter = { status: '', priority: '', search: '', assignee_id: '', overdue: false };
 let myTasksMode = false;
 let dashPeriod = 'month';
+let _dashMonth = new Date(Date.now() + 5*3600000).toISOString().slice(0,7); // 'all' = no filter
+let _dashWinOffset = 0;
 let activityDays = 30;
 let upcomingWeekOffset = 0;
 let tasksCurrentPage = 1;
@@ -1667,6 +1707,8 @@ function periodStart(p) {
   return d;
 }
 function setDashPeriod(p) { dashPeriod = p; renderDashboard(); }
+function setDashMonth(m) { _dashMonth = m; renderDashboard(); }
+function dashShiftWindow(delta) { _dashWinOffset += delta; renderDashboard(); }
 
 function navigateToTasksWithFilter(filter) {
   if (myTasksMode) {
@@ -2214,6 +2256,10 @@ function cpOpenAdd(btn, dateStr, projectId) {
               <span class="cp-pub-type-dot" style="background:${v.color}"></span>${v.label}
             </label>`).join('')}
         </div>
+        <div id="cp-add-qty-row" class="field" style="margin-top:14px;display:none">
+          <label class="field-label">Количество сторис</label>
+          <input id="cp-add-qty" type="number" min="1" max="50" class="form-control" value="1" style="max-width:120px">
+        </div>
         <div class="field" style="margin-top:14px">
           <label class="field-label">Заголовок <span style="color:#9ca3af;font-weight:400">(необязательно)</span></label>
           <input id="cp-add-title" class="form-control" placeholder="Например: Пост про новый продукт">
@@ -2229,11 +2275,17 @@ function cpOpenAdd(btn, dateStr, projectId) {
       </div>
     </div>
   `);
-  // highlight selected type
+  // highlight selected type + toggle qty field
+  const _cpAddQtyRow = () => {
+    const t = document.querySelector('input[name="cp-add-type-r"]:checked')?.value;
+    const row = document.getElementById('cp-add-qty-row');
+    if (row) row.style.display = t === 'story' ? '' : 'none';
+  };
   document.querySelectorAll('.cp-pub-type-btn').forEach(lbl => {
     lbl.classList.toggle('active', lbl.dataset.val === 'post');
     lbl.querySelector('input').addEventListener('change', () => {
       document.querySelectorAll('.cp-pub-type-btn').forEach(l => l.classList.toggle('active', l.dataset.val === lbl.dataset.val));
+      _cpAddQtyRow();
     });
   });
 }
@@ -2245,9 +2297,10 @@ async function cpSubmitAdd(dateStr, projectId) {
   const type  = typeInput?.value || 'post';
   const title = (document.getElementById('cp-add-title')?.value || '').trim();
   const description = (document.getElementById('cp-add-desc')?.value || '').trim();
+  const qty   = type === 'story' ? (parseInt(document.getElementById('cp-add-qty')?.value) || 1) : 1;
   closeModal();
   try {
-    await api('POST', `/projects/${projectId}/content/item`, { date: dateStr, type, title, quantity: 1, description });
+    await api('POST', `/projects/${projectId}/content/item`, { date: dateStr, type, title, quantity: qty, description });
     renderProjectContentTab(projectId);
   } catch(e) {
     toast('Ошибка: ' + e.message, 'error');
@@ -4271,33 +4324,53 @@ async function renderReportsPage() {
 // ─── Summary Report ──────────────────────────────────────────────────────────
 
 let _summaryPeriod = 7;
+let _summaryFrom = null;
+let _summaryTo   = null;
 
 async function downloadSummaryPDF(days) {
   try {
-    const res = await fetch(`/api/reports/summary/pdf?period=${days}`, {
+    let url = `/api/reports/summary/pdf?period=${days}`;
+    if (_summaryFrom) url += `&from=${_summaryFrom}`;
+    if (_summaryTo)   url += `&to=${_summaryTo}`;
+    const res = await fetch(url, {
       headers: { Authorization: 'Bearer ' + state.token }
     });
     if (!res.ok) { toast('Ошибка генерации PDF', 'error'); return; }
     const blob = await res.blob();
-    const url  = URL.createObjectURL(blob);
+    const burl = URL.createObjectURL(blob);
     const a    = document.createElement('a');
-    a.href     = url;
-    a.download = `report-${days}d.pdf`;
+    a.href     = burl;
+    a.download = _summaryFrom ? `report-${_summaryFrom}-${_summaryTo||''}.pdf` : `report-${days}d.pdf`;
     a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setTimeout(() => URL.revokeObjectURL(burl), 5000);
   } catch (err) {
     toast(err.message, 'error');
   }
 }
 
+function _summaryApplyCustomRange() {
+  const f = document.getElementById('sum-from')?.value;
+  const t = document.getElementById('sum-to')?.value;
+  if (!f || !t) { toast('Выберите обе даты', 'error'); return; }
+  if (f > t) { toast('Дата «с» должна быть раньше «по»', 'error'); return; }
+  _summaryFrom = f;
+  _summaryTo   = t;
+  _summaryPeriod = null;
+  loadSummaryReport(null);
+}
+
 async function loadSummaryReport(days) {
+  if (days !== null) { _summaryFrom = null; _summaryTo = null; }
   _summaryPeriod = days;
   const container = document.getElementById('report-content');
   if (!container) return;
   container.innerHTML = `<div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div>`;
 
   try {
-    const data = await GET(`/reports/summary?period=${days}`);
+    let sumUrl = `/reports/summary?period=${days||7}`;
+    if (_summaryFrom) sumUrl += `&from=${_summaryFrom}`;
+    if (_summaryTo)   sumUrl += `&to=${_summaryTo}`;
+    const data = await GET(sumUrl);
     const { global: g, employees, periodLabel } = data;
     const eff = g.total > 0 ? Math.round(g.done / g.total * 100) : 0;
 
@@ -4365,12 +4438,18 @@ async function loadSummaryReport(days) {
     container.innerHTML = `
       <!-- Period tabs + Download -->
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px">
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
           ${PERIODS.map(p => `
             <button class="filter-btn ${_summaryPeriod===p.days?'active':''}" onclick="loadSummaryReport(${p.days})">${p.label}</button>
           `).join('')}
+          <div style="display:flex;align-items:center;gap:4px;margin-left:4px">
+            <input type="date" id="sum-from" value="${_summaryFrom||''}" style="border:1px solid #d1d5db;border-radius:8px;padding:4px 8px;font-size:12px;color:#374151;background:#fff;cursor:pointer" onchange="document.getElementById('sum-to').min=this.value">
+            <span style="font-size:12px;color:#6b7280">—</span>
+            <input type="date" id="sum-to" value="${_summaryTo||''}" style="border:1px solid #d1d5db;border-radius:8px;padding:4px 8px;font-size:12px;color:#374151;background:#fff;cursor:pointer" onchange="document.getElementById('sum-from').max=this.value">
+            <button class="filter-btn ${!_summaryPeriod?'active':''}" onclick="_summaryApplyCustomRange()" style="margin-left:2px">Применить</button>
+          </div>
         </div>
-        <button onclick="downloadSummaryPDF(${days})" class="btn btn-outline btn-sm" style="display:inline-flex;align-items:center;gap:6px">
+        <button onclick="downloadSummaryPDF(${days||7})" class="btn btn-outline btn-sm" style="display:inline-flex;align-items:center;gap:6px">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Скачать PDF
         </button>
@@ -4435,6 +4514,8 @@ async function loadSummaryReport(days) {
 // ─── Analytics Report ────────────────────────────────────────────────────────
 
 let _analyticsPeriod = 30;
+let _analyticsFrom = null;
+let _analyticsTo   = null;
 
 function _svgLineChart(points, width, height, color = '#881337', fill = '#fdf2f8') {
   if (!points.length) return '';
@@ -4525,30 +4606,48 @@ function _svgBarGroup(weeks, width, height) {
 async function downloadAnalyticsPDF(days) {
   try {
     toast('Генерирую PDF...', '');
-    const res = await fetch(`/api/reports/analytics/pdf?period=${days}`, {
+    let url = `/api/reports/analytics/pdf?period=${days}`;
+    if (_analyticsFrom) url += `&from=${_analyticsFrom}`;
+    if (_analyticsTo)   url += `&to=${_analyticsTo}`;
+    const res = await fetch(url, {
       headers: { Authorization: 'Bearer ' + state.token }
     });
     if (!res.ok) { toast('Ошибка генерации PDF', 'error'); return; }
     const blob = await res.blob();
-    const url  = URL.createObjectURL(blob);
+    const burl = URL.createObjectURL(blob);
     const a    = document.createElement('a');
-    a.href     = url;
-    a.download = `analytics-${days}d.pdf`;
+    a.href     = burl;
+    a.download = _analyticsFrom ? `analytics-${_analyticsFrom}-${_analyticsTo||''}.pdf` : `analytics-${days}d.pdf`;
     a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setTimeout(() => URL.revokeObjectURL(burl), 5000);
   } catch (err) {
     toast(err.message, 'error');
   }
 }
 
+function _analyticsApplyCustomRange() {
+  const f = document.getElementById('an-from')?.value;
+  const t = document.getElementById('an-to')?.value;
+  if (!f || !t) { toast('Выберите обе даты', 'error'); return; }
+  if (f > t) { toast('Дата «с» должна быть раньше «по»', 'error'); return; }
+  _analyticsFrom = f;
+  _analyticsTo   = t;
+  _analyticsPeriod = null;
+  loadAnalyticsReport(null);
+}
+
 async function loadAnalyticsReport(days) {
+  if (days !== null) { _analyticsFrom = null; _analyticsTo = null; }
   _analyticsPeriod = days;
   const container = document.getElementById('report-content');
   if (!container) return;
   container.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div>';
 
   try {
-    const d = await GET('/reports/analytics?period=' + days);
+    let anUrl = `/reports/analytics?period=${days||30}`;
+    if (_analyticsFrom) anUrl += `&from=${_analyticsFrom}`;
+    if (_analyticsTo)   anUrl += `&to=${_analyticsTo}`;
+    const d = await GET(anUrl);
 
     const PERIODS = [
       { days: 7,   label: '7 дней'  },
@@ -4601,10 +4700,16 @@ async function loadAnalyticsReport(days) {
     container.innerHTML = `
       <!-- Period tabs + PDF -->
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:20px">
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
           ${PERIODS.map(p => `<button class="filter-btn ${_analyticsPeriod===p.days?'active':''}" onclick="loadAnalyticsReport(${p.days})">${p.label}</button>`).join('')}
+          <div style="display:flex;align-items:center;gap:4px;margin-left:4px">
+            <input type="date" id="an-from" value="${_analyticsFrom||''}" style="border:1px solid #d1d5db;border-radius:8px;padding:4px 8px;font-size:12px;color:#374151;background:#fff;cursor:pointer" onchange="document.getElementById('an-to').min=this.value">
+            <span style="font-size:12px;color:#6b7280">—</span>
+            <input type="date" id="an-to" value="${_analyticsTo||''}" style="border:1px solid #d1d5db;border-radius:8px;padding:4px 8px;font-size:12px;color:#374151;background:#fff;cursor:pointer" onchange="document.getElementById('an-from').max=this.value">
+            <button class="filter-btn ${!_analyticsPeriod?'active':''}" onclick="_analyticsApplyCustomRange()" style="margin-left:2px">Применить</button>
+          </div>
         </div>
-        <button onclick="downloadAnalyticsPDF(${days})" class="btn btn-outline btn-sm" style="display:inline-flex;align-items:center;gap:6px">
+        <button onclick="downloadAnalyticsPDF(${days||30})" class="btn btn-outline btn-sm" style="display:inline-flex;align-items:center;gap:6px">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Скачать PDF
         </button>
@@ -4885,14 +4990,19 @@ function svgMonthlyBars(months) {
   </svg>`;
 }
 
-async function renderEmployeeProfile(userId) {
+let _empProfileMonth = new Date(Date.now() + 5*3600000).toISOString().slice(0,7);
+let _empProfileWinOffset = 0;
+
+async function renderEmployeeProfile(userId, month) {
+  if (month) _empProfileMonth = month;
+  const selMonth = _empProfileMonth;
+  const currentMonthE = new Date(Date.now() + 5*3600000).toISOString().slice(0,7);
   try {
-    // Fetch tasks + best-employee data (for consistent efficiency score)
-    const currentMonth = new Date(Date.now() + 5*3600000).toISOString().slice(0,7);
+    const beMonth = (selMonth === 'all') ? currentMonthE : selMonth;
     const [users, tasks, beData] = await Promise.all([
       GET('/users'),
-      GET('/tasks?all=1&assignee_id=' + userId),
-      GET('/best-employee?month=' + currentMonth)
+      GET('/tasks?all=1&assignee_id=' + userId + '&created_month=' + selMonth),
+      GET('/best-employee?month=' + beMonth)
     ]);
     const u = users.find(u => u.id === userId);
     if (!u) {
@@ -4917,11 +5027,12 @@ async function renderEmployeeProfile(userId) {
       if (ma && ma.length > 0) return ma.find(a => a.id === userId)?.done === 1;
       return false;
     };
+    const _todayS = new Date(); _todayS.setHours(0,0,0,0);
     const total   = tasks.length;
     const done    = tasks.filter(t => isUserDone(t)).length;
     const inProg  = tasks.filter(t => !isUserDone(t) && t.status === 'in_progress').length;
     const newCnt  = tasks.filter(t => !isUserDone(t) && t.status === 'new').length;
-    const overdue = tasks.filter(t => !isUserDone(t) && t.deadline && parseDeadline(t.deadline) < new Date()).length;
+    const overdue = tasks.filter(t => !isUserDone(t) && t.deadline && parseDeadline(t.deadline) < _todayS).length;
 
     const now = new Date();
     const months = Array.from({ length: 6 }, (_, i) => {
@@ -4944,8 +5055,32 @@ async function renderEmployeeProfile(userId) {
     const projects = Object.values(byProject).sort((a, b) => b.total - a.total);
     const rl = roleLabel(u);
 
+    const MONTH_NAMES_EMP = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+    const fmtMonthEmp = m => { const [y,mo] = m.split('-'); return MONTH_NAMES_EMP[+mo-1] + ' ' + y; };
+    const nowDE = new Date();
+    const winStartE = -1 + _empProfileWinOffset;
+    const visible6E = Array.from({length:6},(_,i)=>{
+      const d = new Date(nowDE.getFullYear(), nowDE.getMonth() + winStartE + i, 1);
+      return d.toISOString().slice(0,7);
+    });
+    const arrowBtnE = (dir, disabled) =>
+      `<button class="be-arrow-btn ${disabled?'disabled':''}" onclick="${disabled?'':`empShiftWindow(${userId},${dir})`}">${dir<0?'‹':'›'}</button>`;
+    const monthTabsE = `
+      <button class="be-month-tab ${selMonth==='all'?'active':''}" onclick="renderEmployeeProfile(${userId},'all')">Все</button>
+      ${arrowBtnE(-1, _empProfileWinOffset<=-24)}
+      ${visible6E.map(m => {
+        const isCur = m===currentMonthE, isSel = m===selMonth;
+        return `<button class="be-month-tab ${isSel?'active':''} ${isCur&&!isSel?'be-month-tab-current':''}" onclick="renderEmployeeProfile(${userId},'${m}')">
+          ${fmtMonthEmp(m)}${isCur?'<span class="be-tab-now">сейчас</span>':''}
+        </button>`;
+      }).join('')}
+      ${arrowBtnE(1, _empProfileWinOffset>=24)}`;
+
     document.getElementById('page-content').innerHTML = `
-      <button class="btn btn-outline btn-sm" style="margin-bottom:18px" onclick="navigateTo('team')">← Назад к команде</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px">
+        <button class="btn btn-outline btn-sm" onclick="navigateTo('team')">← Назад к команде</button>
+      </div>
+      <div class="be-month-bar" style="margin-bottom:20px">${monthTabsE}</div>
 
       <!-- Header card: full width -->
       <div class="emp-profile-header">
@@ -5038,7 +5173,7 @@ async function renderEmployeeProfile(userId) {
 
       <!-- Task list: full width -->
       <div class="section-header" style="margin-bottom:14px">
-        <div class="section-title">Все задачи сотрудника <span style="font-size:13px;font-weight:500;color:#6b7280">(${tasks.length})</span></div>
+        <div class="section-title">Задачи за месяц <span style="font-size:13px;font-weight:500;color:#6b7280">(${tasks.length})</span></div>
       </div>
       ${tasks.length === 0
         ? `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.clip,44)}</div><h3>Нет задач</h3><p>Задачи не назначены</p></div>`
@@ -5067,6 +5202,11 @@ async function renderEmployeeProfile(userId) {
   }
 }
 
+function empShiftWindow(userId, delta) {
+  _empProfileWinOffset += delta;
+  renderEmployeeProfile(userId, _empProfileMonth);
+}
+
 function empTasksToggle(hiddenCount) {
   const hiddenEl = document.getElementById('emp-tasks-hidden');
   const btn      = document.getElementById('emp-tasks-toggle');
@@ -5092,7 +5232,7 @@ function teamSetTab(t) {
 async function renderTeamPage() {
   if (_teamTab === 'hr') { await _renderHrPage(); return; }
   if (_teamTab === 'workload') { await _renderWorkloadPage(); return; }
-  if (_teamTab === 'duty') { await _renderDutyPage(); return; }
+
   const isAdmin = state.user.role === 'admin';
   try {
     const [users, tasks, userProjects] = await Promise.all([GET('/users'), GET('/tasks?all=1'), GET('/user-projects')]);
@@ -5130,7 +5270,6 @@ async function renderTeamPage() {
         <button class="fin-tab ${_teamTab==='members'?'active':''}" onclick="teamSetTab('members')">Сотрудники</button>
         ${canManageHr ? `<button class="fin-tab ${_teamTab==='hr'?'active':''}" onclick="teamSetTab('hr')">Кадры</button>` : ''}
         <button class="fin-tab ${_teamTab==='workload'?'active':''}" onclick="teamSetTab('workload')">Нагрузка</button>
-        <button class="fin-tab ${_teamTab==='duty'?'active':''}" onclick="teamSetTab('duty')">Дежурства</button>
       </div>
       <div class="section-header" style="margin-top:16px">
         <div class="section-title">Участники команды (${users.length})</div>
@@ -5197,8 +5336,9 @@ async function _renderHrPage() {
   content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
   try {
     const employees = await GET('/hr/employees');
-    const active = employees.filter(e => e.status === 'active');
-    const terminated = employees.filter(e => e.status === 'terminated');
+    const byName = (a, b) => a.full_name.localeCompare(b.full_name, 'ru');
+    const active = employees.filter(e => e.status === 'active').sort(byName);
+    const terminated = employees.filter(e => e.status === 'terminated').sort(byName);
 
     const fmtDate = d => d ? d.slice(0,10) : '—';
     const fmtSalary = s => s ? Math.round(+s).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' сом' : '—';
@@ -5206,8 +5346,9 @@ async function _renderHrPage() {
       ? `<span class="hr-badge hr-badge--active">Работает</span>`
       : `<span class="hr-badge hr-badge--terminated">Уволен</span>`;
 
-    const row = e => `
+    const row = (e, idx) => `
       <tr class="hr-tr" onclick="openHrEmployeeView(${e.id})">
+        <td class="hr-td" style="color:#9ca3af;font-size:12px;width:32px;text-align:right;padding-right:8px">${idx}</td>
         <td class="hr-td"><div class="hr-name">${_escHtml(e.full_name)}</div></td>
         <td class="hr-td">${_escHtml(e.position||'—')}</td>
         <td class="hr-td">${fmtDate(e.hire_date)}</td>
@@ -5223,6 +5364,7 @@ async function _renderHrPage() {
     const table = list => list.length === 0 ? '' : `
       <table class="hr-table">
         <thead><tr>
+          <th class="hr-th" style="width:32px;text-align:right;padding-right:8px">№</th>
           <th class="hr-th">ФИО</th>
           <th class="hr-th">Должность</th>
           <th class="hr-th">Принят</th>
@@ -5231,7 +5373,7 @@ async function _renderHrPage() {
           <th class="hr-th">Статус</th>
           <th class="hr-th" style="width:72px"></th>
         </tr></thead>
-        <tbody>${list.map(row).join('')}</tbody>
+        <tbody>${list.map((e, i) => row(e, i+1)).join('')}</tbody>
       </table>`;
 
     content.innerHTML = `
@@ -5679,9 +5821,25 @@ async function exportWorkloadPDF() {
 }
 
 // ─── Duty Schedule Page ───────────────────────────────────────────────────────
+let _dutyMonthFilter = (() => { try { return sessionStorage.getItem('duty_month') || ''; } catch { return ''; } })();
+
+function _dutyContainer() {
+  return document.getElementById('duty-cal-container') || document.getElementById('page-content');
+}
+
 async function _renderDutyPage() {
-  const isAdmin = state.user.role === 'admin' || state.user.permissions?.manage_team;
+  // when inside calendar tab, render into cal container
+  if (_calTab === 'duty' && document.getElementById('duty-cal-container')) {
+    return _renderDutyContent();
+  }
   const el = document.getElementById('page-content');
+  el.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;padding:60px 0;color:var(--text-muted)">Загрузка...</div>`;
+  return _renderDutyContent();
+}
+
+async function _renderDutyContent() {
+  const isAdmin = state.user.role === 'admin' || state.user.permissions?.manage_team;
+  const el = _dutyContainer();
   el.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;padding:60px 0;color:var(--text-muted)">Загрузка...</div>`;
 
   try {
@@ -5689,28 +5847,50 @@ async function _renderDutyPage() {
       GET('/duty').catch(e => { throw new Error('/duty: ' + e.message); }),
       GET('/users').catch(e => { throw new Error('/users: ' + e.message); })
     ]);
+    state.users = users;
     const userMap = {};
     users.forEach(u => { userMap[u.id] = u; });
 
-    const weekKeys = Object.keys(data.weeks).sort();
-    const today = new Date().toISOString().slice(0,10);
+    const allWeekKeys = Object.keys(data.weeks).sort();
+    const pad = n => String(n).padStart(2,'0');
 
-    // Determine current week Monday
-    const todayD = new Date(today);
+    // Build month tabs from available weeks
+    const MONTH_NAMES_SHORT = ['Янв','Фев','Мар','Апр','Май','Июнь','Июль','Авг','Сен','Окт','Ноя','Дек'];
+    const MONTH_NAMES_FULL  = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+    const curM = (() => { const n=new Date(); return `${n.getFullYear()}-${pad(n.getMonth()+1)}`; })();
+    const monthSet = new Set(allWeekKeys.map(ws => ws.slice(0,7)));
+    monthSet.add(curM);
+    const monthTabs = [...monthSet].sort().map(m => {
+      const [y,mo] = m.split('-');
+      const isCur = m === curM;
+      const isActive = m === _dutyMonthFilter;
+      return `<button class="fin-tab ${isActive?'active':''} ${isCur&&!isActive?'be-month-tab-current':''}"
+        onclick="_dutyMonthFilter='${m}';try{sessionStorage.setItem('duty_month','${m}')}catch{};_renderDutyPage()">
+        ${MONTH_NAMES_SHORT[+mo-1]} ${y}${isCur?'<span class="be-tab-now">сейчас</span>':''}
+      </button>`;
+    }).join('') + `<button class="fin-tab ${_dutyMonthFilter===''?'active':''}" onclick="_dutyMonthFilter='';try{sessionStorage.removeItem('duty_month')}catch{};_renderDutyPage()">Все</button>`;
+
+    // Filter weeks by selected month
+    const weekKeys = _dutyMonthFilter
+      ? allWeekKeys.filter(ws => ws.startsWith(_dutyMonthFilter))
+      : allWeekKeys;
+
+    // Determine this week's Sunday
+    const todayD = new Date();
     const day = todayD.getDay();
-    const diffToMon = (day === 0 ? -6 : 1 - day);
-    const thisWeekStart = new Date(todayD);
-    thisWeekStart.setDate(todayD.getDate() + diffToMon);
-    const thisWeekStr = thisWeekStart.toISOString().slice(0,10);
+    const diffToSun = day === 0 ? 0 : 7 - day;
+    const thisSun = new Date(todayD.getFullYear(), todayD.getMonth(), todayD.getDate() + diffToSun);
+    const thisWeekStr = `${thisSun.getFullYear()}-${pad(thisSun.getMonth()+1)}-${pad(thisSun.getDate())}`;
 
+    // week_start stores the Sunday date directly — just display it
+    const parseLocal = (ws) => {
+      const [y,m,d] = ws.split('-').map(Number);
+      return new Date(y, m-1, d);
+    };
     const fmtWeek = (ws) => {
-      const d = new Date(ws + 'T00:00:00');
-      const d2 = new Date(d); d2.setDate(d.getDate() + 6);
+      const d = parseLocal(ws);
       const months = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
-      if (d.getMonth() === d2.getMonth()) {
-        return `${d.getDate()}–${d2.getDate()} ${months[d.getMonth()]}`;
-      }
-      return `${d.getDate()} ${months[d.getMonth()]} – ${d2.getDate()} ${months[d2.getMonth()]}`;
+      return `${d.getDate()} ${months[d.getMonth()]}`;
     };
 
     const avatarCircle = (name, u) => {
@@ -5732,13 +5912,22 @@ async function _renderDutyPage() {
 
           const cards = entries.map(e => {
             const u = e.user_id ? userMap[e.user_id] : null;
+            const eJson = _escHtml(JSON.stringify({id:e.id,employee_name:e.employee_name,user_id:e.user_id,comment:e.comment,week_start:ws}));
             return `<div class="duty-card">
               ${avatarCircle(e.employee_name, u)}
               <div class="duty-card-info">
                 <div class="duty-card-name">${_escHtml(e.employee_name)}</div>
                 ${e.comment ? `<div class="duty-card-comment">${_escHtml(e.comment)}</div>` : ''}
               </div>
-              ${isAdmin ? `<button class="duty-del-btn" onclick="deleteDutyEntry(${e.id})" title="Удалить">✕</button>` : ''}
+              ${isAdmin ? `
+                <div class="duty-card-actions">
+                  <button class="duty-action-btn" onclick="openEditDutyModal('${eJson}')" title="Редактировать">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </button>
+                  <button class="duty-action-btn duty-del-btn" onclick="confirmDeleteDuty(${e.id})" title="Удалить">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                  </button>
+                </div>` : ''}
             </div>`;
           }).join('');
 
@@ -5746,7 +5935,7 @@ async function _renderDutyPage() {
             <div class="duty-week-header">
               <div class="duty-week-title">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                Неделя ${fmtWeek(ws)}
+                Воскресенье, ${fmtWeek(ws)}
                 ${badge}
               </div>
               <div style="color:var(--text-muted);font-size:12px">${entries.length} ${entries.length===1?'дежурный':entries.length<5?'дежурных':'дежурных'}</div>
@@ -5756,33 +5945,99 @@ async function _renderDutyPage() {
         }).join('');
 
     el.innerHTML = `
-      <div class="team-tabs-bar">
-        <button class="fin-tab" onclick="teamSetTab('members')">Сотрудники</button>
-        ${isAdmin ? `<button class="fin-tab" onclick="teamSetTab('hr')">Кадры</button>` : ''}
-        <button class="fin-tab" onclick="teamSetTab('workload')">Нагрузка</button>
-        <button class="fin-tab active" onclick="teamSetTab('duty')">Дежурства</button>
-      </div>
-      <div class="section-header" style="margin-top:16px">
-        <div class="section-title">График дежурств</div>
+      <div class="section-header" style="margin-bottom:12px">
+        <div class="fin-tabs-bar" style="flex:1">${monthTabs}</div>
         ${isAdmin ? `<button class="btn btn-blue btn-sm" onclick="openAddDutyModal()">＋ Добавить дежурство</button>` : ''}
       </div>
       <div id="duty-weeks-list">${weeksHtml}</div>
     `;
   } catch(e) {
-    const errEl = document.getElementById('page-content');
-    if (errEl) errEl.innerHTML = `
-      <div class="team-tabs-bar">
-        <button class="fin-tab" onclick="teamSetTab('members')">Сотрудники</button>
-        <button class="fin-tab" onclick="teamSetTab('workload')">Нагрузка</button>
-        <button class="fin-tab active">Дежурства</button>
-      </div>
-      <div style="color:#ef4444;padding:40px 20px;font-size:13px">Ошибка загрузки: ${_escHtml(e.message)}</div>`;
+    const errEl = _dutyContainer();
+    if (errEl) errEl.innerHTML = `<div style="color:#ef4444;padding:40px 20px;font-size:13px">Ошибка загрузки: ${_escHtml(e.message)}</div>`;
   }
 }
 
+function confirmDeleteDuty(id) {
+  openModal(`<div class="modal" style="max-width:400px">
+    <div class="modal-header">
+      <span class="modal-title">Удалить запись</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin:0;color:var(--text-muted);font-size:14px">Вы уверены, что хотите удалить эту запись дежурства?</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+      <button class="btn btn-red" onclick="deleteDutyEntry(${id})">Удалить</button>
+    </div>
+  </div>`);
+}
+
 async function deleteDutyEntry(id) {
-  if (!confirm('Удалить запись?')) return;
   await api('DELETE', `/duty/${id}`);
+  closeModal();
+  _renderDutyPage();
+}
+
+function openEditDutyModal(eJson) {
+  const e = JSON.parse(eJson);
+  const users = state.users || [];
+  openModal(`<div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <span class="modal-title">Редактировать дежурство</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Сотрудник</label>
+        <select id="edit-duty-user" class="input">
+          <option value="">— Выбрать из команды —</option>
+          ${users.map(u=>`<option value="${u.id}" data-name="${_escHtml(u.name)}" ${e.user_id==u.id?'selected':''}>${_escHtml(u.name)}</option>`).join('')}
+          <option value="__custom__" ${!e.user_id?'selected':''}>Другой (вручную)</option>
+        </select>
+      </div>
+      <div class="form-group" id="edit-duty-custom-wrap" style="display:${!e.user_id?'':'none'}">
+        <label class="form-label">ФИО (вручную)</label>
+        <input id="edit-duty-custom-name" class="input" value="${_escHtml(e.employee_name)}" placeholder="Фамилия И.О.">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Комментарий</label>
+        <input id="edit-duty-comment" class="input" value="${_escHtml(e.comment||'')}" placeholder="Необязательно">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+      <button class="btn btn-blue" onclick="saveEditDuty(${e.id},'${_escHtml(e.week_start)}')">Сохранить</button>
+    </div>
+  </div>`);
+  document.getElementById('edit-duty-user').addEventListener('change', ev => {
+    document.getElementById('edit-duty-custom-wrap').style.display = ev.target.value === '__custom__' ? '' : 'none';
+  });
+}
+
+async function saveEditDuty(id, week_start) {
+  const userSel = document.getElementById('edit-duty-user').value;
+  const customName = document.getElementById('edit-duty-custom-name')?.value?.trim();
+  const comment = document.getElementById('edit-duty-comment').value.trim();
+
+  let employee_name = '';
+  let user_id = null;
+  if (userSel === '__custom__') {
+    if (!customName) return toast('Введите ФИО', 'error');
+    employee_name = customName;
+  } else if (userSel) {
+    const opt = document.querySelector(`#edit-duty-user option[value="${userSel}"]`);
+    employee_name = opt?.dataset?.name || opt?.textContent || '';
+    user_id = parseInt(userSel);
+  } else {
+    return toast('Выберите сотрудника', 'error');
+  }
+
+  // Delete old, insert new with same week
+  await api('DELETE', `/duty/${id}`);
+  await api('POST', '/duty', { entries: [{ week_start, employee_name, user_id, comment }] });
+  closeModal();
+  toast('Сохранено');
   _renderDutyPage();
 }
 
@@ -5790,9 +6045,10 @@ function openAddDutyModal() {
   const users = state.users || [];
   const todayD = new Date();
   const day = todayD.getDay();
-  const diffToMon = (day === 0 ? -6 : 1 - day);
-  const mon = new Date(todayD); mon.setDate(todayD.getDate() + diffToMon);
-  const defaultWeek = mon.toISOString().slice(0,10);
+  const diffToSun = day === 0 ? 0 : 7 - day;
+  const sun = new Date(todayD.getFullYear(), todayD.getMonth(), todayD.getDate() + diffToSun);
+  const pad2 = n => String(n).padStart(2,'0');
+  const defaultWeek = `${sun.getFullYear()}-${pad2(sun.getMonth()+1)}-${pad2(sun.getDate())}`;
 
   openModal(`<div class="modal" style="max-width:480px">
     <div class="modal-header">
@@ -5838,11 +6094,13 @@ async function saveDutyEntry() {
   const comment = document.getElementById('duty-comment').value.trim();
   if (!weekRaw) return toast('Укажите неделю', 'error');
 
-  // Snap to Monday
-  const d = new Date(weekRaw + 'T00:00:00');
-  const diff = (d.getDay() === 0 ? -6 : 1 - d.getDay());
-  d.setDate(d.getDate() + diff);
-  const week_start = d.toISOString().slice(0,10);
+  // Snap to Sunday of the selected week
+  const [wy,wm,wd] = weekRaw.split('-').map(Number);
+  const d = new Date(wy, wm-1, wd);
+  const diffToSun = d.getDay() === 0 ? 0 : 7 - d.getDay();
+  d.setDate(d.getDate() + diffToSun);
+  const padW = n => String(n).padStart(2,'0');
+  const week_start = `${d.getFullYear()}-${padW(d.getMonth()+1)}-${padW(d.getDate())}`;
 
   let employee_name = '';
   let user_id = null;
@@ -6220,12 +6478,26 @@ async function renderSettingsPage() {
           </div>
         </div>
 
+        <div class="settings-section" id="push-settings-section">
+          <h3 style="display:inline-flex;align-items:center;gap:7px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/><circle cx="12" cy="3" r="1" fill="currentColor"/></svg>
+            Push-уведомления
+          </h3>
+          <p>Получайте уведомления о задачах прямо в браузере, даже когда вкладка закрыта</p>
+          <div id="push-status-block">
+            <button class="btn btn-blue btn-sm" id="push-subscribe-btn" onclick="togglePushSubscription()">Проверка...</button>
+          </div>
+        </div>
+
         <div class="settings-section settings-section--full" style="padding-top:8px;border-top:1px solid #e5e7eb">
           <button class="btn btn-danger" onclick="logout()" style="display:inline-flex;align-items:center;gap:6px">${svgI('<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',15)} Выйти из системы</button>
         </div>
 
       </div>
     `;
+
+    // Init push button state after render
+    setTimeout(initPushButton, 100);
 
     document.getElementById('avatar-upload')?.addEventListener('change', async (e) => {
       const file = e.target.files[0];
@@ -6293,6 +6565,89 @@ async function disconnectTelegram() {
     toast('Telegram отключён', 'success');
     renderSettingsPage();
   } catch (err) { toast(err.message, 'error'); }
+}
+
+// ─── Push Notifications ──────────────────────────────────────────────────────
+
+function _urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+async function _getPushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
+  const reg = await navigator.serviceWorker.getRegistration('/');
+  if (!reg) return null;
+  return reg.pushManager.getSubscription();
+}
+
+async function initPushButton() {
+  const btn = document.getElementById('push-subscribe-btn');
+  if (!btn) return;
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    btn.textContent = 'Не поддерживается браузером';
+    btn.disabled = true;
+    return;
+  }
+  try {
+    const sub = await _getPushSubscription();
+    btn.disabled = false;
+    if (sub) {
+      btn.textContent = '🔔 Отключить push-уведомления';
+      btn.className = 'btn btn-outline btn-sm';
+    } else {
+      btn.textContent = '🔔 Включить push-уведомления';
+      btn.className = 'btn btn-blue btn-sm';
+    }
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = '🔔 Включить push-уведомления';
+    btn.className = 'btn btn-blue btn-sm';
+  }
+}
+
+async function togglePushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    toast('Браузер не поддерживает Push-уведомления', 'error'); return;
+  }
+  const btn = document.getElementById('push-subscribe-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Подождите...'; }
+  try {
+    const existing = await _getPushSubscription();
+    if (existing) {
+      await api('DELETE', '/push/subscribe', { endpoint: existing.endpoint });
+      await existing.unsubscribe();
+      toast('Push-уведомления отключены', 'success');
+    } else {
+      const { key } = await GET('/push/vapid-public-key');
+      if (!key) { toast('Push не настроен на сервере', 'error'); return; }
+      let swReg = await navigator.serviceWorker.getRegistration('/');
+      if (!swReg) {
+        swReg = await navigator.serviceWorker.register('/sw.js');
+        // wait for it to become active
+        await new Promise(resolve => {
+          if (swReg.active) { resolve(); return; }
+          const sw = swReg.installing || swReg.waiting;
+          if (sw) sw.addEventListener('statechange', e => { if (e.target.state === 'activated') resolve(); });
+          else setTimeout(resolve, 2000);
+        });
+      }
+      const sub = await swReg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: _urlBase64ToUint8Array(key)
+      });
+      const j = sub.toJSON();
+      await api('POST', '/push/subscribe', { endpoint: j.endpoint, keys: j.keys });
+      toast('Push-уведомления включены!', 'success');
+    }
+    initPushButton();
+  } catch(e) {
+    toast('Ошибка: ' + (e.message || e), 'error');
+    if (btn) { btn.disabled = false; }
+    initPushButton();
+  }
 }
 
 // ─── Best Employee Page ───────────────────────────────────────────────────────
@@ -6449,6 +6804,7 @@ function _renderBestEmployee(data) {
       <td class="be-tbl-rank">${i < 3 ? medal(i) : i+1}</td>
       <td class="be-tbl-user">${av}<span>${u.name}</span></td>
       <td class="be-tbl-num">${u.total}</td>
+      <td class="be-tbl-num" style="color:#059669;font-weight:600">${u.done}</td>
       <td class="be-tbl-num be-green">${u.doneOnTime}</td>
       <td class="be-tbl-num be-orange">${u.doneLate}</td>
       <td class="be-tbl-num be-red">${u.overdue}</td>
@@ -6490,7 +6846,8 @@ function _renderBestEmployee(data) {
               <tr>
                 <th>#</th>
                 <th>Сотрудник</th>
-                <th title="Всего задач с дедлайном в месяце">Задач</th>
+                <th title="Всего задач за месяц">Задач</th>
+                <th title="Всего завершено" style="color:#059669">Завершено</th>
                 <th title="Выполнено в срок" style="color:#16a34a">В срок</th>
                 <th title="Выполнено с опозданием" style="color:#d97706">С опозд.</th>
                 <th title="Просрочено / не выполнено" style="color:#dc2626">Просроч.</th>
@@ -6509,7 +6866,7 @@ function _renderBestEmployee(data) {
       </div>` : ''}
 
       <div class="be-formula-note">
-        Эффективность = (задачи в срок × 100% + задачи с опозданием × 50%) / всего задач с дедлайном в месяце
+        Эффективность = (задачи в срок × 100% + задачи с опозданием × 50%) / всего задач с дедлайном за месяц
       </div>
     </div>`;
 }
@@ -6526,6 +6883,787 @@ function filterAssigneeChips(q) {
   document.querySelectorAll('#f-assignees .assignee-chip').forEach(chip => {
     chip.style.display = !ql || chip.dataset.name.includes(ql) ? '' : 'none';
   });
+}
+
+// ─── Google Calendar Page ─────────────────────────────────────────────────────
+let _calYear  = new Date().getFullYear();
+let _calMonth = new Date().getMonth();
+let _calEvents = [];
+let _calUsers  = [];
+let _calTab    = (() => { try { return sessionStorage.getItem('cal_tab') || 'calendar'; } catch { return 'calendar'; } })();
+
+async function renderCalendarPage() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  try {
+    const [usersData] = await Promise.all([GET('/users')]);
+    _calUsers = usersData.users || usersData || [];
+    if (_calTab === 'duty') {
+      await _renderDutyInsideCal();
+    } else if (_calTab === 'schedule') {
+      await _renderScheduleInsideCal();
+    } else {
+      await _calLoadAndRender();
+    }
+  } catch(e) {
+    el.innerHTML = `<div style="color:red;padding:40px">Ошибка: ${e.message}</div>`;
+  }
+}
+
+function _calTabBar() {
+  return `<div style="display:flex;gap:4px;background:var(--bg);border-radius:8px;padding:3px">
+    <button class="btn btn-sm ${_calTab==='calendar'?'btn-blue':'btn-ghost'}" onclick="_switchCalTab('calendar')">Календарь</button>
+    <button class="btn btn-sm ${_calTab==='duty'?'btn-blue':'btn-ghost'}" onclick="_switchCalTab('duty')">Дежурства</button>
+    <button class="btn btn-sm ${_calTab==='schedule'?'btn-blue':'btn-ghost'}" onclick="_switchCalTab('schedule')">Расписание</button>
+  </div>`;
+}
+
+async function _switchCalTab(tab) {
+  _calTab = tab;
+  try { sessionStorage.setItem('cal_tab', tab); } catch {}
+  if (tab === 'duty') {
+    await _renderDutyInsideCal();
+  } else if (tab === 'schedule') {
+    await _renderScheduleInsideCal();
+  } else {
+    await _calLoadAndRender();
+  }
+}
+
+async function _renderDutyInsideCal() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="cal-page">
+      <div class="cal-toolbar" style="margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:10px">${_calTabBar()}</div>
+        <div></div>
+      </div>
+      <div id="duty-cal-container"></div>
+    </div>`;
+  await _renderDutyContent();
+}
+
+async function _renderScheduleInsideCal() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="cal-page">
+      <div class="cal-toolbar" style="margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:10px">${_calTabBar()}</div>
+        <div></div>
+      </div>
+      <div id="sched-cal-container"></div>
+    </div>`;
+  await _renderScheduleContent();
+}
+
+function _schedContainer() {
+  return document.getElementById('sched-cal-container') || document.getElementById('page-content');
+}
+
+async function _calLoadAndRender() {
+  const el = document.getElementById('page-content');
+  // Build timeMin/timeMax for current month view (include prev/next partial weeks)
+  const firstDay = new Date(_calYear, _calMonth, 1);
+  const lastDay  = new Date(_calYear, _calMonth + 1, 0);
+  const timeMin  = new Date(_calYear, _calMonth, 1 - firstDay.getDay()).toISOString();
+  const timeMax  = new Date(_calYear, _calMonth + 1, 7 - lastDay.getDay()).toISOString();
+  try {
+    _calEvents = await GET(`/calendar/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`);
+  } catch(e) {
+    _calEvents = [];
+  }
+  _calRender();
+}
+
+function _calRender() {
+  const el = document.getElementById('page-content');
+  const MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const DAYS   = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  const today  = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+
+  // Build calendar grid — week starts Monday (Mon=0 … Sun=6)
+  const firstDay = new Date(_calYear, _calMonth, 1);
+  const lastDay  = new Date(_calYear, _calMonth + 1, 0);
+  // getDay(): 0=Sun,1=Mon...6=Sat → shift so Mon=0
+  const dowMon = d => (d.getDay() + 6) % 7;
+  const startOffset = dowMon(firstDay);
+  const cells = [];
+  for (let i = 0; i < startOffset; i++) {
+    const d = new Date(_calYear, _calMonth, 1 - startOffset + i);
+    cells.push({ date: d, cur: false });
+  }
+  for (let d = 1; d <= lastDay.getDate(); d++) {
+    cells.push({ date: new Date(_calYear, _calMonth, d), cur: true });
+  }
+  while (cells.length % 7 !== 0) {
+    const last = cells[cells.length-1].date;
+    const next = new Date(last); next.setDate(last.getDate()+1);
+    cells.push({ date: next, cur: false });
+  }
+
+  const colors = ['#881237','#881237','#881237','#881237','#881237','#881237','#881237'];
+
+  // Precompute multi-day placement: assign each event a "row" so they don't overlap
+  const gridStart = cells[0].date;
+  const gridEnd   = cells[cells.length-1].date;
+
+  // Normalize date to midnight local
+  const toDay = d => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
+
+  // Lay out events into rows per week
+  // rows[weekIdx][rowIdx] = array of 7 slots (null or event entry)
+  const weeks = Math.ceil(cells.length / 7);
+  // eventRows[weekIdx][rowIdx][dayInWeek] = {ev, isStart, isEnd, color}
+  const eventRows = Array.from({length: weeks}, () => []);
+
+  // assign stable color per event id
+  const _evColor = {};
+
+  const assignSlot = (weekIdx, evEntry) => {
+    const rows = eventRows[weekIdx];
+    // find row where no collision
+    for (let r = 0; r < 10; r++) {
+      if (!rows[r]) rows[r] = new Array(7).fill(null);
+      const row = rows[r];
+      let ok = true;
+      for (let d = evEntry.startCol; d <= evEntry.endCol; d++) {
+        if (row[d]) { ok = false; break; }
+      }
+      if (ok) {
+        for (let d = evEntry.startCol; d <= evEntry.endCol; d++) row[d] = evEntry;
+        evEntry.row = r;
+        evEntry.weekIdx = weekIdx;
+        return;
+      }
+    }
+  };
+
+  for (const e of _calEvents) {
+    if (!_evColor[e.id]) _evColor[e.id] = colors[e.id % colors.length];
+    const color = _evColor[e.id];
+    const evStart = toDay(e.start?.dateTime || e.start?.date);
+    // end: if end time is exactly midnight (00:00) it means "end of previous day" — subtract 1 day
+    const rawEnd = e.end?.dateTime || e.end?.date;
+    const rawEndDate = rawEnd ? new Date(rawEnd) : null;
+    const evEnd = rawEndDate ? toDay(rawEndDate) : evStart;
+    // if end lands exactly on midnight local and equals a day boundary, treat as end of previous day
+    const evEndInclusive = (rawEndDate && rawEndDate.getHours()===0 && rawEndDate.getMinutes()===0 && evEnd.getTime() > evStart.getTime())
+      ? new Date(evEnd.getTime() - 1)
+      : evEnd;
+
+    // clip to grid
+    const clippedStart = evStart < gridStart ? gridStart : evStart;
+    const clippedEnd   = evEndInclusive > gridEnd ? gridEnd : evEndInclusive;
+    if (clippedStart > gridEnd || clippedEnd < gridStart) continue;
+
+    // find cell indices
+    const startCellIdx = cells.findIndex(c => toDay(c.date).getTime() === toDay(clippedStart).getTime());
+    let endCellIdx = cells.findIndex(c => toDay(c.date).getTime() === toDay(clippedEnd).getTime());
+    if (startCellIdx < 0) continue;
+    if (endCellIdx < 0) endCellIdx = cells.length - 1;
+
+    // split by weeks
+    for (let wi = 0; wi < weeks; wi++) {
+      const wStart = wi * 7, wEnd = wStart + 6;
+      if (endCellIdx < wStart || startCellIdx > wEnd) continue;
+      const sc = Math.max(startCellIdx, wStart) - wStart;
+      const ec = Math.min(endCellIdx,   wEnd)   - wStart;
+      const isMultiDay = evEnd.getTime() > evStart.getTime() + 86400000 - 1;
+      const time = (!isMultiDay && e.start?.dateTime)
+        ? new Date(e.start.dateTime).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'}) : '';
+      assignSlot(wi, { ev: e, color, startCol: sc, endCol: ec, time,
+        isStart: startCellIdx >= wStart, isEnd: endCellIdx <= wEnd, multiDay: ec > sc });
+    }
+  }
+
+  // Build per-cell event HTML: each cell shows events that TOUCH this day
+  // Multi-day events: start cell gets full title, continuation cells get a colored bar (no text)
+  // Gather all events touching each cell, using the eventRows layout for row ordering
+  const MAX_VISIBLE = 3;
+  const cellsHtml = cells.map((c, i) => {
+    const ds = `${c.date.getFullYear()}-${String(c.date.getMonth()+1).padStart(2,'0')}-${String(c.date.getDate()).padStart(2,'0')}`;
+    const isToday = ds === todayStr;
+    const wi = Math.floor(i / 7);
+    const col = i % 7;
+    const rows = eventRows[wi] || [];
+
+    // Build rows up to MAX_VISIBLE
+    const evLines = [];
+    let hiddenCount = 0;
+    for (let ri = 0; ri < rows.length; ri++) {
+      const entry = rows[ri] && rows[ri][col];
+      if (!entry) {
+        if (ri < MAX_VISIBLE) evLines.push('<div class="cal-ev-placeholder"></div>');
+        continue;
+      }
+      if (ri >= MAX_VISIBLE) { hiddenCount++; continue; }
+      const { ev, color, startCol, endCol, time, multiDay } = entry;
+      const isThisStart = entry.startCol === col;
+      const title = ev.summary || '(без названия)';
+      if (isThisStart) {
+        const rnd = endCol > col ? 'border-radius:4px 0 0 4px;' : '';
+        evLines.push(`<div class="cal-ev${multiDay?' cal-ev-multi':''}" style="background:${color};${rnd}" title="${_escHtml(title)}"
+          draggable="true"
+          ondragstart="event.stopPropagation();_calDragStart(event,'${ev.id}')"
+          ondragend="_calDragEnd(event)"
+          onclick="event.stopPropagation();openCalEventDetail('${_escHtml(ev.id)}')">
+          ${time ? `<span>${time}</span> ` : ''}${_escHtml(title.slice(0,20))}${title.length>20?'…':''}
+        </div>`);
+      } else {
+        // continuation cell
+        const rnd = endCol === col ? 'border-radius:0 4px 4px 0;' : 'border-radius:0;';
+        evLines.push(`<div class="cal-ev cal-ev-cont" style="background:${color};${rnd};color:transparent;user-select:none"
+          draggable="true"
+          ondragstart="event.stopPropagation();_calDragStart(event,'${ev.id}')"
+          ondragend="_calDragEnd(event)"
+          onclick="event.stopPropagation();openCalEventDetail('${_escHtml(ev.id)}')"> </div>`);
+      }
+    }
+    const moreHtml = hiddenCount > 0 ? `<div class="cal-ev-more">+${hiddenCount} ещё</div>` : '';
+    return `<div class="cal-cell ${!c.cur?'cal-cell-other':''} ${isToday?'cal-cell-today':''}"
+      onclick="openNewCalEvent('${ds}')"
+      ondragover="_calDragOver(event)"
+      ondragleave="_calDragLeave(event)"
+      ondrop="_calDrop(event,'${ds}')">
+      <div class="cal-cell-num ${isToday?'cal-cell-num-today':''}">${c.date.getDate()}</div>
+      <div class="cal-cell-evs">${evLines.join('')}${moreHtml}</div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="cal-page">
+      <div class="cal-toolbar">
+        <div class="cal-toolbar-row1" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          ${_calTabBar()}
+          <div class="cal-nav-group" style="display:flex;align-items:center;gap:6px;margin-left:auto">
+            <button class="btn btn-outline btn-sm" onclick="_calNav(-1)">‹</button>
+            <span style="font-size:15px;font-weight:700;min-width:130px;text-align:center">${MONTHS[_calMonth]} ${_calYear}</span>
+            <button class="btn btn-outline btn-sm" onclick="_calNav(1)">›</button>
+            <button class="btn btn-outline btn-sm" onclick="_calGoToday()">Сегодня</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-blue" onclick="openNewCalEvent()">＋ Событие</button>
+        </div>
+      </div>
+      <div class="cal-grid-wrap">
+        <div class="cal-head-row">
+          ${DAYS.map(d=>`<div class="cal-head-cell">${d}</div>`).join('')}
+        </div>
+        <div class="cal-grid">${cellsHtml}</div>
+      </div>
+    </div>
+  `;
+}
+
+async function _calNav(dir) {
+  _calMonth += dir;
+  if (_calMonth > 11) { _calMonth = 0; _calYear++; }
+  if (_calMonth < 0)  { _calMonth = 11; _calYear--; }
+  await _calLoadAndRender();
+}
+
+function _calGoToday() {
+  const now = new Date();
+  _calYear  = now.getFullYear();
+  _calMonth = now.getMonth();
+  _calLoadAndRender();
+}
+
+let _calDragId = null;
+
+function _calDragStart(e, evId) {
+  _calDragId = evId;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', evId);
+  setTimeout(() => { if (e.target) e.target.style.opacity = '0.4'; }, 0);
+}
+
+function _calDragEnd(e) {
+  if (e.target) e.target.style.opacity = '';
+  document.querySelectorAll('.cal-cell.drag-over').forEach(el => el.classList.remove('drag-over'));
+}
+
+function _calDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.add('drag-over');
+}
+
+function _calDragLeave(e) {
+  e.currentTarget.classList.remove('drag-over');
+}
+
+async function _calDrop(e, targetDateStr) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  const evId = _calDragId || e.dataTransfer.getData('text/plain');
+  _calDragId = null;
+  if (!evId) return;
+  const ev = _calEvents.find(x => x.id == evId);
+  if (!ev) return;
+
+  const oldStart = new Date(ev.start.dateTime);
+  const oldEnd   = new Date(ev.end.dateTime);
+  const duration = oldEnd - oldStart;
+
+  // Build new start keeping original time, only date changes
+  const [ty, tm, td] = targetDateStr.split('-').map(Number);
+  const newStart = new Date(ty, tm - 1, td, oldStart.getHours(), oldStart.getMinutes(), oldStart.getSeconds());
+  const newEnd   = new Date(newStart.getTime() + duration);
+
+  if (newStart.toDateString() === oldStart.toDateString()) return; // same day, no-op
+
+  try {
+    await api('PATCH', `/calendar/events/${evId}`, {
+      start: newStart.toISOString(),
+      end:   newEnd.toISOString()
+    });
+    _calLoadAndRender();
+  } catch(err) { toast('Ошибка перемещения: ' + err.message, 'error'); }
+}
+
+// ── Custom DateTimePicker ────────────────────────────────────────────────────
+const _dtpState = {}; // keyed by fieldId
+
+function _dtpRender(id) {
+  const s = _dtpState[id];
+  const MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const DAY_NAMES = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  const y = s.viewYear, m = s.viewMonth;
+  const firstDay = new Date(y, m, 1);
+  const lastDay  = new Date(y, m + 1, 0);
+  let offset = firstDay.getDay() - 1; if (offset < 0) offset = 6;
+  const cells = [];
+  for (let i = 0; i < offset; i++) cells.push(null);
+  for (let d = 1; d <= lastDay.getDate(); d++) cells.push(d);
+
+  const selY = s.selDate?.getFullYear(), selM = s.selDate?.getMonth(), selD = s.selDate?.getDate();
+  const todayD = new Date(); const ty = todayD.getFullYear(), tm = todayD.getMonth(), td = todayD.getDate();
+
+  const gridRows = [];
+  for (let r = 0; r < Math.ceil(cells.length / 7); r++) {
+    const cols = cells.slice(r*7, r*7+7).map(d => {
+      if (!d) return '<td></td>';
+      const isToday = y===ty && m===tm && d===td;
+      const isSel   = y===selY && m===selM && d===selD;
+      const cls = isSel ? 'dtp-sel' : isToday ? 'dtp-today' : '';
+      return `<td class="${cls}" onclick="_dtpPickDay('${id}',${d})">${d}</td>`;
+    });
+    while (cols.length < 7) cols.push('<td></td>');
+    gridRows.push(`<tr>${cols.join('')}</tr>`);
+  }
+
+  const ph = String(s.hour).padStart(2,'0');
+  const pm = String(s.min).padStart(2,'0');
+
+  const panel = document.getElementById('dtpp-'+id);
+  if (!panel) return;
+  panel.innerHTML = `
+      <div class="dtp-cal">
+        <div class="dtp-nav">
+          <button onclick="_dtpNavMonth('${id}',-1)">‹</button>
+          <span>${MONTHS[m]} ${y}</span>
+          <button onclick="_dtpNavMonth('${id}',1)">›</button>
+        </div>
+        <table class="dtp-grid">
+          <thead><tr>${DAY_NAMES.map(n=>`<th>${n}</th>`).join('')}</tr></thead>
+          <tbody>${gridRows.join('')}</tbody>
+        </table>
+      </div>
+      <div class="dtp-time">
+        <div class="dtp-time-label">Время</div>
+        <div class="dtp-time-row">
+          <div class="dtp-spin">
+            <button onclick="_dtpAdj('${id}','h',1)">▲</button>
+            <span>${ph}</span>
+            <button onclick="_dtpAdj('${id}','h',-1)">▼</button>
+          </div>
+          <span class="dtp-colon">:</span>
+          <div class="dtp-spin">
+            <button onclick="_dtpAdj('${id}','m',1)">▲</button>
+            <span>${pm}</span>
+            <button onclick="_dtpAdj('${id}','m',-1)">▼</button>
+          </div>
+        </div>
+        <div class="dtp-actions">
+          <button class="btn btn-outline btn-sm" onclick="_dtpClear('${id}')">Очистить</button>
+          <button class="btn btn-blue btn-sm" onclick="_dtpConfirm('${id}')">Готово</button>
+        </div>
+      </div>`;
+}
+
+function _dtpNavMonth(id, dir) {
+  const s = _dtpState[id];
+  s.viewMonth += dir;
+  if (s.viewMonth > 11) { s.viewMonth = 0; s.viewYear++; }
+  if (s.viewMonth < 0)  { s.viewMonth = 11; s.viewYear--; }
+  _dtpRender(id);
+}
+
+function _dtpPickDay(id, d) {
+  const s = _dtpState[id];
+  s.selDate = new Date(s.viewYear, s.viewMonth, d);
+  _dtpRender(id);
+}
+
+function _dtpAdj(id, part, dir) {
+  const s = _dtpState[id];
+  if (part === 'h') { s.hour = (s.hour + dir + 24) % 24; }
+  else { s.min = Math.round((s.min + dir * 5 + 60) % 60 / 5) * 5; }
+  _dtpRender(id);
+}
+
+function _dtpClear(id) {
+  const s = _dtpState[id];
+  s.selDate = null;
+  document.getElementById('dtpv-'+id).value = '';
+  document.getElementById('dtpl-'+id).textContent = 'Выбрать дату и время';
+  document.getElementById('dtp-'+id).classList.remove('dtp-open');
+}
+
+function _dtpConfirm(id) {
+  const s = _dtpState[id];
+  // if no day clicked yet, use viewYear/viewMonth/1 as default
+  if (!s.selDate) s.selDate = new Date(s.viewYear, s.viewMonth, 1);
+  const pad = n => String(n).padStart(2,'0');
+  const val = `${s.selDate.getFullYear()}-${pad(s.selDate.getMonth()+1)}-${pad(s.selDate.getDate())}T${pad(s.hour)}:${pad(s.min)}`;
+  const label = s.selDate.toLocaleDateString('ru',{day:'numeric',month:'long'}) + ', ' + pad(s.hour)+':'+pad(s.min);
+  document.getElementById('dtpv-'+id).value = val;
+  document.getElementById('dtpl-'+id).textContent = label;
+  document.getElementById('dtp-'+id).classList.remove('dtp-open');
+}
+
+function _dtpToggle(id) {
+  const wrap = document.getElementById('dtp-'+id);
+  const panel = document.getElementById('dtpp-'+id);
+  const trigger = document.getElementById('dtpb-'+id);
+  const isOpen = wrap.classList.contains('dtp-open');
+  document.querySelectorAll('.dtp-wrap.dtp-open').forEach(el => el.classList.remove('dtp-open'));
+  if (!isOpen) {
+    _dtpRender(id);
+    wrap.classList.add('dtp-open');
+    const rect = trigger.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    if (spaceBelow < 380) {
+      panel.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
+      panel.style.top = 'auto';
+    } else {
+      panel.style.top = (rect.bottom + 6) + 'px';
+      panel.style.bottom = 'auto';
+    }
+    panel.style.left = Math.min(rect.left, window.innerWidth - 290) + 'px';
+  }
+}
+
+function _dtpInit(id, isoVal) {
+  const d = isoVal ? new Date(isoVal) : new Date();
+  _dtpState[id] = {
+    viewYear: d.getFullYear(), viewMonth: d.getMonth(),
+    selDate: isoVal ? new Date(d.getFullYear(), d.getMonth(), d.getDate()) : null,
+    hour: d.getHours(), min: Math.round(d.getMinutes()/5)*5
+  };
+}
+
+function _dtpHtml(id, isoVal, label) {
+  _dtpInit(id, isoVal);
+  const pad = n => String(n).padStart(2,'0');
+  const s = _dtpState[id];
+  const dispLabel = label || (s.selDate
+    ? s.selDate.toLocaleDateString('ru',{day:'numeric',month:'long'}) + ', ' + pad(s.hour)+':'+pad(s.min)
+    : 'Выбрать дату и время');
+  return `<div class="dtp-wrap" id="dtp-${id}">
+    <button type="button" class="dtp-trigger" id="dtpb-${id}" onclick="_dtpToggle('${id}')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      <span id="dtpl-${id}">${dispLabel}</span>
+    </button>
+    <input type="hidden" id="dtpv-${id}" value="${isoVal||''}">
+    <div class="dtp-panel" id="dtpp-${id}"></div>
+  </div>`;
+}
+
+function _calAttendeeChipsHtml(wrapId, selIds = new Set()) {
+  return `
+    <input class="cal-field-input" id="${wrapId}-search" placeholder="Поиск сотрудника..." oninput="_calFilterChips('${wrapId}')" style="border-bottom:1px solid var(--border);padding-bottom:6px;margin-bottom:6px">
+    <div style="display:flex;flex-wrap:wrap;gap:6px;max-height:110px;overflow-y:auto;padding:2px 0" id="${wrapId}-chips">
+      ${_calUsers.map(u=>`<label class="cal-attendee-chip ${selIds.has(u.id)?'selected':''}" data-name="${_escHtml((u.name||'').toLowerCase())}"><input type="checkbox" value="${u.id}" ${selIds.has(u.id)?'checked':''} style="display:none"> <span style="background:${u.avatar_color||'#6366f1'}">${(u.name||'?')[0]}</span>${_escHtml(u.name)}</label>`).join('')}
+    </div>`;
+}
+
+function _calFilterChips(wrapId) {
+  const q = (document.getElementById(wrapId+'-search')?.value||'').toLowerCase();
+  document.querySelectorAll(`#${wrapId}-chips .cal-attendee-chip`).forEach(chip => {
+    chip.style.display = (!q || chip.dataset.name.includes(q)) ? '' : 'none';
+  });
+}
+
+function _calBindChips(wrapId) {
+  document.querySelectorAll(`#${wrapId}-chips .cal-attendee-chip`).forEach(chip => {
+    chip.addEventListener('click', () => {
+      const cb = chip.querySelector('input');
+      cb.checked = !cb.checked;
+      chip.classList.toggle('selected', cb.checked);
+    });
+  });
+}
+
+function openNewCalEvent(dateStr) {
+  const now = new Date();
+  const defDate = dateStr || `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const defStart = defDate + 'T10:00';
+  const defEnd   = defDate + 'T11:00';
+  openModal(`<div class="modal cal-event-modal">
+    <div class="modal-header">
+      <span class="modal-title">Новое событие</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:0;padding:0 24px 8px">
+      <input id="cal-ev-title" class="cal-field-title" placeholder="Добавьте название">
+      <div class="cal-field-section">
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <div style="flex:1;min-width:160px">
+            <div class="form-label" style="margin-bottom:6px">Начало</div>
+            ${_dtpHtml('calEvStart', defStart)}
+          </div>
+          <div style="flex:1;min-width:160px">
+            <div class="form-label" style="margin-bottom:6px">Конец</div>
+            ${_dtpHtml('calEvEnd', defEnd)}
+          </div>
+        </div>
+      </div>
+      <div class="cal-field-row" style="align-items:flex-start">
+        <span class="cal-field-icon" style="margin-top:10px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+        <div style="flex:1;display:flex;flex-direction:column;padding:6px 0" id="cal-ev-attendees-wrap">
+          ${_calAttendeeChipsHtml('cal-ev-attendees-wrap')}
+        </div>
+      </div>
+      <div class="cal-field-row">
+        <span class="cal-field-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>
+        <select id="cal-ev-recurrence">
+          <option value="none">Не повторять</option>
+          <option value="daily">Каждый день</option>
+          <option value="weekly">Каждую неделю</option>
+          <option value="monthly">Каждый месяц</option>
+        </select>
+      </div>
+      <div class="cal-field-row">
+        <span class="cal-field-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span>
+        <textarea id="cal-ev-desc" class="cal-field-input" rows="2" placeholder="Добавьте описание" style="resize:vertical"></textarea>
+      </div>
+      <div class="cal-field-row">
+        <span class="cal-field-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>
+        <input id="cal-ev-location" class="cal-field-input" placeholder="Добавьте место">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+      <button class="btn btn-blue" onclick="saveCalEvent()">Сохранить</button>
+    </div>
+  </div>`);
+  document.getElementById('cal-ev-title').focus();
+  _calBindChips('cal-ev-attendees-wrap');
+}
+
+async function saveCalEvent() {
+  const title = document.getElementById('cal-ev-title').value.trim();
+  const startRaw = document.getElementById('dtpv-calEvStart').value;
+  const endRaw   = document.getElementById('dtpv-calEvEnd').value;
+  const desc  = document.getElementById('cal-ev-desc').value.trim();
+  const location = document.getElementById('cal-ev-location')?.value.trim() || '';
+  const recurrence = document.getElementById('cal-ev-recurrence')?.value || 'none';
+  const attendees = [...document.querySelectorAll('#cal-ev-attendees-wrap-chips input:checked')].map(cb=>+cb.value);
+  if (!title) return toast('Введите название', 'error');
+  if (!startRaw || !endRaw) return toast('Укажите дату и время', 'error');
+  const start = new Date(startRaw), end = new Date(endRaw);
+  if (end <= start) return toast('Конец должен быть позже начала', 'error');
+  try {
+    await api('POST', '/calendar/events', {
+      summary: title, description: desc, location, recurrence,
+      start: start.toISOString(),
+      end:   end.toISOString(),
+      attendees
+    });
+    closeModal();
+    toast('Событие создано');
+    _calLoadAndRender();
+  } catch(e) { toast('Ошибка: ' + e.message, 'error'); }
+}
+
+function openCalEventDetail(eventId) {
+  const ev = _calEvents.find(e => e.id == eventId);
+  if (!ev) return;
+  const title    = ev.summary || '(без названия)';
+  const start    = ev.start?.dateTime ? new Date(ev.start.dateTime).toLocaleString('ru',{day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'}) : '';
+  const end      = ev.end?.dateTime   ? new Date(ev.end.dateTime).toLocaleString('ru',{day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'}) : '';
+  const desc     = ev.description || '';
+  const location = ev.location || '';
+  const attendees = ev.attendees || [];
+  const icon = (path) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2">${path}</svg>`;
+  const attendeesHtml = attendees.length
+    ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${attendees.map(a=>`<span style="display:inline-flex;align-items:center;gap:5px;background:var(--bg);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:12px"><span style="width:18px;height:18px;border-radius:50%;background:${a.color||'#6366f1'};display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700">${(a.name||'?')[0]}</span>${_escHtml(a.name)}</span>`).join('')}</div>` : '';
+  const canEdit = state.user && (state.user.role==='admin' || ev.created_by===state.user.id);
+  openModal(`<div class="modal" style="max-width:460px">
+    <div class="modal-header">
+      <span class="modal-title">${_escHtml(title)}</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;gap:10px;align-items:center;font-size:13px;color:var(--text-muted)">
+        ${icon('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>')}
+        ${_escHtml(start)}${end?' — '+_escHtml(end):''}
+      </div>
+      ${location ? `<div style="display:flex;gap:10px;align-items:center;font-size:13px;color:var(--text-muted)">${icon('<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>')} ${_escHtml(location)}</div>` : ''}
+      ${desc ? `<div style="display:flex;gap:10px;align-items:flex-start;font-size:13px;color:var(--text)">${icon('<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>')} <span>${_escHtml(desc)}</span></div>` : ''}
+      ${attendeesHtml ? `<div style="display:flex;gap:10px;align-items:flex-start">${icon('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>')} ${attendeesHtml}</div>` : ''}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
+      ${canEdit ? `<button class="btn btn-outline" onclick="openEditCalEvent(${eventId})">Редактировать</button>` : ''}
+      ${canEdit ? `<button class="btn btn-red" onclick="deleteCalEvent(${eventId},'${ev.start?.dateTime||''}')">Удалить</button>` : ''}
+    </div>
+  </div>`);
+}
+
+function openEditCalEvent(eventId) {
+  const ev = _calEvents.find(e => e.id == eventId);
+  if (!ev) return;
+  const toLocal = (dt) => {
+    if (!dt) return '';
+    const d = new Date(dt);
+    const pad = n => String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  const startVal = toLocal(ev.start?.dateTime);
+  const endVal   = toLocal(ev.end?.dateTime);
+  const selIds   = new Set((ev.attendees||[]).map(a=>a.id));
+  openModal(`<div class="modal cal-event-modal">
+    <div class="modal-header">
+      <span class="modal-title">Редактировать событие</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:0;padding:0 24px 8px">
+      <input id="cal-edit-title" class="cal-field-title" value="${_escHtml(ev.summary||'')}" placeholder="Добавьте название">
+      <div class="cal-field-section">
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <div style="flex:1;min-width:160px">
+            <div class="form-label" style="margin-bottom:6px">Начало</div>
+            ${_dtpHtml('calEditStart', startVal)}
+          </div>
+          <div style="flex:1;min-width:160px">
+            <div class="form-label" style="margin-bottom:6px">Конец</div>
+            ${_dtpHtml('calEditEnd', endVal)}
+          </div>
+        </div>
+      </div>
+      <div class="cal-field-row" style="align-items:flex-start">
+        <span class="cal-field-icon" style="margin-top:10px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+        <div style="flex:1;display:flex;flex-direction:column;padding:6px 0" id="cal-edit-attendees-wrap">
+          ${_calAttendeeChipsHtml('cal-edit-attendees-wrap', selIds)}
+        </div>
+      </div>
+      <div class="cal-field-row">
+        <span class="cal-field-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>
+        <select id="cal-edit-recurrence">
+          <option value="none" ${(ev.recurrence||'none')==='none'?'selected':''}>Не повторять</option>
+          <option value="daily" ${ev.recurrence==='daily'?'selected':''}>Каждый день</option>
+          <option value="weekly" ${ev.recurrence==='weekly'?'selected':''}>Каждую неделю</option>
+          <option value="monthly" ${ev.recurrence==='monthly'?'selected':''}>Каждый месяц</option>
+        </select>
+      </div>
+      <div class="cal-field-row">
+        <span class="cal-field-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span>
+        <textarea id="cal-edit-desc" class="cal-field-input" rows="2" style="resize:vertical" placeholder="Описание">${_escHtml(ev.description||'')}</textarea>
+      </div>
+      <div class="cal-field-row">
+        <span class="cal-field-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>
+        <input id="cal-edit-location" class="cal-field-input" value="${_escHtml(ev.location||'')}" placeholder="Добавьте место">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+      <button class="btn btn-blue" onclick="saveEditCalEvent(${eventId})">Сохранить</button>
+    </div>
+  </div>`);
+  document.getElementById('cal-edit-title').focus();
+  _calBindChips('cal-edit-attendees-wrap');
+}
+
+async function saveEditCalEvent(eventId) {
+  const title      = document.getElementById('cal-edit-title').value.trim();
+  const startRaw   = document.getElementById('dtpv-calEditStart').value;
+  const endRaw     = document.getElementById('dtpv-calEditEnd').value;
+  const desc       = document.getElementById('cal-edit-desc').value.trim();
+  const location   = document.getElementById('cal-edit-location')?.value.trim() || '';
+  const recurrence = document.getElementById('cal-edit-recurrence')?.value || 'none';
+  const attendees  = [...document.querySelectorAll('#cal-edit-attendees-wrap-chips input:checked')].map(cb=>+cb.value);
+  if (!title) return toast('Введите название', 'error');
+  const start = startRaw ? new Date(startRaw) : null;
+  const end   = endRaw   ? new Date(endRaw)   : null;
+  if (start && end && end <= start) return toast('Конец должен быть позже начала', 'error');
+  try {
+    await api('PATCH', `/calendar/events/${eventId}`, {
+      summary: title, description: desc, location, recurrence,
+      start: start?.toISOString(),
+      end:   end?.toISOString(),
+      attendees
+    });
+    closeModal();
+    toast('Событие обновлено');
+    _calLoadAndRender();
+  } catch(e) { toast('Ошибка: ' + e.message, 'error'); }
+}
+
+function deleteCalEvent(eventId, occurrenceStart) {
+  const ev = _calEvents.find(e => e.id == eventId);
+  const isRecurring = ev && ev.recurrence && ev.recurrence !== 'none';
+  if (isRecurring) {
+    openModal(`<div class="modal" style="max-width:400px">
+      <div class="modal-header">
+        <span class="modal-title">Удалить событие</span>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
+        <p style="margin:0;color:var(--text-muted);font-size:13px">Это повторяющееся событие. Что удалить?</p>
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:14px">
+          <input type="radio" name="del-rec" value="this_and_following" checked> Это и все последующие
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:14px">
+          <input type="radio" name="del-rec" value="all"> Все события серии
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+        <button class="btn btn-red" onclick="_doDeleteCalEvent(${eventId},'${occurrenceStart||''}')">Удалить</button>
+      </div>
+    </div>`);
+  } else {
+    openModal(`<div class="modal" style="max-width:400px">
+      <div class="modal-header">
+        <span class="modal-title">Удалить событие</span>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin:0;color:var(--text-muted);font-size:14px">Вы уверены? Событие будет удалено.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+        <button class="btn btn-red" onclick="_doDeleteCalEvent(${eventId},'')">Удалить</button>
+      </div>
+    </div>`);
+  }
+}
+
+async function _doDeleteCalEvent(eventId, occurrenceStart) {
+  const mode = document.querySelector('input[name="del-rec"]:checked')?.value || 'all';
+  let url = `/calendar/events/${eventId}`;
+  if (mode === 'this_and_following' && occurrenceStart) {
+    url += `?mode=this_and_following&from=${encodeURIComponent(occurrenceStart)}`;
+  }
+  await api('DELETE', url);
+  closeModal();
+  toast('Событие удалено');
+  _calLoadAndRender();
 }
 
 // ─── Finance Page ─────────────────────────────────────────────────────────────
@@ -6551,8 +7689,8 @@ const FIN_DIRECTION_COLOR = { marketing: '#7c3aed', b2b: '#0284c7', b2c: '#6366f
 const FIN_CURRENCIES   = ['TJS', 'USD', 'RUB', 'EUR'];
 
 let _finMonth  = (() => { try { return sessionStorage.getItem('fin_month') || new Date().toISOString().slice(0, 7); } catch { return new Date().toISOString().slice(0, 7); } })();
-let _finTab    = (() => { try { return sessionStorage.getItem('fin_tab') || 'month'; } catch { return 'month'; } })();
-let _teamTab   = (() => { try { return sessionStorage.getItem('team_tab') || 'members'; } catch { return 'members'; } })();
+let _finTab    = (() => { try { const t = sessionStorage.getItem('fin_tab'); return (t && t !== 'timesheet') ? t : 'month'; } catch { return 'month'; } })();
+let _teamTab   = (() => { try { const t = sessionStorage.getItem('team_tab'); return (t && t !== 'timesheet') ? t : 'members'; } catch { return 'members'; } })();
 let _finFilter = { status: '', payment_type: '', direction: '', search: '' };
 
 const fmtMoney = v => {
@@ -6568,6 +7706,8 @@ async function renderFinancePage() {
     if (_finTab === 'projects')  { await _renderFinanceProjects(); return; }
     if (_finTab === 'expenses')  { await _renderExpensesPage(); return; }
     if (_finTab === 'checklist') { await _renderFinanceChecklist(); return; }
+    if (_finTab === 'chart')     { await _renderFinanceChart(); return; }
+    if (_finTab === 'timesheet') { await renderTimesheetPage(); return; }
     const params = new URLSearchParams({ month: _finMonth });
     if (_finFilter.status)       params.set('status', _finFilter.status);
     if (_finFilter.payment_type) params.set('payment_type', _finFilter.payment_type);
@@ -6625,6 +7765,7 @@ function _renderFinance(rows) {
     { key:'month', label:'Доходы' },
     { key:'expenses', label:'Расходы' }, { key:'projects', label:'По проектам' },
     { key:'checklist', label:'Чеклист' }, { key:'annual', label:'Годовой отчёт' },
+    { key:'chart', label:'График' }, { key:'timesheet', label:'Табель' },
   ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
 
   const filterBar = `
@@ -6856,7 +7997,7 @@ async function finSetMonth(m) {
 }
 function finSetTab(t) {
   _finTab = t;
-  try { sessionStorage.setItem('fin_tab', t); } catch {}
+  try { if (t !== 'timesheet') sessionStorage.setItem('fin_tab', t); } catch {}
   renderFinancePage();
 }
 
@@ -6875,7 +8016,8 @@ async function _renderFinanceChecklist() {
   const tabs = [
     { key:'month', label:'Доходы' }, { key:'expenses', label:'Расходы' },
     { key:'projects', label:'По проектам' }, { key:'checklist', label:'Чеклист' },
-    { key:'annual', label:'Годовой отчёт' },
+    { key:'annual', label:'Годовой отчёт' }, { key:'chart', label:'График' }, { key:'timesheet', label:'Табель' },
+
   ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
 
   try {
@@ -7063,7 +8205,8 @@ async function _renderExpensesPage() {
   const tabs = [
     { key:'month', label:'Доходы' }, { key:'expenses', label:'Расходы' },
     { key:'projects', label:'По проектам' }, { key:'checklist', label:'Чеклист' },
-    { key:'annual', label:'Годовой отчёт' },
+    { key:'annual', label:'Годовой отчёт' }, { key:'chart', label:'График' }, { key:'timesheet', label:'Табель' },
+
   ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
 
   const [expenses, finRows] = await Promise.all([
@@ -7234,6 +8377,7 @@ async function _renderFinanceProjects() {
     { key:'month', label:'Доходы' },
     { key:'expenses', label:'Расходы' }, { key:'projects', label:'По проектам' },
     { key:'checklist', label:'Чеклист' }, { key:'annual', label:'Годовой отчёт' },
+    { key:'chart', label:'График' }, { key:'timesheet', label:'Табель' },
   ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
   content.innerHTML = `<div class="fin-page">
     <div class="fin-tabs-bar">${tabs}</div>
@@ -7278,6 +8422,127 @@ async function _renderFinanceProjects() {
   </div>`;
 }
 
+let _finChartMonths = 12;
+
+function _renderFinanceChartBars(months) {
+  const labels = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const maxVal = Math.max(...months.map(m => Math.max(m.income, m.expenses, 1)));
+  const BAR_H = 180, barW = 36, gap = 12, colW = barW * 2 + gap + 10;
+  const svgW = Math.max(months.length * colW, 200);
+
+  const bars = months.map((mo, i) => {
+    const ih = Math.max(Math.round(mo.income   / maxVal * BAR_H), mo.income   > 0 ? 2 : 0);
+    const eh = Math.max(Math.round(mo.expenses / maxVal * BAR_H), mo.expenses > 0 ? 2 : 0);
+    const x = i * colW;
+    const lbl = labels[parseInt(mo.month.split('-')[1]) - 1] + ' ' + mo.month.split('-')[0].slice(2);
+    const p = mo.income - mo.expenses;
+    const dataAttrs = `data-month="${lbl}" data-income="${mo.income}" data-exp="${mo.expenses}" data-profit="${p}"`;
+    return `
+      <g transform="translate(${x},0)" class="fin-chart-bar-group" style="cursor:pointer"
+         onmouseenter="_finChartTooltip(event,this)" onmouseleave="_finChartTooltipHide()">
+        <rect x="0" y="0" width="${barW*2+gap}" height="${BAR_H}" fill="transparent"/>
+        <rect x="0" y="${BAR_H - ih}" width="${barW}" height="${ih}" fill="#16a34a" rx="3" opacity="0.85" ${dataAttrs}/>
+        <rect x="${barW+gap}" y="${BAR_H - eh}" width="${barW}" height="${eh}" fill="#dc2626" rx="3" opacity="0.8" ${dataAttrs}/>
+        <text x="${barW + gap/2}" y="${BAR_H + 15}" text-anchor="middle" font-size="9" fill="#6b7280">${lbl}</text>
+        <rect x="0" y="0" width="${barW*2+gap}" height="${BAR_H}" fill="transparent" ${dataAttrs}/>
+      </g>`;
+  }).join('');
+
+  return `<svg viewBox="0 0 ${svgW} ${BAR_H+22}" width="100%" height="${BAR_H+22}" style="display:block;min-width:${Math.min(svgW,400)}px">${bars}</svg>`;
+}
+
+function _finChartTooltip(e, g) {
+  const el = g.querySelector('[data-month]');
+  if (!el) return;
+  const month = el.dataset.month, income = +el.dataset.income, exp = +el.dataset.exp, profit = +el.dataset.profit;
+  let tip = document.getElementById('fin-chart-tip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'fin-chart-tip';
+    tip.style.cssText = 'position:fixed;z-index:9999;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px 16px;box-shadow:0 4px 20px rgba(0,0,0,0.12);pointer-events:none;min-width:160px;font-size:13px';
+    document.body.appendChild(tip);
+  }
+  const pc = profit >= 0 ? '#2563eb' : '#dc2626';
+  tip.innerHTML = `<div style="font-weight:700;margin-bottom:8px;color:var(--text)">${month}</div>
+    <div style="display:flex;justify-content:space-between;gap:16px;margin-bottom:4px"><span style="color:#6b7280">Доход</span><span style="color:#16a34a;font-weight:600">${fmtMoney(income)}</span></div>
+    <div style="display:flex;justify-content:space-between;gap:16px;margin-bottom:4px"><span style="color:#6b7280">Расход</span><span style="color:#dc2626;font-weight:600">${fmtMoney(exp)}</span></div>
+    <div style="display:flex;justify-content:space-between;gap:16px;border-top:1px solid #f3f4f6;padding-top:6px;margin-top:4px"><span style="color:#6b7280">Прибыль</span><span style="color:${pc};font-weight:700">${profit>=0?'+':''}${fmtMoney(profit)}</span></div>`;
+  tip.style.left = (e.clientX + 14) + 'px';
+  tip.style.top  = (e.clientY - 20) + 'px';
+  tip.style.display = 'block';
+}
+
+function _finChartTooltipHide() {
+  const tip = document.getElementById('fin-chart-tip');
+  if (tip) tip.style.display = 'none';
+}
+
+async function _renderFinanceChart(filterMonths) {
+  if (filterMonths !== undefined) _finChartMonths = filterMonths;
+  const content = document.getElementById('page-content');
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  try {
+    const data = await GET('/finance/chart?months=' + _finChartMonths);
+    const { months } = data;
+    const labels = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+
+    const tabs = [
+      { key:'month', label:'Доходы' },
+      { key:'expenses', label:'Расходы' }, { key:'projects', label:'По проектам' },
+      { key:'checklist', label:'Чеклист' }, { key:'annual', label:'Годовой отчёт' },
+      { key:'chart', label:'График' }, { key:'timesheet', label:'Табель' },
+    ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
+
+    const periodBtns = [1,2,3,6,12].map(n =>
+      `<button class="filter-btn ${_finChartMonths===n?'active':''}" onclick="_renderFinanceChart(${n})">${n === 12 ? '1 год' : n + ' мес.'}</button>`
+    ).join('');
+
+    const totalIncome   = months.reduce((s, m) => s + m.income,   0);
+    const totalExpenses = months.reduce((s, m) => s + m.expenses, 0);
+    const profit = totalIncome - totalExpenses;
+
+    content.innerHTML = `<div class="fin-page">
+      <div class="fin-tabs-bar">${tabs}</div>
+      <div style="display:flex;gap:6px;margin-bottom:16px">${periodBtns}</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px">
+        <div class="stat-card"><div><div class="stat-value" style="color:#16a34a">${fmtMoney(totalIncome)}</div><div class="stat-label">Доходы</div></div></div>
+        <div class="stat-card"><div><div class="stat-value" style="color:#dc2626">${fmtMoney(totalExpenses)}</div><div class="stat-label">Расходы</div></div></div>
+        <div class="stat-card"><div><div class="stat-value" style="color:${profit>=0?'#2563eb':'#dc2626'}">${profit>=0?'+':''}${fmtMoney(profit)}</div><div class="stat-label">Прибыль</div></div></div>
+      </div>
+      <div class="card" style="padding:24px;overflow-x:auto">
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+          <span style="font-size:14px;font-weight:700">Доходы и расходы по месяцам</span>
+          <span style="display:flex;align-items:center;gap:4px;font-size:12px;color:#6b7280"><span style="display:inline-block;width:12px;height:12px;background:#16a34a;border-radius:2px"></span>Доходы</span>
+          <span style="display:flex;align-items:center;gap:4px;font-size:12px;color:#6b7280"><span style="display:inline-block;width:12px;height:12px;background:#dc2626;border-radius:2px"></span>Расходы</span>
+        </div>
+        ${_renderFinanceChartBars(months)}
+      </div>
+      <div class="card" style="padding:20px;margin-top:16px">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="text-align:left;padding:8px 10px;font-size:11px;color:#6b7280;font-weight:700">МЕСЯЦ</th>
+            <th style="text-align:right;padding:8px 10px;font-size:11px;color:#6b7280;font-weight:700">ДОХОДЫ</th>
+            <th style="text-align:right;padding:8px 10px;font-size:11px;color:#6b7280;font-weight:700">РАСХОДЫ</th>
+            <th style="text-align:right;padding:8px 10px;font-size:11px;color:#6b7280;font-weight:700">ПРИБЫЛЬ</th>
+          </tr></thead>
+          <tbody>
+            ${months.map(mo => {
+              const p = mo.income - mo.expenses;
+              const lbl = labels[parseInt(mo.month.split('-')[1])-1] + ' ' + mo.month.split('-')[0];
+              return `<tr style="border-top:1px solid var(--border)">
+                <td style="padding:10px;font-size:13px;font-weight:500">${lbl}</td>
+                <td style="padding:10px;text-align:right;font-size:13px;color:#16a34a;font-weight:600">${fmtMoney(mo.income)}</td>
+                <td style="padding:10px;text-align:right;font-size:13px;color:#dc2626;font-weight:600">${fmtMoney(mo.expenses)}</td>
+                <td style="padding:10px;text-align:right;font-size:13px;font-weight:700;color:${p>=0?'#2563eb':'#dc2626'}">${p>=0?'+':''}${fmtMoney(p)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+  } catch(e) { content.innerHTML = `<div style="padding:40px;color:#ef4444">${e.message}</div>`; }
+}
+
 async function _renderFinanceAnnual() {
   const content = document.getElementById('page-content');
   const year = _finMonth.slice(0,4);
@@ -7287,7 +8552,8 @@ async function _renderFinanceAnnual() {
   const tabs = [
     { key:'month', label:'Доходы' }, { key:'expenses', label:'Расходы' },
     { key:'projects', label:'По проектам' }, { key:'checklist', label:'Чеклист' },
-    { key:'annual', label:'Годовой отчёт' },
+    { key:'annual', label:'Годовой отчёт' }, { key:'chart', label:'График' }, { key:'timesheet', label:'Табель' },
+
   ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
 
   const months12 = Array.from({length:12},(_,i)=>String(i+1).padStart(2,'0'));
@@ -9094,7 +10360,16 @@ function _escHtml(s) {
 }
 
 async function renderSchedulePage() {
+  if (_calTab === 'schedule' && document.getElementById('sched-cal-container')) {
+    return _renderScheduleContent();
+  }
   const content = document.getElementById('page-content');
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  return _renderScheduleContent();
+}
+
+async function _renderScheduleContent() {
+  const content = _schedContainer();
   content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
 
   try { _schedCache = await GET('/schedule'); } catch { _schedCache = []; }
@@ -9103,7 +10378,7 @@ async function renderSchedulePage() {
   const hours = [];
   for (let h = SCHED_START; h <= SCHED_END; h++) hours.push(h);
 
-  let html = `
+  const html = `
     <div class="sched-page">
       <div class="sched-toolbar">
         <div class="sched-filter-bar">
@@ -10166,6 +11441,443 @@ function showWelcomeModal() {
 function closeWelcomeModal() {
   const overlay = document.getElementById('welcome-modal-overlay');
   if (overlay) overlay.remove();
+}
+
+// ─── Timesheet (Табель рабочего времени) ─────────────────────────────────────
+
+let _tsMonth = new Date().toISOString().slice(0, 7);
+let _tsWinOffset = 0;
+let _tsData = null; // cached { month, employees, days, records }
+
+const _TS_MNAMES = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+const _TS_DOWNAMES = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+
+async function renderTimesheetPage() {
+  const content = document.getElementById('page-content');
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  try {
+    _tsData = await GET('/timesheet/month?month=' + _tsMonth);
+    _renderTimesheet();
+  } catch (err) {
+    content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${_escHtml(err.message)}</p></div>`;
+  }
+}
+
+async function tsSetMonth(m) {
+  _tsMonth = m;
+  _tsData = await GET('/timesheet/month?month=' + _tsMonth);
+  _renderTimesheet();
+}
+
+async function tsShiftWindow(delta) {
+  _tsWinOffset += delta;
+  _renderTimesheet(); // just re-render the header; data doesn't change
+}
+
+function _renderTimesheet() {
+  const content = document.getElementById('page-content');
+  if (!_tsData) return;
+  const { month, employees, days, records } = _tsData;
+
+  const nowM = new Date().toISOString().slice(0, 7);
+  const fmtMonth = m => { const [y, mo] = m.split('-'); return _TS_MNAMES[+mo - 1] + ' ' + y; };
+
+  // Month sliding window
+  const winStart = -1 + _tsWinOffset;
+  const visible6 = Array.from({ length: 6 }, (_, i) => {
+    const now = new Date();
+    const d = new Date(now.getFullYear(), now.getMonth() + winStart + i, 1);
+    return d.toISOString().slice(0, 7);
+  });
+  const canLeft  = _tsWinOffset > -24;
+  const canRight = _tsWinOffset < 24;
+  const arrowBtn = (dir, disabled) =>
+    `<button class="be-arrow-btn${disabled ? ' disabled' : ''}" onclick="${disabled ? '' : `tsShiftWindow(${dir})`}">${dir < 0 ? '‹' : '›'}</button>`;
+
+  const monthTabs = `
+    <div class="be-month-bar" style="margin-bottom:16px">
+      ${arrowBtn(-1, !canLeft)}
+      ${visible6.map(m => {
+        const isCur = m === nowM;
+        const isSel = m === month;
+        return `<button class="be-month-tab${isSel ? ' active' : ''}${isCur && !isSel ? ' be-month-tab-current' : ''}"
+          onclick="tsSetMonth('${m}')">
+          ${fmtMonth(m)}${isCur ? '<span class="be-tab-now">сейчас</span>' : ''}
+        </button>`;
+      }).join('')}
+      ${arrowBtn(1, !canRight)}
+    </div>`;
+
+  // Compute per-employee totals
+  const workingDaysInMonth = days.filter(d => !d.is_weekend && !d.is_holiday).length;
+
+  const empRows = employees.map(emp => {
+    const empRec = records[emp.id] || {};
+    let workedDays = 0;
+    let workedHours = 0;
+
+    const cells = days.map(d => {
+      const rec = empRec[d.date];
+      let cellClass = 'ts-cell';
+      let cellText = '';
+
+      if ((d.is_holiday || d.is_weekend) && rec?.status === 'work') {
+        cellClass += ' ts-work ts-weekend-work';
+        cellText = String(rec.hours || 8);
+        workedDays++;
+        workedHours += rec.hours || 8;
+      } else if (d.is_holiday) {
+        cellClass += ' ts-holiday';
+        cellText = 'В';
+      } else if (d.is_weekend) {
+        cellClass += ' ts-weekend';
+        cellText = 'В';
+      } else if (rec) {
+        if (rec.status === 'work') {
+          cellClass += ' ts-work';
+          cellText = String(rec.hours || 8);
+          workedDays++;
+          workedHours += rec.hours || 8;
+        } else if (rec.status === 'absent') {
+          cellClass += ' ts-absent';
+          cellText = '—';
+        } else {
+          cellText = '';
+        }
+      } else {
+        cellClass += ' ts-empty';
+        cellText = '';
+      }
+
+      return `<td class="${cellClass}" onclick="tsClickCell(${emp.id},'${d.date}',${d.is_weekend||d.is_holiday})" title="${d.holiday_name||d.date}">${cellText}</td>`;
+    });
+
+    const earnedSalary = workingDaysInMonth > 0
+      ? Math.round(emp.salary * workedDays / workingDaysInMonth)
+      : 0;
+
+    const initials = emp.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+    const avatar = `<span class="ts-avatar" style="background:${emp.color||'#6366f1'}">${initials}</span>`;
+
+    return `<tr class="ts-emp-row" data-emp-id="${emp.id}">
+      <td class="ts-num-col">${employees.indexOf(emp) + 1}</td>
+      <td class="ts-name-col">
+        <div class="ts-name-inner">
+          ${avatar}
+          <span class="ts-emp-name">${_escHtml(emp.name)}</span>
+          <span class="ts-emp-actions">
+            <button class="ts-emp-btn" onclick="editTimesheetEmployee(${emp.id})" title="Изменить">${svgI('<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',13)}</button>
+            <button class="ts-emp-btn ts-emp-btn-del" onclick="deleteTimesheetEmployee(${emp.id})" title="Удалить">${svgI('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>',13)}</button>
+          </span>
+        </div>
+      </td>
+      <td class="ts-pos-col">${_escHtml(emp.position || '')}</td>
+      ${cells.join('')}
+      <td class="ts-total-col">${workingDaysInMonth}</td>
+      <td class="ts-total-col">${workedHours}</td>
+      <td class="ts-total-col">${workedDays}</td>
+      <td class="ts-total-col ts-salary" onclick="editTimesheetEmployee(${emp.id})" style="cursor:pointer;${!emp.salary?'color:#9ca3af;font-style:italic;font-size:11px':''}">${emp.salary ? String(emp.salary) : 'задать'}</td>
+      <td class="ts-total-col ts-earned" style="color:${earnedSalary>0?'#059669':'var(--text-muted)'}"><strong>${earnedSalary > 0 ? String(earnedSalary) : '—'}</strong></td>
+    </tr>`;
+  });
+
+  // Total salary row
+  const totalEarned = employees.reduce((sum, emp) => {
+    const empRec = records[emp.id] || {};
+    const worked = days.filter(d => !d.is_weekend && !d.is_holiday && empRec[d.date]?.status === 'work').length;
+    return sum + (workingDaysInMonth > 0 ? Math.round(emp.salary * worked / workingDaysInMonth) : 0);
+  }, 0);
+
+  // Day header cells
+  const dayHeaders1 = days.map(d => {
+    let cls = 'ts-day-hdr';
+    if (d.is_holiday) cls += ' ts-holiday-hdr';
+    else if (d.is_weekend) cls += ' ts-weekend-hdr';
+    return `<th class="${cls}" title="${d.holiday_name || ''}">${d.day}</th>`;
+  }).join('');
+
+  const dayHeaders2 = days.map(d => {
+    let cls = 'ts-dow-hdr';
+    if (d.is_holiday) cls += ' ts-holiday-hdr';
+    else if (d.is_weekend) cls += ' ts-weekend-hdr';
+    return `<th class="${cls}">${_TS_DOWNAMES[d.dow]}</th>`;
+  }).join('');
+
+  const [yr, mo] = month.split('-');
+  const periodLabel = `01.${mo}.${yr}–${String(days.length).padStart(2,'0')}.${mo}.${yr}`;
+
+  // Build finance tabs if opened from finance section
+  const finTabsHtml = (state.currentPage === 'finance') ? (() => {
+    const FIN_TABS = [
+      { key:'month', label:'Доходы' }, { key:'expenses', label:'Расходы' },
+      { key:'projects', label:'По проектам' }, { key:'checklist', label:'Чеклист' },
+      { key:'annual', label:'Годовой отчёт' }, { key:'chart', label:'График' }, { key:'timesheet', label:'Табель' },
+    ];
+    return `<div class="fin-tabs-bar">${FIN_TABS.map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('')}</div>`;
+  })() : '';
+
+  content.innerHTML = `
+    ${finTabsHtml}
+    <div class="ts-page">
+      <div class="ts-toolbar">
+        <h2 class="ts-title">Учет рабочего времени <span class="ts-period">${periodLabel}</span></h2>
+        <div class="ts-toolbar-btns">
+          <button class="btn btn-outline" onclick="manageHolidays()">${svgI('<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',14)} Праздники</button>
+          <a class="btn btn-outline" style="cursor:pointer;text-decoration:none" onclick="downloadTimesheetExcel()">${svgI('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',14)} Excel</a>
+          <button class="btn btn-primary" onclick="addTimesheetEmployee()">${svgI('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',14)} Сотрудник</button>
+        </div>
+      </div>
+      ${monthTabs}
+      <div class="ts-table-wrap">
+        <table class="ts-table">
+          <colgroup>
+            <col class="ts-col-num">
+            <col class="ts-col-name">
+            <col class="ts-col-pos">
+            ${days.map(() => '<col class="ts-col-day">').join('')}
+            <col class="ts-col-total">
+            <col class="ts-col-total">
+            <col class="ts-col-total">
+            <col class="ts-col-total">
+            <col class="ts-col-total">
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="ts-hdr-fixed ts-num-hdr" rowspan="2">№</th>
+              <th class="ts-hdr-fixed ts-name-hdr" rowspan="2">ФИО</th>
+              <th class="ts-hdr-fixed ts-pos-hdr" rowspan="2">Должность</th>
+              ${dayHeaders1}
+              <th class="ts-total-hdr" rowspan="2" title="Рабочих дней">Р/Д</th>
+              <th class="ts-total-hdr" rowspan="2">Часов</th>
+              <th class="ts-total-hdr" rowspan="2">Дней</th>
+              <th class="ts-total-hdr" rowspan="2">Оклад</th>
+              <th class="ts-total-hdr" rowspan="2">ЗП</th>
+            </tr>
+            <tr>
+              ${dayHeaders2}
+            </tr>
+          </thead>
+          <tbody>
+            ${empRows.length > 0 ? empRows.join('') : `<tr><td colspan="${3 + days.length + 5}" class="ts-empty-msg">Нет сотрудников. Добавьте сотрудника.</td></tr>`}
+          </tbody>
+          <tfoot>
+            <tr class="ts-footer-row">
+              <td colspan="${3 + days.length + 3}" class="ts-footer-label">Итого к выплате за месяц:</td>
+              <td colspan="2" class="ts-total-col ts-footer-total" style="text-align:right;padding-right:8px;white-space:nowrap">${totalEarned} сом</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div class="ts-legend" style="margin-top:10px">
+        <span class="ts-legend-item"><span class="ts-legend-swatch ts-work"></span>Рабочий (8 ч)</span>
+        <span class="ts-legend-item"><span class="ts-legend-swatch ts-absent"></span>Отсутствие</span>
+        <span class="ts-legend-item"><span class="ts-legend-swatch ts-weekend"></span>Выходной/Праздник</span>
+        <span class="ts-legend-item ts-legend-hint">Нажмите на ячейку для изменения статуса</span>
+      </div>
+    </div>`;
+}
+
+async function tsClickCell(employeeId, date, isWeekend) {
+  if (!_tsData) return;
+  const { records } = _tsData;
+  const empRec = records[employeeId] || {};
+  const cur = empRec[date];
+
+  let newStatus, newHours, doDelete = false;
+  if (isWeekend) {
+    // weekend/holiday: empty→work→empty
+    if (cur?.status === 'work') { doDelete = true; }
+    else { newStatus = 'work'; newHours = 8; }
+  } else {
+    // workday: empty→work→absent→work
+    if (!cur) { newStatus = 'work'; newHours = 8; }
+    else if (cur.status === 'work') { newStatus = 'absent'; newHours = 0; }
+    else { newStatus = 'work'; newHours = 8; }
+  }
+
+  try {
+    if (doDelete) {
+      await api('DELETE', '/timesheet/record', { employee_id: employeeId, date });
+      if (records[employeeId]) delete records[employeeId][date];
+    } else {
+      await POST('/timesheet/record', { employee_id: employeeId, date, status: newStatus, hours: newHours });
+      if (!records[employeeId]) records[employeeId] = {};
+      records[employeeId][date] = { status: newStatus, hours: newHours };
+    }
+    _renderTimesheet();
+  } catch (err) {
+    toast(err.message || 'Ошибка', 'error');
+  }
+}
+
+async function downloadTimesheetExcel() {
+  const token = localStorage.getItem('tt_token');
+  const res = await fetch('/api/timesheet/export?month=' + _tsMonth, { headers: { Authorization: 'Bearer ' + token } });
+  if (!res.ok) { toast('Ошибка экспорта', 'error'); return; }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'tabel_' + _tsMonth + '.xlsx';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+}
+
+function addTimesheetEmployee() {
+  _openTsEmployeeModal(null);
+}
+
+function editTimesheetEmployee(id) {
+  if (!_tsData) return;
+  const emp = _tsData.employees.find(e => e.id === id);
+  if (!emp) return;
+  _openTsEmployeeModal(emp);
+}
+
+function _openTsEmployeeModal(emp) {
+  const isEdit = !!emp;
+  const html = `
+    <div class="modal" style="max-width:440px">
+      <div class="modal-header">
+        <span class="modal-title">${isEdit ? 'Редактировать сотрудника' : 'Добавить сотрудника'}</span>
+        <button class="modal-close" onclick="closeModal()">×</button>
+      </div>
+      <div class="modal-body" style="padding:20px 24px">
+        <div class="form-group">
+          <label class="form-label">ФИО *</label>
+          <input class="form-input" id="ts-emp-name" placeholder="Иванов Иван Иванович" value="${_escHtml(emp?.name || '')}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Должность</label>
+          <input class="form-input" id="ts-emp-pos" placeholder="Менеджер" value="${_escHtml(emp?.position || '')}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Оклад (сомони/мес)</label>
+          <input class="form-input" id="ts-emp-salary" type="number" min="0" placeholder="0" value="${emp?.salary || ''}">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
+        <button class="btn btn-primary" id="ts-emp-save-btn">${isEdit ? 'Сохранить' : 'Добавить'}</button>
+      </div>
+    </div>`;
+
+  openModal(html);
+
+  document.getElementById('ts-emp-save-btn').onclick = async () => {
+    const name = document.getElementById('ts-emp-name').value.trim();
+    const position = document.getElementById('ts-emp-pos').value.trim();
+    const salary = parseInt(document.getElementById('ts-emp-salary').value) || 0;
+    if (!name) { toast('Введите ФИО', 'error'); return; }
+    try {
+      if (isEdit) {
+        await PUT('/timesheet/employees/' + emp.id, { name, position, salary });
+      } else {
+        await POST('/timesheet/employees', { name, position, salary });
+      }
+      closeModal();
+      _tsData = await GET('/timesheet/month?month=' + _tsMonth);
+      _renderTimesheet();
+      toast(isEdit ? 'Сохранено' : 'Сотрудник добавлен', 'success');
+    } catch (err) {
+      toast(err.message || 'Ошибка', 'error');
+    }
+  };
+}
+
+async function deleteTimesheetEmployee(id) {
+  const emp = _tsData?.employees.find(e => e.id === id);
+  if (!emp) return;
+  const ok = await showConfirmModal({
+    title: 'Удалить сотрудника',
+    message: `Удалить "${_escHtml(emp.name)}" из табеля? Все записи о явке будут сохранены в архиве.`,
+    confirmLabel: 'Удалить',
+    confirmClass: 'btn-danger-solid',
+  });
+  if (!ok) return;
+  try {
+    await DEL('/timesheet/employees/' + id);
+    _tsData = await GET('/timesheet/month?month=' + _tsMonth);
+    _renderTimesheet();
+    toast('Сотрудник удалён', 'success');
+  } catch (err) {
+    toast(err.message || 'Ошибка', 'error');
+  }
+}
+
+async function manageHolidays() {
+  let holidays = [];
+  try {
+    holidays = await GET('/timesheet/holidays');
+  } catch {}
+
+  const renderHolList = (list) => list.map(h => `
+    <div class="ts-hol-row" data-id="${h.id}">
+      <span class="ts-hol-date">${h.date}</span>
+      <span class="ts-hol-name">${_escHtml(h.name)}</span>
+      ${h.is_custom
+        ? `<button class="ts-hol-del-btn" onclick="tsDeleteHoliday(${h.id})">×</button>`
+        : `<span class="ts-hol-sys">системный</span>`}
+    </div>`).join('') || '<div style="color:var(--text-muted);padding:8px 0">Нет праздников</div>';
+
+  const html = `
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header">
+        <span class="modal-title">Управление праздниками</span>
+        <button class="modal-close" onclick="closeModal()">×</button>
+      </div>
+      <div class="modal-body" style="padding:16px 24px;max-height:400px;overflow-y:auto" id="ts-hol-list">
+        ${renderHolList(holidays)}
+      </div>
+      <div class="modal-body" style="padding:16px 24px;border-top:1px solid var(--border)">
+        <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text)">Добавить праздник</div>
+        <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+          <div class="form-group" style="flex:1;min-width:140px;margin:0">
+            <label class="form-label">Дата</label>
+            <input class="form-input" id="ts-new-hol-date" type="date">
+          </div>
+          <div class="form-group" style="flex:2;min-width:160px;margin:0">
+            <label class="form-label">Название</label>
+            <input class="form-input" id="ts-new-hol-name" placeholder="Название праздника">
+          </div>
+          <button class="btn btn-primary" id="ts-add-hol-btn" style="height:38px">Добавить</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
+      </div>
+    </div>`;
+
+  openModal(html);
+
+  // Make tsDeleteHoliday accessible on window for inline onclick
+  window.tsDeleteHoliday = async (holId) => {
+    try {
+      await DEL('/timesheet/holidays/' + holId);
+      holidays = await GET('/timesheet/holidays');
+      const listEl = document.getElementById('ts-hol-list');
+      if (listEl) listEl.innerHTML = renderHolList(holidays);
+      toast('Праздник удалён', 'success');
+    } catch (err) {
+      toast(err.message || 'Ошибка', 'error');
+    }
+  };
+
+  document.getElementById('ts-add-hol-btn').onclick = async () => {
+    const date = document.getElementById('ts-new-hol-date').value;
+    const name = document.getElementById('ts-new-hol-name').value.trim();
+    if (!date || !name) { toast('Заполните дату и название', 'error'); return; }
+    try {
+      await POST('/timesheet/holidays', { date, name });
+      holidays = await GET('/timesheet/holidays');
+      const listEl = document.getElementById('ts-hol-list');
+      if (listEl) listEl.innerHTML = renderHolList(holidays);
+      document.getElementById('ts-new-hol-date').value = '';
+      document.getElementById('ts-new-hol-name').value = '';
+      toast('Праздник добавлен', 'success');
+    } catch (err) {
+      toast(err.message || 'Ошибка', 'error');
+    }
+  };
 }
 
 // ─── Offline detection ───────────────────────────────────────────────────────

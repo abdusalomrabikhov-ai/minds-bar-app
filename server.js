@@ -6,9 +6,29 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const { google } = require('googleapis');
 const { db, initDB } = require('./database');
 const { sendTelegramNotification, processWebhookUpdate, WEBHOOK_PATH } = require('./bot');
 const { startScheduler } = require('./scheduler');
+const webpush = require('web-push');
+
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    'mailto:abdusalomrabikhov@gmail.com',
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+}
+
+// ─── Google OAuth2 client ─────────────────────────────────────────────────────
+const GOOGLE_REDIRECT = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback';
+function makeOAuth2Client() {
+  return new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    GOOGLE_REDIRECT
+  );
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -535,6 +555,10 @@ app.get('/api/tasks', auth, (req, res) => {
     params.push(assignee_id, assignee_id);
   }
   if (status) { where += ' AND t.status = ?'; params.push(status); }
+  if (req.query.created_month && req.query.created_month !== 'all') {
+    where += " AND strftime('%Y-%m', t.created_at) = ?";
+    params.push(req.query.created_month);
+  }
 
   if (req.query.all === '1') {
     // Legacy: return flat array for dashboard, reports, employee page, etc.
@@ -1183,15 +1207,19 @@ const { buildSummaryData, generateSummaryPDF, generateAnalyticsPDF } = require('
 
 app.get('/api/reports/summary', auth, requirePerm('reports'), (req, res) => {
   const days = Math.min(Math.max(parseInt(req.query.period || '7'), 1), 365);
-  res.json(buildSummaryData(days));
+  const from = req.query.from || null;
+  const to   = req.query.to   || null;
+  res.json(buildSummaryData(days, from, to));
 });
 
 app.get('/api/reports/summary/pdf', auth, requirePerm('reports'), async (req, res) => {
   try {
     const days = Math.min(Math.max(parseInt(req.query.period || '7'), 1), 365);
-    const data   = buildSummaryData(days);
+    const from = req.query.from || null;
+    const to   = req.query.to   || null;
+    const data   = buildSummaryData(days, from, to);
     const buf    = await generateSummaryPDF(data);
-    const fname  = `report-${days}d-${data.generatedAt.slice(0, 10)}.pdf`;
+    const fname  = `report-${from||days+'d'}-${data.generatedAt.slice(0, 10)}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
     res.end(buf);
@@ -1205,17 +1233,22 @@ app.get('/api/reports/summary/pdf', auth, requirePerm('reports'), async (req, re
 app.get('/api/reports/analytics', auth, requirePerm('reports'), (req, res) => {
   const days = Math.min(Math.max(parseInt(req.query.period || '30'), 7), 365);
   const TZ = 5 * 3600000;
-  const nowLocal = new Date(Date.now() + TZ);
-  const fromDate = new Date(nowLocal.getTime() - days * 86400000).toISOString().slice(0, 10);
+  const nowLocal = req.query.to
+    ? new Date(req.query.to + 'T23:59:59+05:00')
+    : new Date(Date.now() + TZ);
+  const fromDate = req.query.from
+    ? new Date(req.query.from + 'T00:00:00+05:00').toISOString().slice(0, 10)
+    : new Date(nowLocal.getTime() - days * 86400000).toISOString().slice(0, 10);
+  const toDate = nowLocal.toISOString().slice(0, 10);
 
   // Average completion time (created_at → updated_at for done tasks), in hours
   const avgRows = db.prepare(`
     SELECT t.created_at, t.updated_at
     FROM tasks t
     WHERE t.status = 'done'
-      AND t.created_at >= ?
+      AND date(t.created_at) >= ? AND date(t.created_at) <= ?
       AND t.updated_at IS NOT NULL
-  `).all(fromDate);
+  `).all(fromDate, toDate);
 
   let avgHours = null;
   if (avgRows.length > 0) {
@@ -1226,15 +1259,18 @@ app.get('/api/reports/analytics', auth, requirePerm('reports'), (req, res) => {
     avgHours = Math.round(total / avgRows.length);
   }
 
-  // Weekly trend: tasks created and done per week for last N days
-  const weekCount = Math.ceil(days / 7);
+  // Weekly trend: tasks created and done per week within [fromDate, toDate]
+  const fromMs  = new Date(fromDate).getTime();
+  const toMs    = new Date(toDate).getTime();
+  const spanMs  = toMs - fromMs;
+  const weekCount = Math.max(1, Math.ceil(spanMs / (7 * 86400000)));
   const weeks = [];
   for (let w = weekCount - 1; w >= 0; w--) {
-    const wEnd   = new Date(nowLocal.getTime() - w * 7 * 86400000);
+    const wEnd   = new Date(toMs - w * 7 * 86400000);
     const wStart = new Date(wEnd.getTime() - 7 * 86400000);
     const wStartStr = wStart.toISOString().slice(0, 10);
     const wEndStr   = wEnd.toISOString().slice(0, 10);
-    const label = wStartStr.slice(5); // MM-DD
+    const label = wStartStr.slice(5);
 
     const created = db.prepare(
       `SELECT COUNT(*) as cnt FROM tasks WHERE date(created_at) > ? AND date(created_at) <= ?`
@@ -1247,31 +1283,31 @@ app.get('/api/reports/analytics', auth, requirePerm('reports'), (req, res) => {
     weeks.push({ label, created, done });
   }
 
-  // Burndown: cumulative open tasks over time (daily for last 30 days, weekly for more)
+  // Burndown: cumulative open tasks over time within period
   const burndown = [];
   const bucketDays = days <= 30 ? 1 : 7;
   const buckets = Math.ceil(days / bucketDays);
   for (let i = buckets - 1; i >= 0; i--) {
-    const atDate = new Date(nowLocal.getTime() - i * bucketDays * 86400000).toISOString().slice(0, 10);
+    const atDate = new Date(toMs - i * bucketDays * 86400000).toISOString().slice(0, 10);
     const open = db.prepare(`
       SELECT COUNT(*) as cnt FROM tasks
-      WHERE date(created_at) <= ?
+      WHERE date(created_at) <= ? AND date(created_at) >= ?
         AND (status != 'done' OR date(updated_at) > ?)
-    `).get(atDate, atDate).cnt;
+    `).get(atDate, fromDate, atDate).cnt;
     burndown.push({ label: atDate.slice(5), open });
   }
 
   // Status breakdown
   const statusBreak = db.prepare(`
     SELECT status, COUNT(*) as cnt FROM tasks
-    WHERE date(created_at) >= ? GROUP BY status
-  `).all(fromDate);
+    WHERE date(created_at) >= ? AND date(created_at) <= ? GROUP BY status
+  `).all(fromDate, toDate);
 
   // Priority breakdown
   const priorityBreak = db.prepare(`
     SELECT priority, COUNT(*) as cnt FROM tasks
-    WHERE date(created_at) >= ? GROUP BY priority
-  `).all(fromDate);
+    WHERE date(created_at) >= ? AND date(created_at) <= ? GROUP BY priority
+  `).all(fromDate, toDate);
 
   res.json({ avgHours, weeks, burndown, statusBreak, priorityBreak, days });
 });
@@ -1279,10 +1315,13 @@ app.get('/api/reports/analytics', auth, requirePerm('reports'), (req, res) => {
 app.get('/api/reports/analytics/pdf', auth, requirePerm('reports'), async (req, res) => {
   try {
     const days = Math.min(Math.max(parseInt(req.query.period || '30'), 7), 365);
-    // reuse analytics data builder inline
     const TZ = 5 * 3600000;
-    const nowLocal = new Date(Date.now() + TZ);
-    const fromDate = new Date(nowLocal.getTime() - days * 86400000).toISOString().slice(0, 10);
+    const nowLocal = req.query.to
+      ? new Date(req.query.to + 'T23:59:59+05:00')
+      : new Date(Date.now() + TZ);
+    const fromDate = req.query.from
+      ? new Date(req.query.from + 'T00:00:00+05:00').toISOString().slice(0, 10)
+      : new Date(nowLocal.getTime() - days * 86400000).toISOString().slice(0, 10);
 
     const avgRows = db.prepare(`SELECT t.created_at, t.updated_at FROM tasks t WHERE t.status='done' AND t.created_at>=? AND t.updated_at IS NOT NULL`).all(fromDate);
     let avgHours = null;
@@ -1704,6 +1743,38 @@ app.get('/api/finance/section-summary', auth, requirePerm('manage_finance'), (re
 });
 
 // Project breakdown
+app.get('/api/finance/chart', auth, requirePerm('manage_finance'), (req, res) => {
+  const numMonths = Math.min(Math.max(parseInt(req.query.months || '12'), 1), 60);
+  // Compute cutoff month string e.g. "2025-07"
+  const now = new Date(Date.now() + 5 * 3600000);
+  const cutoff = new Date(now.getFullYear(), now.getMonth() - numMonths + 1, 1);
+  const cutoffStr = cutoff.getFullYear() + '-' + String(cutoff.getMonth() + 1).padStart(2, '0');
+
+  // Income = service_amount (what was billed), filtered by month
+  const incomeRows = db.prepare(`
+    SELECT month, SUM(service_amount) as income
+    FROM finance
+    WHERE month >= ?
+    GROUP BY month ORDER BY month
+  `).all(cutoffStr);
+
+  const expenseRows = db.prepare(`
+    SELECT month, SUM(amount) as expenses
+    FROM expenses
+    WHERE month >= ?
+    GROUP BY month ORDER BY month
+  `).all(cutoffStr);
+
+  const map = {};
+  for (const r of incomeRows)  { map[r.month] = { month: r.month, income: r.income || 0, expenses: 0 }; }
+  for (const r of expenseRows) {
+    if (!map[r.month]) map[r.month] = { month: r.month, income: 0, expenses: 0 };
+    map[r.month].expenses = r.expenses || 0;
+  }
+  const months = Object.values(map).sort((a, b) => a.month.localeCompare(b.month));
+  res.json({ months });
+});
+
 app.get('/api/finance/by-project', auth, requirePerm('manage_finance'), (req, res) => {
   const rows = db.prepare(`SELECT project_name, SUM(service_amount) as total_service, SUM(paid_amount) as total_paid, COUNT(*) as count
     FROM finance GROUP BY project_name ORDER BY total_service DESC`).all();
@@ -2038,7 +2109,7 @@ app.get('/api/best-employee', auth, (req, res) => {
   function calcMonth(m) {
     const users = db.prepare("SELECT id, name, avatar_color, avatar_img FROM users WHERE role='employee' ORDER BY name").all();
     return users.map(u => {
-      // Fetch tasks with deadline in month m, include multi-assignee done status for this user
+      // Fetch tasks created in month m (same filter as /api/reports)
       const rows = db.prepare(`
         SELECT DISTINCT t.id, t.status, t.deadline, t.updated_at,
           ta.done     AS my_done,
@@ -2046,8 +2117,7 @@ app.get('/api/best-employee', auth, (req, res) => {
         FROM tasks t
         LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
         WHERE (t.assignee_id = ? OR ta.user_id = ?)
-          AND t.deadline IS NOT NULL AND t.deadline != ''
-          AND strftime('%Y-%m', t.deadline) = ?
+          AND strftime('%Y-%m', t.created_at) = ?
       `).all(u.id, u.id, u.id, m);
 
       const nowIso = localNowT();
@@ -2056,16 +2126,18 @@ app.get('/api/best-employee', auth, (req, res) => {
       // - multi-assignee: use ta.done + ta.done_at (this user's individual completion)
       // - single-assignee: use tasks.status + tasks.updated_at
       const enriched = rows.map(t => {
-        // Task is done if overall status='done' OR this user's personal done flag is set
-        const isDone     = t.status === 'done' || t.my_done === 1;
-        const doneAt     = t.status === 'done' ? t.updated_at : (t.my_done === 1 ? t.my_done_at : null);
-        // Normalize deadline: date-only → end of that day; replace space with T
-        const dlRaw      = t.deadline.replace(' ', 'T');
-        const dlNorm     = dlRaw.length <= 10 ? dlRaw + 'T23:59:59' : dlRaw;
-        const doneNorm   = doneAt ? doneAt.replace(' ', 'T') : null;
-        const onTime     = isDone && doneNorm !== null && doneNorm <= dlNorm;
-        const late       = isDone && doneNorm !== null && doneNorm > dlNorm;
-        const overdue    = !isDone && dlNorm < nowIso;
+        const isDone   = t.status === 'done' || t.my_done === 1;
+        const doneAt   = t.status === 'done' ? t.updated_at : (t.my_done === 1 ? t.my_done_at : null);
+        const doneNorm = doneAt ? doneAt.replace(' ', 'T') : null;
+        // onTime/late only possible when task has a deadline
+        let onTime = false, late = false, overdue = false;
+        if (t.deadline) {
+          const dlRaw  = t.deadline.replace(' ', 'T');
+          const dlNorm = dlRaw.length <= 10 ? dlRaw + 'T23:59:59' : dlRaw;
+          onTime  = isDone && doneNorm !== null && doneNorm <= dlNorm;
+          late    = isDone && doneNorm !== null && doneNorm > dlNorm;
+          overdue = !isDone && dlNorm < nowIso;
+        }
         return { ...t, isDone, onTime, late, overdue };
       });
 
@@ -2073,11 +2145,12 @@ app.get('/api/best-employee', auth, (req, res) => {
       const doneOnTime = enriched.filter(t => t.onTime).length;
       const doneLate   = enriched.filter(t => t.late).length;
       const overdue    = enriched.filter(t => t.overdue).length;
-      const done       = doneOnTime + doneLate;
-      // Efficiency % (for display)
-      const score = total > 0
-        ? Math.round((doneOnTime * 100 + doneLate * 50) / total)
-        : null;
+      const done       = enriched.filter(t => t.isDone).length;
+      // Efficiency same formula as /api/reports: based on tasks with deadline
+      const dlTotal    = enriched.filter(t => t.deadline).length;
+      const score = dlTotal > 0
+        ? Math.round((doneOnTime * 100 + doneLate * 50) / dlTotal)
+        : (total > 0 ? Math.round(done / total * 100) : null);
 
       // Ranking score = absolute completions × (1 + efficiency)
       // This rewards MORE tasks done even at lower %, over fewer tasks at 100%
@@ -2192,6 +2265,144 @@ app.post('/api/admin/broadcast', auth, adminOnly, (req, res) => {
 });
 
 // SPA fallback
+// ─── Google Calendar ──────────────────────────────────────────────────────────
+// ─── Local Calendar ───────────────────────────────────────────────────────────
+function _calExpandRecurring(rows, timeMin, timeMax) {
+  const events = [];
+  const tMin = timeMin ? new Date(timeMin) : null;
+  const tMax = timeMax ? new Date(timeMax) : null;
+  for (const r of rows) {
+    const push = (startDt, endDt) => {
+      const s = new Date(startDt), e = new Date(endDt);
+      if (tMin && e < tMin) return;
+      if (tMax && s > tMax) return;
+      events.push({
+        id: r.id, summary: r.title, description: r.description,
+        location: r.location, recurrence: r.recurrence,
+        start: { dateTime: startDt }, end: { dateTime: endDt },
+        creator: { name: r.creator_name, color: r.creator_color, img: r.creator_img },
+        created_by: r.created_by,
+        attendees: r.attendees_raw
+          ? r.attendees_raw.split('|').map(a => { const [id,name,color]=a.split(':'); return {id:+id,name,color}; })
+          : []
+      });
+    };
+    const rec = r.recurrence || 'none';
+    const origStart = new Date(r.start_dt), origEnd = new Date(r.end_dt);
+    const duration = origEnd - origStart;
+    if (rec === 'none') { push(r.start_dt, r.end_dt); continue; }
+    // expand up to 1 year from original start, capped by recurrence_until
+    const limit = new Date(origStart); limit.setFullYear(limit.getFullYear() + 1);
+    const until = r.recurrence_until ? new Date(r.recurrence_until) : limit;
+    let cur = new Date(origStart);
+    while (cur <= limit && cur <= until) {
+      const curEnd = new Date(cur.getTime() + duration);
+      push(cur.toISOString(), curEnd.toISOString());
+      if (rec === 'daily')        cur.setDate(cur.getDate() + 1);
+      else if (rec === 'weekly')  cur.setDate(cur.getDate() + 7);
+      else if (rec === 'monthly') cur.setMonth(cur.getMonth() + 1);
+      else break;
+      if (tMax && cur > tMax) break;
+    }
+  }
+  return events;
+}
+
+app.get('/api/calendar/events', auth, (req, res) => {
+  const isAdmin = req.user.role === 'admin';
+  const { timeMin, timeMax } = req.query;
+  let sql = `
+    SELECT e.*, u.name as creator_name, u.avatar_color as creator_color, u.avatar_img as creator_img,
+      (SELECT GROUP_CONCAT(ce.user_id||':'||us.name||':'||COALESCE(us.avatar_color,'#6366f1'), '|')
+       FROM calendar_attendees ce JOIN users us ON us.id=ce.user_id WHERE ce.event_id=e.id) as attendees_raw
+    FROM calendar_events e
+    LEFT JOIN users u ON u.id = e.created_by
+    WHERE 1=1
+  `;
+  const params = [];
+  if (!isAdmin) {
+    sql += ` AND (e.created_by=? OR EXISTS (SELECT 1 FROM calendar_attendees WHERE event_id=e.id AND user_id=?))`;
+    params.push(req.user.id, req.user.id);
+  }
+  sql += ' ORDER BY e.start_dt';
+  const rows = db.prepare(sql).all(...params);
+  res.json(_calExpandRecurring(rows, timeMin, timeMax));
+});
+
+app.post('/api/calendar/events', auth, (req, res) => {
+  const { summary, description, location, start, end, attendees, recurrence } = req.body;
+  if (!summary || !start || !end) return res.status(400).json({ error: 'summary/start/end required' });
+  const r = db.prepare(`INSERT INTO calendar_events (title,description,location,start_dt,end_dt,created_by,recurrence)
+    VALUES (?,?,?,?,?,?,?)`).run(summary, description||'', location||'', start, end, req.user.id, recurrence||'none');
+  const id = r.lastInsertRowid;
+  if (Array.isArray(attendees) && attendees.length) {
+    const ins = db.prepare('INSERT OR IGNORE INTO calendar_attendees (event_id,user_id) VALUES (?,?)');
+    for (const uid of attendees) ins.run(id, uid);
+    // Telegram notifications — notify all attendees including creator
+    const creator = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id);
+    const startFmt = new Date(start).toLocaleString('ru',{day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'});
+    const notifyIds = new Set(attendees);
+    notifyIds.add(req.user.id); // always notify creator too
+    for (const uid of notifyIds) {
+      const u = db.prepare('SELECT telegram_id FROM users WHERE id=?').get(uid);
+      if (u?.telegram_id) {
+        sendTelegramNotification(u.telegram_id,
+          `📅 *Новое событие*\n\n*${summary}*\n🕐 ${startFmt}\n👤 Организатор: ${creator?.name||'—'}${location?'\n📍 '+location:''}`);
+      }
+    }
+  }
+  res.json({ id, ok: true });
+});
+
+app.patch('/api/calendar/events/:id', auth, (req, res) => {
+  const ev = db.prepare('SELECT * FROM calendar_events WHERE id=?').get(req.params.id);
+  if (!ev) return res.status(404).json({ error: 'Not found' });
+  if (ev.created_by !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { summary, description, location, start, end, attendees, recurrence } = req.body;
+  db.prepare(`UPDATE calendar_events SET title=COALESCE(?,title), description=COALESCE(?,description),
+    location=COALESCE(?,location), start_dt=COALESCE(?,start_dt), end_dt=COALESCE(?,end_dt),
+    recurrence=COALESCE(?,recurrence), updated_at=datetime('now') WHERE id=?`)
+    .run(summary||null, description??null, location??null, start||null, end||null, recurrence||null, req.params.id);
+  if (Array.isArray(attendees)) {
+    const oldAttendees = db.prepare('SELECT user_id FROM calendar_attendees WHERE event_id=?').all(req.params.id).map(r=>r.user_id);
+    db.prepare('DELETE FROM calendar_attendees WHERE event_id=?').run(req.params.id);
+    const ins = db.prepare('INSERT OR IGNORE INTO calendar_attendees (event_id,user_id) VALUES (?,?)');
+    const newSet = new Set(attendees);
+    const oldSet = new Set(oldAttendees);
+    for (const uid of attendees) ins.run(req.params.id, uid);
+    // notify newly added attendees
+    const updEv = db.prepare('SELECT * FROM calendar_events WHERE id=?').get(req.params.id);
+    const creator = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id);
+    const startFmt = new Date(updEv.start_dt).toLocaleString('ru',{day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'});
+    for (const uid of attendees) {
+      if (oldSet.has(uid) || uid === req.user.id) continue;
+      const u = db.prepare('SELECT telegram_id FROM users WHERE id=?').get(uid);
+      if (u?.telegram_id) {
+        sendTelegramNotification(u.telegram_id,
+          `📅 *Вас добавили в событие*\n\n*${updEv.title}*\n🕐 ${startFmt}\n👤 Организатор: ${creator?.name||'—'}${updEv.location?'\n📍 '+updEv.location:''}`);
+      }
+    }
+  }
+  res.json({ ok: true });
+});
+
+app.delete('/api/calendar/events/:id', auth, (req, res) => {
+  const ev = db.prepare('SELECT * FROM calendar_events WHERE id=?').get(req.params.id);
+  if (!ev) return res.status(404).json({ error: 'Not found' });
+  if (ev.created_by !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { mode, from } = req.query;
+  if (mode === 'this_and_following' && from && ev.recurrence && ev.recurrence !== 'none') {
+    // set recurrence_until to one step before `from`
+    const fromDate = new Date(from);
+    // subtract 1 second so expansion stops before this occurrence
+    const until = new Date(fromDate.getTime() - 1000);
+    db.prepare("UPDATE calendar_events SET recurrence_until=? WHERE id=?").run(until.toISOString(), req.params.id);
+  } else {
+    db.prepare('DELETE FROM calendar_events WHERE id=?').run(req.params.id);
+  }
+  res.json({ ok: true });
+});
+
 // ─── Duty Schedule ────────────────────────────────────────────────────────────
 app.get('/api/duty', auth, (req, res) => {
   const rows = db.prepare(`
@@ -2234,11 +2445,418 @@ app.put('/api/duty/week/:week_start', auth, requirePerm('manage_team'), (req, re
   res.json({ ok: true });
 });
 
+// ─── Timesheet (Табель рабочего времени) ──────────────────────────────────────
+
+// Helper: ensure users with role='employee' are in timesheet_employees
+function syncTimesheetEmployees() {
+  const users = db.prepare("SELECT id, name, avatar_color FROM users WHERE role='employee'").all();
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO timesheet_employees (user_id, name, color, is_active)
+    VALUES (?, ?, ?, 1)
+  `);
+  for (const u of users) {
+    const exists = db.prepare('SELECT id FROM timesheet_employees WHERE user_id=?').get(u.id);
+    if (!exists) {
+      insert.run(u.id, u.name, u.avatar_color || '#6366f1');
+    }
+  }
+}
+
+// Helper: ensure holidays are seeded for the year of a given month string (YYYY-MM)
+function ensureHolidaysForYear(yearStr) {
+  const yr = parseInt(yearStr, 10);
+  if (!yr) return;
+  const seeds = [
+    ['01-01', 'Новый год'],
+    ['03-08', '8 марта'],
+    ['03-21', 'Навруз'],
+    ['03-22', 'Навруз'],
+    ['03-23', 'Навруз'],
+    ['05-09', 'День Победы'],
+    ['06-27', 'День национального единства'],
+    ['09-09', 'День независимости'],
+    ['11-06', 'День Конституции'],
+    ['12-31', 'Новый год (канун)'],
+  ];
+  const ins = db.prepare('INSERT OR IGNORE INTO timesheet_holidays (date, name, is_custom) VALUES (?, ?, 0)');
+  for (const [md, name] of seeds) {
+    ins.run(`${yr}-${md}`, name);
+  }
+}
+
+// GET /api/timesheet/employees
+app.get('/api/timesheet/employees', auth, (req, res) => {
+  syncTimesheetEmployees();
+  const employees = db.prepare('SELECT * FROM timesheet_employees WHERE is_active=1 ORDER BY id').all();
+  res.json(employees);
+});
+
+// POST /api/timesheet/employees
+app.post('/api/timesheet/employees', auth, (req, res) => {
+  const { name, position, salary, color } = req.body;
+  if (!name) return res.status(400).json({ error: 'Имя обязательно' });
+  const result = db.prepare(`
+    INSERT INTO timesheet_employees (name, position, salary, color, is_active)
+    VALUES (?, ?, ?, ?, 1)
+  `).run(name.trim(), position || '', parseInt(salary) || 0, color || '#6366f1');
+  const emp = db.prepare('SELECT * FROM timesheet_employees WHERE id=?').get(result.lastInsertRowid);
+  res.json(emp);
+});
+
+// PUT /api/timesheet/employees/:id
+app.put('/api/timesheet/employees/:id', auth, (req, res) => {
+  const { name, position, salary, color } = req.body;
+  const id = parseInt(req.params.id);
+  if (!name) return res.status(400).json({ error: 'Имя обязательно' });
+  db.prepare(`
+    UPDATE timesheet_employees SET name=?, position=?, salary=?, color=? WHERE id=?
+  `).run(name.trim(), position || '', parseInt(salary) || 0, color || '#6366f1', id);
+  const emp = db.prepare('SELECT * FROM timesheet_employees WHERE id=?').get(id);
+  res.json(emp);
+});
+
+// DELETE /api/timesheet/employees/:id
+app.delete('/api/timesheet/employees/:id', auth, (req, res) => {
+  db.prepare('UPDATE timesheet_employees SET is_active=0 WHERE id=?').run(parseInt(req.params.id));
+  res.json({ ok: true });
+});
+
+// GET /api/timesheet/month?month=YYYY-MM
+app.get('/api/timesheet/month', auth, (req, res) => {
+  const month = req.query.month || localMonth();
+  const [yearStr, moStr] = month.split('-');
+  ensureHolidaysForYear(yearStr);
+  syncTimesheetEmployees();
+
+  const year = parseInt(yearStr);
+  const mo = parseInt(moStr);
+  const daysInMonth = new Date(year, mo, 0).getDate();
+
+  // Build days array with weekend/holiday info
+  const holidayRows = db.prepare(
+    "SELECT date, name FROM timesheet_holidays WHERE date LIKE ?"
+  ).all(`${month}%`);
+  const holidayMap = {};
+  for (const h of holidayRows) {
+    holidayMap[h.date] = h.name;
+  }
+
+  const days = [];
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dd = String(d).padStart(2, '0');
+    const dateStr = `${month}-${dd}`;
+    const dow = new Date(year, mo - 1, d).getDay(); // 0=Sun,6=Sat
+    const isWeekend = dow === 0 || dow === 6;
+    const holidayName = holidayMap[dateStr] || null;
+    days.push({
+      day: d,
+      date: dateStr,
+      dow,
+      is_weekend: isWeekend ? 1 : 0,
+      is_holiday: holidayName ? 1 : 0,
+      holiday_name: holidayName,
+    });
+  }
+
+  // Employees
+  const employees = db.prepare('SELECT * FROM timesheet_employees WHERE is_active=1 ORDER BY id').all();
+
+  // Records for the month
+  const records = db.prepare(
+    "SELECT employee_id, date, status, hours FROM timesheet_records WHERE date LIKE ?"
+  ).all(`${month}%`);
+
+  // Build records map: { employee_id: { 'YYYY-MM-DD': { status, hours } } }
+  const recordsMap = {};
+  for (const r of records) {
+    if (!recordsMap[r.employee_id]) recordsMap[r.employee_id] = {};
+    recordsMap[r.employee_id][r.date] = { status: r.status, hours: r.hours };
+  }
+
+  res.json({ month, employees, days, records: recordsMap });
+});
+
+// POST /api/timesheet/record — upsert a single day record
+app.post('/api/timesheet/record', auth, (req, res) => {
+  const { employee_id, date, status, hours } = req.body;
+  if (!employee_id || !date || !status) return res.status(400).json({ error: 'employee_id, date, status обязательны' });
+  const validStatuses = ['work', 'absent', 'holiday', 'weekend'];
+  if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Неверный статус' });
+
+  db.prepare(`
+    INSERT INTO timesheet_records (employee_id, date, status, hours)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(employee_id, date) DO UPDATE SET status=excluded.status, hours=excluded.hours
+  `).run(parseInt(employee_id), date, status, parseInt(hours) || 8);
+
+  res.json({ ok: true });
+});
+
+// DELETE /api/timesheet/record — remove a record (reset to "not set")
+app.delete('/api/timesheet/record', auth, (req, res) => {
+  const { employee_id, date } = req.body;
+  if (!employee_id || !date) return res.status(400).json({ error: 'employee_id, date обязательны' });
+  db.prepare('DELETE FROM timesheet_records WHERE employee_id=? AND date=?').run(parseInt(employee_id), date);
+  res.json({ ok: true });
+});
+
+// GET /api/timesheet/holidays
+app.get('/api/timesheet/holidays', auth, (req, res) => {
+  const holidays = db.prepare('SELECT * FROM timesheet_holidays ORDER BY date').all();
+  res.json(holidays);
+});
+
+// POST /api/timesheet/holidays — add custom holiday
+app.post('/api/timesheet/holidays', auth, (req, res) => {
+  const { date, name } = req.body;
+  if (!date || !name) return res.status(400).json({ error: 'date и name обязательны' });
+  try {
+    db.prepare('INSERT INTO timesheet_holidays (date, name, is_custom) VALUES (?, ?, 1)').run(date, name.trim());
+    const row = db.prepare('SELECT * FROM timesheet_holidays WHERE date=?').get(date);
+    res.json(row);
+  } catch {
+    res.status(409).json({ error: 'Праздник на эту дату уже существует' });
+  }
+});
+
+// DELETE /api/timesheet/holidays/:id — only custom holidays
+app.delete('/api/timesheet/holidays/:id', auth, (req, res) => {
+  const row = db.prepare('SELECT * FROM timesheet_holidays WHERE id=?').get(parseInt(req.params.id));
+  if (!row) return res.status(404).json({ error: 'Не найдено' });
+  if (!row.is_custom) return res.status(403).json({ error: 'Нельзя удалить системный праздник' });
+  db.prepare('DELETE FROM timesheet_holidays WHERE id=?').run(parseInt(req.params.id));
+  res.json({ ok: true });
+});
+
+// GET /api/timesheet/export?month=YYYY-MM — export Excel matching template format
+app.get('/api/timesheet/export', auth, async (req, res) => {
+  try {
+    const ExcelJS = require('exceljs');
+    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const [yr, mo] = month.split('-').map(Number);
+    const daysInMonth = new Date(yr, mo, 0).getDate();
+    const moStr = String(mo).padStart(2, '0');
+    const fromStr = `01.${moStr}.${yr}`;
+    const toStr = `${String(daysInMonth).padStart(2, '0')}.${moStr}.${yr}`;
+
+    const holidays = db.prepare("SELECT date FROM timesheet_holidays").all().map(r => r.date);
+    const days = Array.from({ length: daysInMonth }, (_, i) => {
+      const day = i + 1;
+      const dateStr = `${yr}-${moStr}-${String(day).padStart(2, '0')}`;
+      const dow = new Date(yr, mo - 1, day).getDay();
+      return { day, dateStr, isWeekend: dow === 0 || dow === 6, isHoliday: holidays.includes(dateStr) };
+    });
+    const workingDays = days.filter(d => !d.isWeekend && !d.isHoliday).length;
+
+    const employees = db.prepare("SELECT * FROM timesheet_employees WHERE is_active=1 ORDER BY id").all();
+    const recRows = db.prepare("SELECT * FROM timesheet_records WHERE strftime('%Y-%m', date)=?").all(month);
+    const records = {};
+    recRows.forEach(r => { if (!records[r.employee_id]) records[r.employee_id] = {}; records[r.employee_id][r.date] = r; });
+
+    // Column layout (1-based, no hidden merge cols):
+    // A=№, B=ФИО, C=Должность, D..=дни, then Р/Д, Часов, Всего, Оклад, Аванс, ЗП, БО, ОТ
+    const C_NUM  = 1;
+    const C_FIO  = 2;
+    const C_POS  = 3;
+    const C_DAY  = 4;
+    const C_LAST = C_DAY + daysInMonth - 1;
+    const C_RD   = C_LAST + 1;
+    const C_HRS  = C_LAST + 2;
+    const C_DAYS = C_LAST + 3;
+    const C_OKL  = C_LAST + 4;
+    const C_AVN  = C_LAST + 5;
+    const C_ZP   = C_LAST + 6;
+    const C_BO   = C_LAST + 7;
+    const C_OT   = C_LAST + 8;
+    const LAST_COL = C_OT;
+
+    const wb = new ExcelJS.Workbook();
+    const MONTH_NAMES_RU = ['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
+    const ws = wb.addWorksheet(MONTH_NAMES_RU[mo-1] + ' ' + yr, {
+      pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1 }
+    });
+
+    const bt = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
+    const hF  = { type:'pattern', pattern:'solid', fgColor:{argb:'FFD9D9D9'} };
+    const wkF = { type:'pattern', pattern:'solid', fgColor:{argb:'FFEEEEEE'} };
+    const hdr = { bold:true, size:8 };
+    const base= { size:9 };
+    const ca  = { horizontal:'center', vertical:'middle', wrapText:true };
+    const la  = { horizontal:'left',   vertical:'middle', wrapText:true };
+
+    const sc = (row, col, val, font, fill, align, border) => {
+      const c = row.getCell(col);
+      c.value = val;
+      if (font)   c.font      = font;
+      if (fill)   c.fill      = fill;
+      if (align)  c.alignment = align;
+      if (border) c.border    = border;
+      return c;
+    };
+    const mc = (r1, c1, r2, c2) => ws.mergeCells(r1, c1, r2, c2);
+
+    // Col widths
+    ws.getColumn(C_NUM).width  = 4;
+    ws.getColumn(C_FIO).width  = 16;
+    ws.getColumn(C_POS).width  = 11;
+    for (let i = 0; i < daysInMonth; i++) ws.getColumn(C_DAY + i).width = 2.8;
+    ws.getColumn(C_RD).width   = 5;
+    ws.getColumn(C_HRS).width  = 6;
+    ws.getColumn(C_DAYS).width = 6;
+    ws.getColumn(C_OKL).width  = 8;
+    ws.getColumn(C_AVN).width  = 6;
+    ws.getColumn(C_ZP).width   = 8;
+    ws.getColumn(C_BO).width   = 5;
+    ws.getColumn(C_OT).width   = 5;
+
+    // ── ROW 1: Title ──
+    ws.addRow([]).height = 16;
+    const rT = ws.lastRow;
+    sc(rT, C_NUM, `1. Учет рабочего времени сотрудников`, {bold:true,size:11}, null, la, null);
+    mc(1, C_NUM, 1, C_DAYS);
+    sc(rT, C_OKL, `с ${fromStr} по ${toStr}`, {bold:true,size:10}, null, {horizontal:'right',vertical:'middle'}, null);
+    mc(1, C_OKL, 1, LAST_COL);
+
+    // ── ROW 2: Header row 1 — labels ──
+    ws.addRow([]).height = 28;
+    const rH1 = ws.lastRow; const H1 = rH1.number;
+    sc(rH1, C_NUM, '№',         hdr, hF, ca, bt); mc(H1,C_NUM, H1+1,C_NUM);
+    sc(rH1, C_FIO, 'ФИО',       hdr, hF, ca, bt); mc(H1,C_FIO, H1+1,C_FIO);
+    sc(rH1, C_POS, 'Должность', hdr, hF, ca, bt); mc(H1,C_POS, H1+1,C_POS);
+    sc(rH1, C_DAY, 'Отметки о явках и неявках на работу по числам месяца', hdr, hF, ca, bt);
+    mc(H1, C_DAY, H1, C_LAST);
+    sc(rH1, C_RD, 'Итого отработано за месяц часов', hdr, hF, ca, bt);
+    mc(H1, C_RD, H1, LAST_COL);
+
+    // ── ROW 3: Header row 2 — day numbers + sub-col labels ──
+    ws.addRow([]).height = 13;
+    const rH2 = ws.lastRow;
+    for (let i = 0; i < daysInMonth; i++) {
+      const d = days[i];
+      const wk = d.isWeekend || d.isHoliday;
+      const c = rH2.getCell(C_DAY + i);
+      c.value = d.day; c.fill = hF; c.border = bt; c.alignment = ca;
+      c.font = wk ? {bold:true, color:{argb:'FFCC0000'}, size:8} : hdr;
+    }
+    sc(rH2, C_RD,   'Р/Д',        hdr, hF, ca, bt);
+    sc(rH2, C_HRS,  'Часов',       hdr, hF, ca, bt);
+    sc(rH2, C_DAYS, 'Всего\nдней', hdr, hF, ca, bt);
+    sc(rH2, C_OKL,  'Оклад',       hdr, hF, ca, bt);
+    sc(rH2, C_AVN,  'Аванс',       hdr, hF, ca, bt);
+    sc(rH2, C_ZP,   'ЗП',          hdr, hF, ca, bt);
+    sc(rH2, C_BO,   'БО',          hdr, hF, ca, bt);
+    sc(rH2, C_OT,   'ОТ',          hdr, hF, ca, bt);
+
+    // ── Employee rows ──
+    let totalEarned = 0;
+    employees.forEach((emp, idx) => {
+      const empRec = records[emp.id] || {};
+      let workedDays = 0, workedHours = 0;
+      const dayVals = days.map(d => {
+        const rec = empRec[d.dateStr];
+        if (rec?.status === 'work') { workedDays++; workedHours += rec.hours || 8; return rec.hours || 8; }
+        if (rec?.status === 'absent') return 'Н';
+        return null;
+      });
+      const earned = workingDays > 0 ? Math.round((emp.salary || 0) * workedDays / workingDays) : 0;
+      totalEarned += earned;
+
+      // Top row: work hours
+      ws.addRow([]).height = 12;
+      const rW = ws.lastRow; const RW = rW.number;
+      sc(rW, C_NUM, idx+1, {bold:true,size:9}, null, ca, bt); mc(RW,C_NUM,RW+1,C_NUM);
+      sc(rW, C_FIO, emp.name, base, null, la, bt);             mc(RW,C_FIO,RW+1,C_FIO);
+      sc(rW, C_POS, emp.position||'', base, null, ca, bt);    mc(RW,C_POS,RW+1,C_POS);
+
+      for (let i = 0; i < daysInMonth; i++) {
+        const d = days[i]; const v = dayVals[i];
+        const wk = d.isWeekend || d.isHoliday;
+        const c = rW.getCell(C_DAY + i);
+        c.value = wk ? null : v;
+        c.border = bt; c.alignment = ca;
+        c.font = { size:9, bold: typeof v === 'number' };
+        if (wk) c.fill = wkF;
+      }
+      sc(rW, C_RD,   workingDays,     base, null, ca, bt); mc(RW,C_RD,  RW+1,C_RD);
+      sc(rW, C_HRS,  workedHours,     base, null, ca, bt); mc(RW,C_HRS, RW+1,C_HRS);
+      sc(rW, C_DAYS, workedDays,      base, null, ca, bt); mc(RW,C_DAYS,RW+1,C_DAYS);
+      sc(rW, C_OKL,  emp.salary||0,   base, null, ca, bt); mc(RW,C_OKL, RW+1,C_OKL);
+      sc(rW, C_AVN,  0,               base, null, ca, bt); mc(RW,C_AVN, RW+1,C_AVN);
+      sc(rW, C_ZP,   earned,          {bold:true,size:9}, null, ca, bt); mc(RW,C_ZP,RW+1,C_ZP);
+      sc(rW, C_BO,   0,               base, null, ca, bt); mc(RW,C_BO,  RW+1,C_BO);
+      sc(rW, C_OT,   0,               base, null, ca, bt); mc(RW,C_OT,  RW+1,C_OT);
+
+      // Bottom row: В for weekends
+      ws.addRow([]).height = 10;
+      const rB = ws.lastRow;
+      for (let i = 0; i < daysInMonth; i++) {
+        const d = days[i]; const wk = d.isWeekend || d.isHoliday;
+        const v = dayVals[i];
+        const c = rB.getCell(C_DAY + i);
+        c.value = wk ? 'В' : null;
+        c.border = bt; c.alignment = ca;
+        c.font = { size:8, color:{ argb: wk ? 'FF0070C0' : 'FFCC0000'} };
+        if (wk) c.fill = wkF;
+      }
+    });
+
+    // ── Total row ──
+    ws.addRow([]).height = 15;
+    const rTot = ws.lastRow;
+    sc(rTot, C_DAYS, 'Итого:', {bold:true,size:10}, null, {horizontal:'right',vertical:'middle'}, null);
+    mc(rTot.number, C_NUM, rTot.number, C_DAYS);
+    sc(rTot, C_ZP, totalEarned, {bold:true,size:11,color:{argb:'FF006400'}}, null, ca, null);
+    mc(rTot.number, C_OKL, rTot.number, LAST_COL);
+
+    res.setHeader('Content-Disposition', `attachment; filename="tabel_${month}.xlsx"`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('Export error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('*', (req, res) => {
   if (!req.path.startsWith('/api')) {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   }
 });
+
+// ─── Push Notifications ────────────────────────────────────────────────────────
+
+app.get('/api/push/vapid-public-key', auth, (req, res) => {
+  res.json({ key: process.env.VAPID_PUBLIC_KEY || '' });
+});
+
+app.post('/api/push/subscribe', auth, (req, res) => {
+  const { endpoint, keys } = req.body;
+  if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ error: 'Invalid subscription' });
+  db.prepare(`INSERT OR REPLACE INTO push_subscriptions (user_id, endpoint, p256dh, auth)
+    VALUES (?, ?, ?, ?)`).run(req.user.id, endpoint, keys.p256dh, keys.auth);
+  res.json({ ok: true });
+});
+
+app.delete('/api/push/subscribe', auth, (req, res) => {
+  const { endpoint } = req.body;
+  if (endpoint) db.prepare('DELETE FROM push_subscriptions WHERE user_id=? AND endpoint=?').run(req.user.id, endpoint);
+  res.json({ ok: true });
+});
+
+function sendPushToUser(userId, payload) {
+  if (!process.env.VAPID_PUBLIC_KEY) return;
+  const subs = db.prepare('SELECT * FROM push_subscriptions WHERE user_id=?').all(userId);
+  for (const s of subs) {
+    webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify(payload))
+      .catch(err => {
+        if (err.statusCode === 410 || err.statusCode === 404) {
+          db.prepare('DELETE FROM push_subscriptions WHERE endpoint=?').run(s.endpoint);
+        }
+      });
+  }
+}
+module.exports = { sendPushToUser };
 
 initDB();
 startScheduler(sseClients);
