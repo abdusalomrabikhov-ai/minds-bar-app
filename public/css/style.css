@@ -295,6 +295,7 @@ input, textarea, select { font: inherit; }
 .btn-blue { background: var(--primary); color: white; }
 .btn-blue:hover { background: var(--primary-hover); box-shadow: 0 2px 8px rgba(136,19,55,0.3); }
 .btn-outline { border: 1.5px solid var(--border); color: var(--text-secondary); background: white; }
+.btn.btn-primary { border: 1.5px solid transparent; background: var(--primary); color: white; width: auto; padding: 8px 16px; margin-top: 0; font-size: 13px; }
 .btn-outline:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
 .btn-danger { background: var(--danger-light); color: var(--danger); border: 1px solid #FCA5A5; }
 .btn-danger:hover { background: #FEE2E2; }
@@ -2060,6 +2061,48 @@ body.dark .report-card-eff-label { color: var(--text-muted) !important; }
   padding: 0 3px;
 }
 
+/* Mention dropdown */
+.mention-dropdown {
+  position: absolute; bottom: calc(100% + 4px); left: 0; right: 0;
+  background: var(--card-bg); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  z-index: 999; overflow: hidden; max-height: 220px; overflow-y: auto;
+}
+.mention-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; cursor: pointer; font-size: 13px;
+  transition: background 0.1s;
+}
+.mention-item:hover, .mention-item.active { background: var(--hover-bg); }
+.mention-avatar {
+  width: 24px; height: 24px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; color: #fff; flex-shrink: 0;
+}
+
+/* Emoji picker */
+.emoji-picker-panel {
+  position: absolute; bottom: calc(100% + 4px); right: 0;
+  background: var(--card-bg); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.14);
+  z-index: 999; padding: 8px;
+}
+.emoji-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; max-height: 260px; overflow-y: auto; width: 320px; }
+.emoji-item {
+  background: none; border: none; cursor: pointer;
+  font-size: 20px; padding: 4px; border-radius: 6px;
+  transition: background 0.1s; line-height: 1;
+}
+.emoji-item:hover { background: var(--hover-bg); }
+
+/* Emoji button */
+.emoji-btn {
+  background: none; border: 1px solid var(--border); border-radius: 8px;
+  font-size: 18px; cursor: pointer; padding: 0 8px; height: 34px;
+  transition: background 0.1s; flex-shrink: 0;
+}
+.emoji-btn:hover { background: var(--hover-bg); }
+
 /* ─── Broadcast Modal ────────────────────────────────────────────────────── */
 .broadcast-list { display:flex; flex-direction:column; gap:4px; max-height:260px; overflow-y:auto; border:1.5px solid var(--border); border-radius:10px; padding:8px; background:var(--bg); }
 .broadcast-item { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:8px; cursor:pointer; transition:background .1s; }
@@ -3183,6 +3226,7 @@ body.dark .hr-badge--terminated { background: rgba(220,38,38,.15); color: #f8717
 .ts-title { font-size: 18px; font-weight: 700; color: var(--text); margin: 0; }
 .ts-period { font-size: 14px; font-weight: 400; color: var(--text-muted); margin-left: 8px; }
 .ts-toolbar-btns { display: flex; gap: 8px; align-items: center; }
+.ts-toolbar-btns .btn { display: inline-flex; align-items: center; }
 
 /* Table wrapper with horizontal scroll */
 .ts-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg); }
@@ -3210,7 +3254,6 @@ body.dark .hr-badge--terminated { background: rgba(220,38,38,.15); color: #f8717
 [data-theme="dark"] .ts-weekend-hdr, [data-theme="dark"] .ts-holiday-hdr { background: #3b1a1a !important; color: #f87171 !important; }
 
 /* Employee rows */
-.ts-emp-row:hover .ts-emp-actions { opacity: 1; }
 .ts-emp-row:hover td.ts-name-col, .ts-emp-row:hover td.ts-pos-col, .ts-emp-row:hover td.ts-num-col { background: var(--hover-bg) !important; }
 .ts-num-col { padding: 0 4px; font-size: 12px; color: var(--text-muted); height: 36px; }
 .ts-name-col { padding: 0 8px 0 6px; }
@@ -3220,7 +3263,8 @@ body.dark .hr-badge--terminated { background: rgba(220,38,38,.15); color: #f8717
 .ts-name-inner { display: flex; align-items: center; gap: 7px; min-height: 36px; position: relative; padding-left: 6px; padding-right: 4px; }
 .ts-avatar { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; font-size: 9px; font-weight: 700; color: #fff; flex-shrink: 0; }
 .ts-emp-name { font-size: 12px; font-weight: 500; color: var(--text); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ts-emp-actions { display: flex; gap: 2px; opacity: 0; transition: opacity .15s; flex-shrink: 0; position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: var(--card-bg); border-radius: 4px; }
+.ts-emp-actions { display: flex; gap: 2px; flex-shrink: 0; max-width: 0; overflow: hidden; opacity: 0; transition: max-width .15s, opacity .15s; background: var(--card-bg); border-radius: 4px; }
+.ts-emp-row:hover .ts-emp-actions { max-width: 60px; opacity: 1; }
 .ts-emp-btn { background: none; border: none; cursor: pointer; padding: 2px 4px; border-radius: 4px; font-size: 12px; line-height: 1; transition: background .15s; color: var(--text-muted); }
 .ts-emp-btn:hover { background: var(--hover-bg); color: var(--text); }
 .ts-emp-btn-del:hover { color: #ef4444; }
@@ -3284,4 +3328,4 @@ body.dark .hr-badge--terminated { background: rgba(220,38,38,.15); color: #f8717
 .ts-col-pos { min-width: 120px; }
 .ts-col-day { width: 32px; min-width: 32px; }
 .ts-col-total { width: 48px; min-width: 48px; }
-.ts-salary, .ts-earned { width: 72px; min-width: 72px; text-align: right; }
+.ts-salary, .ts-bonus, .ts-advance, .ts-earned { width: 72px; min-width: 72px; text-align: right; }

@@ -270,10 +270,12 @@ function initDB() {
     amount REAL NOT NULL DEFAULT 0,
     category TEXT DEFAULT 'other',
     comment TEXT DEFAULT '',
+    color TEXT DEFAULT '',
     month TEXT NOT NULL,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
   )`); } catch {}
+  try { db.exec("ALTER TABLE expenses ADD COLUMN color TEXT DEFAULT ''"); } catch {}
   try { db.exec(`CREATE TABLE IF NOT EXISTS finance (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
@@ -413,10 +415,13 @@ function initDB() {
     name        TEXT NOT NULL,
     position    TEXT DEFAULT '',
     salary      INTEGER DEFAULT 0,
+    bonus       INTEGER DEFAULT 0,
     color       TEXT DEFAULT '#6366f1',
     is_active   INTEGER DEFAULT 1,
     created_at  TEXT DEFAULT (datetime('now'))
   )`); } catch {}
+  try { db.exec(`ALTER TABLE timesheet_employees ADD COLUMN bonus INTEGER DEFAULT 0`); } catch {}
+  try { db.exec(`ALTER TABLE timesheet_employees ADD COLUMN advance INTEGER DEFAULT 0`); } catch {}
 
   try { db.exec(`CREATE TABLE IF NOT EXISTS timesheet_records (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

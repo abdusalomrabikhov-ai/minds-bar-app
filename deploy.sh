@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-cd ~/teamtask
+cd ~/Claude\ projects/teamtask
 
 echo "Деплой TeamTask на Railway..."
 railway up --detach

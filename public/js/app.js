@@ -55,7 +55,7 @@ function openModal(html, onClose) {
   const root = document.getElementById('modal-root');
   root.innerHTML = `<div class="modal-overlay" id="modal-overlay">${html}</div>`;
   const overlay = root.querySelector('.modal-overlay');
-  overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
+  overlay.addEventListener('click', e => { if (e.target === overlay && window._overlayMouseDownTarget === overlay) closeModal(); });
   if (onClose) overlay._onClose = onClose;
   // Push modal state so Back button closes the modal instead of leaving the page
   history.pushState({ modal: true, page: state.currentPage, projectId: state.currentProjectId }, '');
@@ -88,7 +88,7 @@ function showConfirmModal({ title, message, confirmLabel = 'Удалить', con
 }
 
 function confirmDel(msg, onYes) {
-  document.getElementById('modal-root').innerHTML = `<div class="modal-overlay" style="align-items:center" onclick="if(event.target===this)closeModal()">
+  document.getElementById('modal-root').innerHTML = `<div class="modal-overlay" style="align-items:center" onclick="if(event.target===this&&window._overlayMouseDownTarget===this)closeModal()">
     <div class="modal" style="max-width:340px;width:90%">
       <div class="modal-body" style="padding:20px 24px 16px">
         <p style="margin:0;font-size:14px;color:var(--text);line-height:1.5">${msg}</p>
@@ -573,6 +573,18 @@ async function initApp() {
       return;
     }
 
+    if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      // Enter in textarea = newline (don't intercept)
+      if (e.target.tagName === 'TEXTAREA') return;
+      const modal = document.getElementById('modal-overlay') || document.getElementById('modal-root')?.querySelector('.modal-overlay');
+      if (!modal) return;
+      // Find primary save button: btn-primary or btn-blue, not cancel/delete
+      const saveBtn = modal.querySelector(
+        'button.btn-primary:not([disabled]):not(.btn-danger), button.btn-blue:not([disabled]):not(.btn-danger)'
+      );
+      if (saveBtn) { e.preventDefault(); saveBtn.click(); }
+    }
+
     // Cmd+K / Ctrl+K — global search
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault();
@@ -653,7 +665,7 @@ function renderSidebarProjects() {
 
 async function openArchivedProjects() {
   const root = document.getElementById('modal-root');
-  root.innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+  root.innerHTML = `<div class="modal-overlay" onclick="if(event.target===this&&window._overlayMouseDownTarget===this)closeModal()">
     <div class="modal" style="max-width:520px">
       <div class="modal-header"><div class="modal-title">Архив проектов</div>
         <button class="modal-close" onclick="closeModal()">✕</button></div>
@@ -2958,9 +2970,14 @@ async function openTaskDetail(taskId) {
                   </div>
                 `; }).join('')}
             </div>
-            <div class="comment-input-row">
-              <input class="comment-input" id="comment-input" placeholder="Написать комментарий...">
-              <button class="btn btn-blue btn-sm" onclick="submitComment(${t.id})">Отправить</button>
+            <div class="comment-input-wrap" style="position:relative">
+              <div id="mention-dropdown" class="mention-dropdown" style="display:none"></div>
+              <div id="emoji-picker-panel" class="emoji-picker-panel" style="display:none"></div>
+              <div class="comment-input-row">
+                <input class="comment-input" id="comment-input" placeholder="Написать комментарий... (@ для упоминания)">
+                <button class="emoji-btn" id="emoji-btn" title="Смайлики" type="button">😊</button>
+                <button class="btn btn-blue btn-sm" onclick="submitComment(${t.id})">Отправить</button>
+              </div>
             </div>
           </div>
 
@@ -2992,16 +3009,136 @@ async function openTaskDetail(taskId) {
       const draftKey = 'tt_comment_draft_' + t.id;
       const saved = localStorage.getItem(draftKey);
       if (saved) commentInput.value = saved;
+
+      // Draft save
       commentInput.addEventListener('input', () => {
         if (commentInput.value.trim()) localStorage.setItem(draftKey, commentInput.value);
         else localStorage.removeItem(draftKey);
+        initMentionAutocomplete(commentInput);
       });
+
       commentInput.addEventListener('keydown', e => {
-        if (e.key === 'Enter') submitComment(t.id);
+        const dd = document.getElementById('mention-dropdown');
+        if (dd && dd.style.display !== 'none') {
+          const items = dd.querySelectorAll('.mention-item');
+          const active = dd.querySelector('.mention-item.active');
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            const next = active ? active.nextElementSibling : items[0];
+            active?.classList.remove('active');
+            (next || items[0])?.classList.add('active');
+            return;
+          }
+          if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            const prev = active ? active.previousElementSibling : items[items.length - 1];
+            active?.classList.remove('active');
+            (prev || items[items.length - 1])?.classList.add('active');
+            return;
+          }
+          if (e.key === 'Enter' || e.key === 'Tab') {
+            const sel = dd.querySelector('.mention-item.active') || items[0];
+            if (sel) { e.preventDefault(); sel.click(); return; }
+          }
+          if (e.key === 'Escape') { dd.style.display = 'none'; return; }
+        }
+        if (e.key === 'Enter' && !e.shiftKey) submitComment(t.id);
       });
+
+      // Close mention dropdown on outside click
+      document.addEventListener('click', e => {
+        if (!e.target.closest('.comment-input-wrap')) {
+          const dd = document.getElementById('mention-dropdown');
+          if (dd) dd.style.display = 'none';
+          const ep = document.getElementById('emoji-picker-panel');
+          if (ep) ep.style.display = 'none';
+        }
+      }, { once: false, capture: true });
+
+      // Emoji picker
+      const emojiBtn = document.getElementById('emoji-btn');
+      if (emojiBtn) {
+        emojiBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          const panel = document.getElementById('emoji-picker-panel');
+          if (!panel) return;
+          if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
+          panel.innerHTML = renderEmojiPanel();
+          panel.style.display = 'block';
+          panel.querySelectorAll('.emoji-item').forEach(el => {
+            el.addEventListener('click', () => {
+              const pos = commentInput.selectionStart || commentInput.value.length;
+              const val = commentInput.value;
+              commentInput.value = val.slice(0, pos) + el.textContent + val.slice(pos);
+              commentInput.focus();
+              commentInput.setSelectionRange(pos + el.textContent.length, pos + el.textContent.length);
+              panel.style.display = 'none';
+              localStorage.setItem(draftKey, commentInput.value);
+            });
+          });
+        });
+      }
     }
 
   } catch (err) { toast(err.message, 'error'); }
+}
+
+function initMentionAutocomplete(input) {
+  const dd = document.getElementById('mention-dropdown');
+  if (!dd) return;
+  const val = input.value;
+  const pos = input.selectionStart;
+  const textBefore = val.slice(0, pos);
+  const match = textBefore.match(/@([\wА-ЯЁа-яё]*)$/u);
+  if (!match) { dd.style.display = 'none'; return; }
+  const query = match[1].toLowerCase();
+  const users = (state.users || []).filter(u => u.id !== state.user.id && u.name.toLowerCase().includes(query));
+  if (!users.length) { dd.style.display = 'none'; return; }
+  dd.innerHTML = users.slice(0, 6).map((u, i) => `
+    <div class="mention-item${i === 0 ? ' active' : ''}" data-name="${_escHtml(u.name)}">
+      <span class="mention-avatar" style="background:${u.avatar_color || '#881337'}">${initials(u.name)}</span>
+      <span>${_escHtml(u.name)}</span>
+    </div>`).join('');
+  dd.style.display = 'block';
+  dd.querySelectorAll('.mention-item').forEach(item => {
+    item.addEventListener('mousedown', e => {
+      e.preventDefault();
+      const name = item.dataset.name;
+      const before = textBefore.replace(/@([\wА-ЯЁа-яё]*)$/u, '@' + name + ' ');
+      input.value = before + val.slice(pos);
+      input.focus();
+      input.setSelectionRange(before.length, before.length);
+      dd.style.display = 'none';
+      localStorage.setItem('tt_comment_draft_' + (input.dataset.taskId || ''), input.value);
+    });
+  });
+}
+
+const EMOJI_LIST = [
+  // Лица
+  '😊','😂','🤣','😍','🥰','😘','😭','😅','😆','😁',
+  '🤩','🥳','😎','🤔','😢','😡','😤','😱','🤯','😬',
+  '🙄','😏','😴','🥺','😔','😒','🫡','🤗','😇','🫠',
+  '😻','😶','🤐','🥴','😵','🤑','😈','👿','🤬','🫣',
+  // Жесты и люди
+  '👍','👎','👏','🙌','🤝','🙏','💪','🫶','✌️','🤞',
+  '👌','🤙','☝️','👇','👈','👉','🫵','🤲','🖐️','✋',
+  // Сердца и символы
+  '❤️','🧡','💛','💚','💙','💜','🖤','🤍','💕','💯',
+  '✅','❌','⚡','🔥','💥','✨','⭐','🌟','💫','🎯',
+  '📌','📍','🚀','💡','🔔','🔕','📢','💬','📝','🗓️',
+  // Природа
+  '🌸','🌺','🌻','🍀','🌈','☀️','🌙','⛅','❄️','🌊',
+  // Еда
+  '🍕','🍔','🍣','☕','🎂','🍰','🍩','🍪','🥂','🍾',
+  // Работа
+  '💼','📊','📈','📉','⏰','⏳','🏆','🎉','🎊','🎁',
+  // Разное
+  '🚗','✈️','🏠','💰','💎','🔑','🔒','📱','💻','🖥️',
+];
+
+function renderEmojiPanel() {
+  return `<div class="emoji-grid">${EMOJI_LIST.map(e => `<button class="emoji-item" type="button">${e}</button>`).join('')}</div>`;
 }
 
 async function submitComment(taskId) {
@@ -7691,7 +7828,7 @@ const FIN_CURRENCIES   = ['TJS', 'USD', 'RUB', 'EUR'];
 let _finMonth  = (() => { try { return sessionStorage.getItem('fin_month') || new Date().toISOString().slice(0, 7); } catch { return new Date().toISOString().slice(0, 7); } })();
 let _finTab    = (() => { try { return sessionStorage.getItem('fin_tab') || 'month'; } catch { return 'month'; } })();
 let _teamTab   = (() => { try { const t = sessionStorage.getItem('team_tab'); return (t && t !== 'timesheet') ? t : 'members'; } catch { return 'members'; } })();
-let _finFilter = { status: '', payment_type: '', direction: '', search: '' };
+let _finFilter = { status: '', payment_type: '', direction: '', search: '', expCategory: '' };
 
 const fmtMoney = v => {
   const n = Number(v||0);
@@ -8209,10 +8346,12 @@ async function _renderExpensesPage() {
 
   ].map(t=>`<button class="fin-tab ${_finTab===t.key?'active':''}" onclick="finSetTab('${t.key}')">${t.label}</button>`).join('');
 
-  const [expenses, finRows] = await Promise.all([
+  const [expensesAll, finRows] = await Promise.all([
     GET('/expenses?month=' + _finMonth),
     GET('/finance?month=' + _finMonth).catch(()=>[])
   ]);
+
+  const expenses = _finFilter.expCategory ? expensesAll.filter(e => e.category === _finFilter.expCategory) : expensesAll;
 
   const totalExp = expenses.reduce((s,e)=>s+(+e.amount||0),0);
   const totalInc = finRows.reduce((s,r)=>s+(+r.service_amount||0),0);
@@ -8222,7 +8361,7 @@ async function _renderExpensesPage() {
   const rows = expenses.map((e,i) => `
     <tr class="fin-row">
       <td class="fin-td fin-num">${i+1}</td>
-      <td class="fin-td fin-project">${_escHtml(e.title)}</td>
+      <td class="fin-td fin-project" style="${e.color?`color:${e.color}`:''}">${_escHtml(e.title)}</td>
       <td class="fin-td fin-money" style="color:#dc2626">${fmtMoney(e.amount)}</td>
       <td class="fin-td">
         <span class="fin-type-badge" style="background:${EXP_CATEGORY_COLORS[e.category]||'#94a3b8'}22;color:${EXP_CATEGORY_COLORS[e.category]||'#94a3b8'}">${EXP_CATEGORIES[e.category]||e.category}</span>
@@ -8248,6 +8387,14 @@ async function _renderExpensesPage() {
         ${_finMonth !== new Date().toISOString().slice(0,7) ? `<button class="btn btn-outline btn-sm" onclick="finSetMonth('${new Date().toISOString().slice(0,7)}')" style="font-size:11px;padding:4px 10px;margin-left:6px">Этот месяц</button>` : ''}
       </div>
       <button class="btn btn-blue" onclick="openExpenseModal()">＋ Добавить расход</button>
+    </div>
+
+    <div class="fin-filter-bar">
+      <select class="fin-filter-sel" onchange="_finFilter.expCategory=this.value; renderFinancePage()">
+        <option value="">Все категории</option>
+        ${Object.entries(EXP_CATEGORIES).map(([k,v])=>`<option value="${k}" ${_finFilter.expCategory===k?'selected':''}>${v}</option>`).join('')}
+      </select>
+      ${_finFilter.expCategory ? `<button class="btn btn-outline btn-sm" onclick="_finFilter.expCategory=''; renderFinancePage()" style="font-size:11px;padding:4px 10px">Сбросить</button>` : ''}
     </div>
 
     <!-- Balance summary -->
@@ -8298,11 +8445,19 @@ function openExpenseModal(id = null) {
   _showExpenseModal(null);
 }
 
+let _selectedExpColor = '';
+function _setExpColor(c) {
+  _selectedExpColor = c;
+  document.getElementById('exp-color-wrap').innerHTML = colorPicker(c, _setExpColor);
+  document.getElementById('exp-color-reset').innerHTML = c ? `<button type="button" onclick="_setExpColor('')" style="font-size:11px;border:none;background:none;color:var(--accent,#6366f1);cursor:pointer;padding:0;margin-left:6px">Сбросить</button>` : '';
+}
+
 function _showExpenseModal(exp) {
   const isEdit = !!exp;
+  _selectedExpColor = exp?.color || '';
   const root = document.getElementById('modal-root');
   root.innerHTML = `
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay" onclick="if(event.target===this&&window._overlayMouseDownTarget===this)closeModal()">
       <div class="modal" style="max-width:460px">
         <div class="modal-header">
           <div class="modal-title">${isEdit?'Редактировать расход':'Новый расход'}</div>
@@ -8328,6 +8483,9 @@ function _showExpenseModal(exp) {
           <div class="field"><label>Комментарий</label>
             <textarea id="exp-comment" class="input" rows="2" placeholder="Необязательно...">${_escHtml(exp?.comment||'')}</textarea>
           </div>
+          <div class="field"><label>Цвет названия <span id="exp-color-reset">${_selectedExpColor?`<button type="button" onclick="_setExpColor('')" style="font-size:11px;border:none;background:none;color:var(--accent,#6366f1);cursor:pointer;padding:0;margin-left:6px">Сбросить</button>`:''}</span></label>
+            <div id="exp-color-wrap">${colorPicker(_selectedExpColor, _setExpColor)}</div>
+          </div>
         </div>
         <div class="modal-footer">
           ${isEdit?`<button class="btn btn-danger" onclick="deleteExpense(${exp.id})">Удалить</button>`:''}
@@ -8345,6 +8503,7 @@ async function saveExpense(id) {
     title, amount: parseFloat(document.getElementById('exp-amount').value)||0,
     category: document.getElementById('exp-category').value,
     comment: document.getElementById('exp-comment').value.trim(),
+    color: _selectedExpColor || '',
     month: document.getElementById('exp-month').value || _finMonth,
   };
   try {
@@ -8630,7 +8789,7 @@ async function openPaymentsModal(finId) {
     const pmts2 = (window._finPmts||pmts);
     const totalPaid = pmts2.reduce((s,p)=>s+(+p.amount||0),0);
     root.innerHTML = `
-      <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal-overlay" onclick="if(event.target===this&&window._overlayMouseDownTarget===this)closeModal()">
         <div class="modal" style="max-width:520px">
           <div class="modal-header">
             <div><div class="modal-title">Платежи · ${_escHtml(fin.project_name)}</div>
@@ -8729,7 +8888,7 @@ function _showFinanceModal(row) {
   const proj = state.projects || [];
   const root = document.getElementById('modal-root');
   root.innerHTML = `
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay" onclick="if(event.target===this&&window._overlayMouseDownTarget===this)closeModal()">
       <div class="modal" style="max-width:500px">
         <div class="modal-header">
           <div class="modal-title">${isEdit ? 'Редактировать запись' : 'Новая запись'}</div>
@@ -9280,7 +9439,7 @@ function openIhModal(id=null) {
     const p = id ? projects.find(x=>x.id===id) : null;
     const root = document.getElementById('modal-root');
     root.innerHTML = `
-      <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal-overlay" onclick="if(event.target===this&&window._overlayMouseDownTarget===this)closeModal()">
         <div class="modal" style="max-width:480px">
           <div class="modal-header">
             <div class="modal-title">${p?'Редактировать проект':'Добавить проект'}</div>
@@ -9607,7 +9766,7 @@ function openSecCourseModal(sec, id=null) {
   GET(`/${_secState[sec].api}/courses`).then(courses=>{
     const c=id?courses.find(x=>x.id===id):null;
     const root=document.getElementById('modal-root');
-    root.innerHTML=`<div class="modal-overlay" style="align-items:flex-start;padding-top:6vh" onclick="if(event.target===this)closeModal()">
+    root.innerHTML=`<div class="modal-overlay" style="align-items:flex-start;padding-top:6vh" onclick="if(event.target===this&&window._overlayMouseDownTarget===this)closeModal()">
       <div class="modal" style="max-width:480px;max-height:85vh;overflow-y:auto">
         <div class="modal-header"><div class="modal-title">${c?'Редактировать курс':'Создать курс'}</div><button class="modal-close" onclick="closeModal()">✕</button></div>
         <div class="modal-body">
@@ -9649,7 +9808,7 @@ function openSecPaymentModal(sec,courseId,paymentId=null) {
     const p=paymentId?payments.find(x=>x.id===paymentId):null;
     if(p?.receipt_img) window._secReceipt=p.receipt_img;
     const root=document.getElementById('modal-root');
-    root.innerHTML=`<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    root.innerHTML=`<div class="modal-overlay" onclick="if(event.target===this&&window._overlayMouseDownTarget===this)closeModal()">
       <div class="modal" style="max-width:480px">
         <div class="modal-header"><div class="modal-title">${p?'Редактировать':'Добавить студента'}</div><button class="modal-close" onclick="closeModal()">✕</button></div>
         <div class="modal-body">
@@ -10023,7 +10182,7 @@ function openB2CCourseModal(id=null) {
     const c = id ? courses.find(x=>x.id===id) : null;
     const root = document.getElementById('modal-root');
     root.innerHTML = `
-      <div class="modal-overlay" style="align-items:flex-start;padding-top:6vh" onclick="if(event.target===this)closeModal()">
+      <div class="modal-overlay" style="align-items:flex-start;padding-top:6vh" onclick="if(event.target===this&&window._overlayMouseDownTarget===this)closeModal()">
         <div class="modal" style="max-width:480px;max-height:85vh;overflow-y:auto">
           <div class="modal-header">
             <div class="modal-title">${c?'Редактировать курс':'Создать курс'}</div>
@@ -10109,7 +10268,7 @@ function openB2CPaymentModal(courseId, paymentId=null) {
     const root = document.getElementById('modal-root');
     setTimeout(() => b2cAutoStatus(), 50);
     root.innerHTML = `
-      <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal-overlay" onclick="if(event.target===this&&window._overlayMouseDownTarget===this)closeModal()">
         <div class="modal" style="max-width:480px">
           <div class="modal-header">
             <div class="modal-title">${p?'Редактировать':'Добавить студента'}</div>
@@ -10570,7 +10729,7 @@ function _showScheduleModal(id, day, classId, startTime, endTime, title, comment
   const isEdit = !!id;
   const root = document.getElementById('modal-root');
   root.innerHTML = `
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay" onclick="if(event.target===this&&window._overlayMouseDownTarget===this)closeModal()">
       <div class="modal" style="max-width:460px">
         <div class="modal-header">
           <div class="modal-title">${isEdit ? 'Редактировать занятость' : 'Добавить занятость'}</div>
@@ -10681,7 +10840,7 @@ function openFeedbackForm() {
 
   // Render once — never re-render on score click
   root.innerHTML = `
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay" onclick="if(event.target===this&&window._overlayMouseDownTarget===this)closeModal()">
       <div class="modal fb-modal">
         <div class="modal-header">
           <div class="modal-title">Обратная связь руководителю</div>
@@ -10774,7 +10933,7 @@ async function archiveFeedback(id) {
 
 async function openFeedbackArchive() {
   const root = document.getElementById('modal-root');
-  root.innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+  root.innerHTML = `<div class="modal-overlay" onclick="if(event.target===this&&window._overlayMouseDownTarget===this)closeModal()">
     <div class="modal" style="max-width:580px">
       <div class="modal-header">
         <div class="modal-title">Архив обратной связи</div>
@@ -11285,7 +11444,7 @@ function openBroadcastModal() {
 
   const root = document.getElementById('modal-root');
   root.innerHTML = `
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-overlay" onclick="if(event.target===this&&window._overlayMouseDownTarget===this)closeModal()">
       <div class="modal" style="max-width:520px;max-height:90vh;overflow-y:auto">
         <div class="modal-header">
           <div>
@@ -11552,9 +11711,10 @@ function _renderTimesheet() {
       return `<td class="${cellClass}" onclick="tsClickCell(${emp.id},'${d.date}',${d.is_weekend||d.is_holiday})" title="${d.holiday_name||d.date}">${cellText}</td>`;
     });
 
-    const earnedSalary = workingDaysInMonth > 0
-      ? Math.round(emp.salary * workedDays / workingDaysInMonth)
+    const baseSalary = workingDaysInMonth > 0
+      ? Math.round((emp.salary || 0) * workedDays / workingDaysInMonth)
       : 0;
+    const earnedSalary = baseSalary + (emp.bonus || 0);
 
     const initials = emp.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
     const avatar = `<span class="ts-avatar" style="background:${emp.color||'#6366f1'}">${initials}</span>`;
@@ -11577,6 +11737,8 @@ function _renderTimesheet() {
       <td class="ts-total-col">${workedHours}</td>
       <td class="ts-total-col">${workedDays}</td>
       <td class="ts-total-col ts-salary" onclick="editTimesheetEmployee(${emp.id})" style="cursor:pointer;${!emp.salary?'color:#9ca3af;font-style:italic;font-size:11px':''}">${emp.salary ? String(emp.salary) : 'задать'}</td>
+      <td class="ts-total-col ts-bonus" onclick="editTimesheetEmployee(${emp.id})" style="cursor:pointer;${!emp.bonus?'color:#9ca3af;font-style:italic;font-size:11px':''}">${emp.bonus ? String(emp.bonus) : '—'}</td>
+      <td class="ts-total-col ts-advance" onclick="editTimesheetEmployee(${emp.id})" style="cursor:pointer;${!emp.advance?'color:#9ca3af;font-style:italic;font-size:11px':''}">${emp.advance ? String(emp.advance) : '—'}</td>
       <td class="ts-total-col ts-earned" style="color:${earnedSalary>0?'#059669':'var(--text-muted)'}"><strong>${earnedSalary > 0 ? String(earnedSalary) : '—'}</strong></td>
     </tr>`;
   });
@@ -11585,7 +11747,8 @@ function _renderTimesheet() {
   const totalEarned = employees.reduce((sum, emp) => {
     const empRec = records[emp.id] || {};
     const worked = days.filter(d => !d.is_weekend && !d.is_holiday && empRec[d.date]?.status === 'work').length;
-    return sum + (workingDaysInMonth > 0 ? Math.round(emp.salary * worked / workingDaysInMonth) : 0);
+    const base = workingDaysInMonth > 0 ? Math.round((emp.salary || 0) * worked / workingDaysInMonth) : 0;
+    return sum + base + (emp.bonus || 0);
   }, 0);
 
   // Day header cells
@@ -11623,7 +11786,7 @@ function _renderTimesheet() {
         <h2 class="ts-title">Учет рабочего времени <span class="ts-period">${periodLabel}</span></h2>
         <div class="ts-toolbar-btns">
           <button class="btn btn-outline" onclick="manageHolidays()">${svgI('<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',14)} Праздники</button>
-          <a class="btn btn-outline" style="cursor:pointer;text-decoration:none" onclick="downloadTimesheetExcel()">${svgI('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',14)} Excel</a>
+          <button class="btn btn-outline" onclick="downloadTimesheetExcel()">${svgI('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',14)} Excel</button>
           <button class="btn btn-primary" onclick="addTimesheetEmployee()">${svgI('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',14)} Сотрудник</button>
         </div>
       </div>
@@ -11651,6 +11814,8 @@ function _renderTimesheet() {
               <th class="ts-total-hdr" rowspan="2">Часов</th>
               <th class="ts-total-hdr" rowspan="2">Дней</th>
               <th class="ts-total-hdr" rowspan="2">Оклад</th>
+              <th class="ts-total-hdr" rowspan="2">Премия</th>
+              <th class="ts-total-hdr" rowspan="2">Аванс</th>
               <th class="ts-total-hdr" rowspan="2">ЗП</th>
             </tr>
             <tr>
@@ -11662,8 +11827,8 @@ function _renderTimesheet() {
           </tbody>
           <tfoot>
             <tr class="ts-footer-row">
-              <td colspan="${3 + days.length + 3}" class="ts-footer-label">Итого к выплате за месяц:</td>
-              <td colspan="2" class="ts-total-col ts-footer-total" style="text-align:right;padding-right:8px;white-space:nowrap">${totalEarned} сом</td>
+              <td colspan="${3 + days.length + 5}" class="ts-footer-label">Итого к выплате за месяц:</td>
+              <td colspan="1" class="ts-total-col ts-footer-total" style="text-align:right;padding-right:8px;white-space:nowrap">${totalEarned} сом</td>
             </tr>
           </tfoot>
         </table>
@@ -11754,6 +11919,14 @@ function _openTsEmployeeModal(emp) {
           <label class="form-label">Оклад (сомони/мес)</label>
           <input class="form-input" id="ts-emp-salary" type="number" min="0" placeholder="0" value="${emp?.salary || ''}">
         </div>
+        <div class="form-group">
+          <label class="form-label">Премия (сомони/мес)</label>
+          <input class="form-input" id="ts-emp-bonus" type="number" min="0" placeholder="0" value="${emp?.bonus || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Аванс (сомони)</label>
+          <input class="form-input" id="ts-emp-advance" type="number" min="0" placeholder="0" value="${emp?.advance || ''}">
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
@@ -11767,12 +11940,14 @@ function _openTsEmployeeModal(emp) {
     const name = document.getElementById('ts-emp-name').value.trim();
     const position = document.getElementById('ts-emp-pos').value.trim();
     const salary = parseInt(document.getElementById('ts-emp-salary').value) || 0;
+    const bonus = parseInt(document.getElementById('ts-emp-bonus').value) || 0;
+    const advance = parseInt(document.getElementById('ts-emp-advance').value) || 0;
     if (!name) { toast('Введите ФИО', 'error'); return; }
     try {
       if (isEdit) {
-        await PUT('/timesheet/employees/' + emp.id, { name, position, salary });
+        await PUT('/timesheet/employees/' + emp.id, { name, position, salary, bonus, advance });
       } else {
-        await POST('/timesheet/employees', { name, position, salary });
+        await POST('/timesheet/employees', { name, position, salary, bonus, advance });
       }
       closeModal();
       _tsData = await GET('/timesheet/month?month=' + _tsMonth);
@@ -11879,6 +12054,9 @@ async function manageHolidays() {
     }
   };
 }
+
+// Track mousedown target so overlay click doesn't fire when user drags text out of input
+document.addEventListener('mousedown', e => { window._overlayMouseDownTarget = e.target; });
 
 // ─── Offline detection ───────────────────────────────────────────────────────
 window.addEventListener('offline', () => toast('Нет соединения с сервером', 'error'));

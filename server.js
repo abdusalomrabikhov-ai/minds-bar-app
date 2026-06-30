@@ -1624,16 +1624,16 @@ app.get('/api/expenses/annual', auth, requirePerm('manage_finance'), (req, res) 
   res.json(db.prepare(`SELECT month, SUM(amount) as total, COUNT(*) as count FROM expenses WHERE month LIKE ? GROUP BY month ORDER BY month`).all(year + '-%'));
 });
 app.post('/api/expenses', auth, requirePerm('manage_finance'), (req, res) => {
-  const { title, amount, category='other', comment='', month } = req.body;
+  const { title, amount, category='other', comment='', color='', month } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Введите название' });
-  const r = db.prepare('INSERT INTO expenses (title,amount,category,comment,month) VALUES (?,?,?,?,?)').run(title.trim(), amount||0, category, comment, month);
+  const r = db.prepare('INSERT INTO expenses (title,amount,category,comment,color,month) VALUES (?,?,?,?,?,?)').run(title.trim(), amount||0, category, comment, color, month);
   const un = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
   logFinance(req.user.id, un, 'finance', 'create_expense', 'expense', r.lastInsertRowid, title, `Категория: ${category}, Сумма: ${amount}`, +amount||0);
   res.json({ id: r.lastInsertRowid });
 });
 app.put('/api/expenses/:id', auth, requirePerm('manage_finance'), (req, res) => {
-  const { title, amount, category='other', comment='', month } = req.body;
-  db.prepare("UPDATE expenses SET title=?,amount=?,category=?,comment=?,month=?,updated_at=datetime('now') WHERE id=?").run(title, amount||0, category, comment, month, req.params.id);
+  const { title, amount, category='other', comment='', color='', month } = req.body;
+  db.prepare("UPDATE expenses SET title=?,amount=?,category=?,comment=?,color=?,month=?,updated_at=datetime('now') WHERE id=?").run(title, amount||0, category, comment, color, month, req.params.id);
   const un = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id)?.name;
   logFinance(req.user.id, un, 'finance', 'update_expense', 'expense', +req.params.id, title, `Сумма: ${amount}`, +amount||0);
   res.json({ ok: true });
@@ -2493,24 +2493,24 @@ app.get('/api/timesheet/employees', auth, (req, res) => {
 
 // POST /api/timesheet/employees
 app.post('/api/timesheet/employees', auth, (req, res) => {
-  const { name, position, salary, color } = req.body;
+  const { name, position, salary, bonus, advance, color } = req.body;
   if (!name) return res.status(400).json({ error: 'Имя обязательно' });
   const result = db.prepare(`
-    INSERT INTO timesheet_employees (name, position, salary, color, is_active)
-    VALUES (?, ?, ?, ?, 1)
-  `).run(name.trim(), position || '', parseInt(salary) || 0, color || '#6366f1');
+    INSERT INTO timesheet_employees (name, position, salary, bonus, advance, color, is_active)
+    VALUES (?, ?, ?, ?, ?, ?, 1)
+  `).run(name.trim(), position || '', parseInt(salary) || 0, parseInt(bonus) || 0, parseInt(advance) || 0, color || '#6366f1');
   const emp = db.prepare('SELECT * FROM timesheet_employees WHERE id=?').get(result.lastInsertRowid);
   res.json(emp);
 });
 
 // PUT /api/timesheet/employees/:id
 app.put('/api/timesheet/employees/:id', auth, (req, res) => {
-  const { name, position, salary, color } = req.body;
+  const { name, position, salary, bonus, advance, color } = req.body;
   const id = parseInt(req.params.id);
   if (!name) return res.status(400).json({ error: 'Имя обязательно' });
   db.prepare(`
-    UPDATE timesheet_employees SET name=?, position=?, salary=?, color=? WHERE id=?
-  `).run(name.trim(), position || '', parseInt(salary) || 0, color || '#6366f1', id);
+    UPDATE timesheet_employees SET name=?, position=?, salary=?, bonus=?, advance=?, color=? WHERE id=?
+  `).run(name.trim(), position || '', parseInt(salary) || 0, parseInt(bonus) || 0, parseInt(advance) || 0, color || '#6366f1', id);
   const emp = db.prepare('SELECT * FROM timesheet_employees WHERE id=?').get(id);
   res.json(emp);
 });

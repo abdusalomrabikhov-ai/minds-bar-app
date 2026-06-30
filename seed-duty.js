@@ -17,13 +17,16 @@ const serialCols = [];
 for (let c = 2; c < headerRow.length - 1; c++) {
   const serial = headerRow[c];
   if (typeof serial === 'number' && serial > 40000) {
-    // Convert Excel serial to ISO date
-    const d = new Date((serial - 25569) * 86400 * 1000);
-    // Snap to Monday
+    // Convert Excel serial to local date (store as Sunday = the duty day)
+    const [y, m, d2] = new Date((serial - 25569) * 86400 * 1000).toISOString().slice(0,10).split('-').map(Number);
+    const d = new Date(y, m-1, d2); // local date, no UTC shift
+    // Snap to nearest Sunday (forward)
     const day = d.getDay();
-    const diff = day === 0 ? -6 : 1 - day;
-    d.setDate(d.getDate() + diff);
-    serialCols.push({ col: c, week_start: d.toISOString().slice(0, 10) });
+    const diffToSun = day === 0 ? 0 : 7 - day;
+    d.setDate(d.getDate() + diffToSun);
+    const pad = n => String(n).padStart(2,'0');
+    const sunday = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    serialCols.push({ col: c, week_start: sunday });
   }
 }
 
