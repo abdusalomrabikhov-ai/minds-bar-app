@@ -267,7 +267,7 @@ function sendTelegramNewTask(telegramId, task) {
   const prio = { low: '🟢 Низкий', medium: '🟡 Средний', high: '🔴 Высокий' }[task.priority] || task.priority;
   const desc = task.description ? `\n\n${task.description}` : '';
   sendTelegramNotification(telegramId,
-    `📋 *Новая задача*\n\n*${task.title}*${desc}${proj}\n⚡ *Приоритет:* ${prio}${dl}`
+    `📋 *Свежак, ещё тёплый. Веселее*\n\n*${task.title}*${desc}${proj}\n⚡ *Приоритет:* ${prio}${dl}`
   );
 }
 
@@ -277,9 +277,17 @@ function cpLabel(type) {
   return { post: 'ПОСТ', reel: 'РИЛС', story: 'СТОРИС' }[type] || type.toUpperCase();
 }
 
+function getContentTypeMembers(projectId, type) {
+  const anyConfig = db.prepare('SELECT 1 FROM content_type_assignees WHERE project_id = ?').get(projectId);
+  if (!anyConfig) {
+    return db.prepare('SELECT user_id FROM project_members WHERE project_id = ?').all(projectId);
+  }
+  return db.prepare('SELECT user_id FROM content_type_assignees WHERE project_id = ? AND content_type = ?').all(projectId, type);
+}
+
 function syncTasksForItem(item, projectId, createdBy) {
   const project = db.prepare('SELECT name FROM projects WHERE id = ?').get(projectId);
-  const members = db.prepare('SELECT user_id FROM project_members WHERE project_id = ?').all(projectId);
+  const members = getContentTypeMembers(projectId, item.type);
   const label = cpLabel(item.type);
   const title = item.title ? `${label}: ${item.title}` : label;
   const desc = `Контент-план · ${project?.name || ''}`;
@@ -363,6 +371,7 @@ app.post('/api/projects/:id/members', auth, requirePerm('manage_projects'), (req
 
 app.delete('/api/projects/:id/members/:userId', auth, requirePerm('manage_projects'), (req, res) => {
   db.prepare('DELETE FROM project_members WHERE project_id = ? AND user_id = ?').run(req.params.id, req.params.userId);
+  db.prepare('DELETE FROM content_type_assignees WHERE project_id = ? AND user_id = ?').run(req.params.id, req.params.userId);
   // Remove user from assignees on all content tasks in this project
   db.prepare(`DELETE FROM task_assignees WHERE user_id = ? AND task_id IN (
     SELECT id FROM tasks WHERE project_id = ? AND source_content_id IS NOT NULL
@@ -370,6 +379,28 @@ app.delete('/api/projects/:id/members/:userId', auth, requirePerm('manage_projec
   // Delete tasks that now have no remaining assignees
   db.prepare(`DELETE FROM tasks WHERE project_id = ? AND source_content_id IS NOT NULL
     AND id NOT IN (SELECT DISTINCT task_id FROM task_assignees)`).run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ─── Content-type assignees (per post/reel/story subsets) ────────────────────
+
+app.get('/api/projects/:id/content-assignees', auth, (req, res) => {
+  const rows = db.prepare('SELECT user_id, content_type FROM content_type_assignees WHERE project_id = ?').all(req.params.id);
+  const result = { post: [], reel: [], story: [] };
+  rows.forEach(r => { if (result[r.content_type]) result[r.content_type].push(r.user_id); });
+  res.json(result);
+});
+
+app.put('/api/projects/:id/content-assignees/:type', auth, requirePerm('manage_projects'), (req, res) => {
+  const { type } = req.params;
+  if (!['post', 'reel', 'story'].includes(type)) return res.status(400).json({ error: 'Неверный тип' });
+  const userIds = Array.isArray(req.body.user_ids) ? req.body.user_ids : [];
+  db.prepare('DELETE FROM content_type_assignees WHERE project_id = ? AND content_type = ?').run(req.params.id, type);
+  userIds.forEach(uid => {
+    db.prepare('INSERT OR IGNORE INTO content_type_assignees (project_id, user_id, content_type) VALUES (?,?,?)').run(req.params.id, uid, type);
+  });
+  const items = db.prepare('SELECT * FROM content_plan WHERE project_id = ? AND type = ?').all(req.params.id, type);
+  items.forEach(item => syncTasksForItem(item, req.params.id, req.user.id));
   res.json({ ok: true });
 });
 

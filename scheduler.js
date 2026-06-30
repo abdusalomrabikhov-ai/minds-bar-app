@@ -81,7 +81,7 @@ function checkDeadlines() {
     if (task.telegram_id) {
       const dl = new Date(task.deadline).toLocaleString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' });
       sendTelegramNotification(task.telegram_id,
-        `⏰ *Истекает срок задачи*\n\n*${task.title}*\n\n📅 *Дедлайн:* ${dl}\n⚠️ Осталось менее 24 часов`);
+        `⏰ *Тикаем, тикаем...*\n\n*${task.title}*\n\n📅 *Дедлайн:* ${dl}\n⚠️ Осталось меньше суток — задача сама себя не сделает`);
     }
   });
 
@@ -95,7 +95,7 @@ function checkDeadlines() {
     if (task.telegram_id) {
       const dl = new Date(task.deadline).toLocaleString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' });
       sendTelegramNotification(task.telegram_id,
-        `🔴 *СРОЧНО! Истекает срок задачи*\n\n*${task.title}*\n\n📅 *Дедлайн:* ${dl}\n⚠️ Осталось менее 1 часа`);
+        `🔴 *Тик-так, тик-так...*\n\n*${task.title}*\n\n📅 *Дедлайн:* ${dl}\n⚠️ Меньше часа до момента, когда придётся объясняться`);
     }
   });
 

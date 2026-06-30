@@ -112,6 +112,14 @@ function initDB() {
     created_at TEXT DEFAULT (datetime('now')),
     UNIQUE(project_id, user_id)
   )`); } catch {}
+  try { db.exec(`CREATE TABLE IF NOT EXISTS content_type_assignees (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    content_type TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(project_id, user_id, content_type)
+  )`); } catch {}
   try { db.exec("ALTER TABLE tasks ADD COLUMN source_content_id INTEGER REFERENCES content_plan(id) ON DELETE SET NULL"); } catch {}
   try { db.exec("ALTER TABLE content_plan ADD COLUMN description TEXT DEFAULT ''"); } catch {}
   try { db.exec("ALTER TABLE users ADD COLUMN last_seen TEXT DEFAULT NULL"); } catch {}

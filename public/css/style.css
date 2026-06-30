@@ -1245,6 +1245,13 @@ input, textarea, select { font: inherit; }
   align-items: center; justify-content: center; font-weight: 700;
 }
 .proj-member-wrap:hover .proj-member-remove { display: flex; }
+.proj-member-types { display: flex; gap: 1px; justify-content: center; margin-top: 2px; }
+.proj-member-type-dot {
+  width: 11px; height: 11px; border-radius: 3px; font-size: 7px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; line-height: 1;
+  background: var(--border, #e5e7eb); color: transparent;
+}
+.proj-member-type-dot.on { color: white; }
 .proj-member-add-btn {
   width: 28px; height: 28px; border-radius: 50%;
   background: var(--primary-light); color: var(--primary);

@@ -1927,11 +1927,13 @@ function cpRestoreNav() {
 }
 
 const CP_TYPES = {
-  post:  { label: 'ПОСТ',   color: '#3B82F6', bg: '#EFF6FF' },
-  reel:  { label: 'РИЛС',   color: '#F97316', bg: '#FFF7ED' },
-  story: { label: 'СТОРИС', color: '#22C55E', bg: '#F0FDF4' },
+  post:  { label: 'ПОСТ',   color: '#3B82F6', bg: '#EFF6FF', letter: 'П' },
+  reel:  { label: 'РИЛС',   color: '#F97316', bg: '#FFF7ED', letter: 'Р' },
+  story: { label: 'СТОРИС', color: '#22C55E', bg: '#F0FDF4', letter: 'С' },
 };
+const CP_MEMBER_TYPE_KEYS = ['post','reel','story'];
 const CP_MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+let _cpContentAssignees = { post: [], reel: [], story: [] };
 
 async function renderProjectPage(projectId) {
   cpRestoreTab(projectId);
@@ -1942,22 +1944,32 @@ async function renderProjectPage(projectId) {
     // Consolidate duplicate content tasks BEFORE loading, so task list shows merged results
     if (canEdit) await api('POST', `/projects/${projectId}/sync-content-tasks`, {}).catch(() => {});
 
-    const [allTasks, members] = await Promise.all([
+    const [allTasks, members, contentAssignees] = await Promise.all([
       GET('/tasks?all=1&project_id=' + projectId),
-      GET('/projects/' + projectId + '/members')
+      GET('/projects/' + projectId + '/members'),
+      GET('/projects/' + projectId + '/content-assignees')
     ]);
     const doneCount = allTasks.filter(t => t.status === 'done').length;
     const progress = allTasks.length > 0 ? Math.round((doneCount / allTasks.length) * 100) : 0;
+    _cpContentAssignees = contentAssignees;
+    const assigneesConfigured = contentAssignees.post.length || contentAssignees.reel.length || contentAssignees.story.length;
 
     const membersHtml = `
       <div class="proj-members-row">
         <span class="proj-members-label">Участники контент-плана</span>
         <div class="proj-members-avatars">
-          ${members.map(m => `
+          ${members.map(m => {
+            const types = ['post','reel','story'].filter(t => assigneesConfigured ? contentAssignees[t].includes(m.id) : true);
+            const dots = CP_MEMBER_TYPE_KEYS.map(t => `<span class="proj-member-type-dot ${types.includes(t)?'on':''}" style="${types.includes(t)?`background:${CP_TYPES[t].color}`:''}">${CP_TYPES[t].letter}</span>`).join('');
+            return `
             <div class="proj-member-wrap" data-user-id="${m.id}" title="${m.name}">
-              ${avatar(m.name, m.avatar_color, 'avatar-sm', m.avatar_img || '')}
+              <div ${canEdit ? `onclick="cpOpenTypeAssign(${projectId},${m.id},this)" style="cursor:pointer"` : ''}>
+                ${avatar(m.name, m.avatar_color, 'avatar-sm', m.avatar_img || '')}
+                ${canEdit ? `<div class="proj-member-types">${dots}</div>` : ''}
+              </div>
               ${canEdit ? `<button class="proj-member-remove" onclick="cpRemoveMember(${projectId},${m.id},event)" title="Удалить из проекта">×</button>` : ''}
-            </div>`).join('')}
+            </div>`;
+          }).join('')}
           ${canEdit ? `<button class="proj-member-add-btn" onclick="cpOpenMemberAdd(${projectId},this)" title="Добавить участника">+</button>` : ''}
           ${members.length === 0 && !canEdit ? `<span style="font-size:12px;color:#9ca3af">Нет участников</span>` : ''}
         </div>
@@ -2468,6 +2480,59 @@ function cpOpenMemberAdd(projectId, btn) {
   document.body.appendChild(popup);
   _cpMemberPopup = popup;
   setTimeout(() => document.addEventListener('mousedown', _cpMemberOutside, { once: true }), 0);
+}
+
+function cpOpenTypeAssign(projectId, userId, wrapEl) {
+  if (_cpMemberPopup) { _cpMemberPopup.remove(); _cpMemberPopup = null; }
+  closeModal();
+
+  const assigneesConfigured = _cpContentAssignees.post.length || _cpContentAssignees.reel.length || _cpContentAssignees.story.length;
+
+  const popup = document.createElement('div');
+  popup.className = 'cp-add-popup';
+  popup.style.minWidth = '180px';
+  popup.dataset.userId = userId;
+  popup.innerHTML = `
+    <div class="cp-add-popup-title">Типы контента</div>
+    ${CP_MEMBER_TYPE_KEYS.map(t => {
+      const checked = assigneesConfigured ? _cpContentAssignees[t].includes(userId) : true;
+      return `
+      <label class="proj-member-option" style="cursor:pointer">
+        <input type="checkbox" data-type="${t}" ${checked ? 'checked' : ''} onchange="cpToggleTypeAssign(${projectId},${userId},'${t}',this.checked)" style="margin-right:8px">
+        <span style="font-size:13px;font-weight:600;color:${CP_TYPES[t].color}">${CP_TYPES[t].label}</span>
+      </label>`;
+    }).join('')}
+  `;
+
+  const rect = wrapEl.getBoundingClientRect();
+  popup.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
+  popup.style.left = Math.min(rect.left + window.scrollX, window.innerWidth - 200) + 'px';
+  document.body.appendChild(popup);
+  _cpMemberPopup = popup;
+  setTimeout(() => document.addEventListener('mousedown', _cpMemberOutside, { once: true }), 0);
+}
+
+async function cpToggleTypeAssign(projectId, userId, type, checked) {
+  const assigneesConfigured = _cpContentAssignees.post.length || _cpContentAssignees.reel.length || _cpContentAssignees.story.length;
+  const seeding = !assigneesConfigured;
+  if (seeding) {
+    // First explicit edit: seed from "everyone" (current project members) for all types,
+    // so unconfigured types keep getting all members instead of silently becoming empty
+    const memberIds = [...document.querySelectorAll('.proj-member-wrap[data-user-id]')].map(el => parseInt(el.dataset.userId));
+    CP_MEMBER_TYPE_KEYS.forEach(t => { _cpContentAssignees[t] = [...memberIds]; });
+  }
+  const current = _cpContentAssignees[type];
+  if (checked && !current.includes(userId)) current.push(userId);
+  if (!checked) _cpContentAssignees[type] = current.filter(id => id !== userId);
+  try {
+    const typesToSend = seeding ? CP_MEMBER_TYPE_KEYS : [type];
+    for (const t of typesToSend) {
+      await api('PUT', `/projects/${projectId}/content-assignees/${t}`, { user_ids: _cpContentAssignees[t] });
+    }
+    renderProjectPage(projectId);
+  } catch(e) {
+    toast('Ошибка: ' + e.message, 'error');
+  }
 }
 
 function _cpMemberOutside(e) {
