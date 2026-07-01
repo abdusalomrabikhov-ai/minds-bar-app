@@ -2850,6 +2850,12 @@ app.get('/api/timesheet/export', auth, async (req, res) => {
   }
 });
 
+// TEMP: DB download for migration — DELETE AFTER USE
+app.get('/admin/download-db', (req, res) => {
+  const dbPath = process.env.DB_PATH || path.join(__dirname, 'teamtask.db');
+  res.download(dbPath, 'teamtask.db');
+});
+
 app.get('*', (req, res) => {
   if (!req.path.startsWith('/api')) {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
