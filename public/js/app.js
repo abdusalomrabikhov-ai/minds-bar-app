@@ -8955,8 +8955,14 @@ function finProjSelect(sel) {
 }
 
 async function saveFinance(id) {
+  const btn = document.querySelector('.modal-footer .btn-blue');
+  if (btn?.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Сохранение...'; }
   const name = document.getElementById('fin-proj-name').value.trim();
-  if (!name) return toast('Введите название проекта', 'error');
+  if (!name) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Сохранить'; }
+    return toast('Введите название проекта', 'error');
+  }
   const selVal = document.getElementById('fin-proj-sel').value;
   const projId = selVal ? parseInt(selVal.split('|')[0]) || null : null;
   const body = {
@@ -8986,7 +8992,11 @@ async function saveFinance(id) {
     if (body.month !== _finMonth) { _finMonth = body.month; }
     renderFinancePage();
     toast('Сохранено', 'success');
-  } catch (err) { toast(err.message, 'error'); }
+  } catch (err) {
+    const b = document.querySelector('.modal-footer .btn-blue');
+    if (b) { b.disabled = false; b.textContent = 'Сохранить'; }
+    toast(err.message, 'error');
+  }
 }
 
 function deleteFinance(id) {
