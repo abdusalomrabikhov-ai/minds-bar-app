@@ -493,20 +493,20 @@ function recomputeTaskStatus(taskId) {
     .run(allDone ? 'done' : anyDone ? 'in_progress' : 'new', localNow(), taskId);
 }
 
-function enrichTasksWithAssignees(tasks) {
+function enrichTasksWithAssignees(tasks, skipImg = false) {
   if (!tasks.length) return tasks;
   const ids = tasks.map(t => t.id);
   const ph = ids.map(() => '?').join(',');
   const rows = db.prepare(`
     SELECT ta.task_id, ta.user_id as id, ta.done, ta.done_at,
-           u.name, u.avatar_color as color, u.avatar_img as img
+           u.name, u.avatar_color as color${skipImg ? '' : ', u.avatar_img as img'}
     FROM task_assignees ta JOIN users u ON u.id = ta.user_id
     WHERE ta.task_id IN (${ph}) ORDER BY ta.id
   `).all(...ids);
   const byTask = {};
   rows.forEach(r => {
     (byTask[r.task_id] = byTask[r.task_id] || []).push(
-      { id: r.id, name: r.name, color: r.color, img: r.img, done: r.done === 1, done_at: r.done_at }
+      { id: r.id, name: r.name, color: r.color, img: skipImg ? null : r.img, done: r.done === 1, done_at: r.done_at }
     );
   });
   return tasks.map(t => ({ ...t, multi_assignees: byTask[t.id] || null }));
@@ -595,16 +595,16 @@ app.get('/api/dashboard', auth, (req, res) => {
 
   const urgentWhere = where + ` AND status != 'done' AND deadline IS NOT NULL AND deadline != '' AND substr(deadline,1,10) <= ?`;
   const urgentTasks = enrichTasksWithAssignees(
-    db.prepare(`SELECT t.*, u.name as assignee_name, u.avatar_color as assignee_color, u.avatar_img as assignee_img, p.name as project_name, p.color as project_color, creator.name as creator_name
+    db.prepare(`SELECT t.*, u.name as assignee_name, u.avatar_color as assignee_color, NULL as assignee_img, p.name as project_name, p.color as project_color, creator.name as creator_name
       FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id LEFT JOIN projects p ON p.id = t.project_id LEFT JOIN users creator ON creator.id = t.created_by
-      WHERE 1=1 ${urgentWhere} ORDER BY t.deadline ASC LIMIT 50`).all(...params, tomorrow)
+      WHERE 1=1 ${urgentWhere} ORDER BY t.deadline ASC LIMIT 50`).all(...params, tomorrow), true
   );
 
   const recentWhere = where + ` AND status != 'done'`;
   const recentTasks = enrichTasksWithAssignees(
-    db.prepare(`SELECT t.*, u.name as assignee_name, u.avatar_color as assignee_color, u.avatar_img as assignee_img, p.name as project_name, p.color as project_color, creator.name as creator_name
+    db.prepare(`SELECT t.*, u.name as assignee_name, u.avatar_color as assignee_color, NULL as assignee_img, p.name as project_name, p.color as project_color, creator.name as creator_name
       FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id LEFT JOIN projects p ON p.id = t.project_id LEFT JOIN users creator ON creator.id = t.created_by
-      WHERE 1=1 ${recentWhere} ORDER BY t.deadline ASC NULLS LAST, t.created_at DESC LIMIT 30`).all(...params)
+      WHERE 1=1 ${recentWhere} ORDER BY t.deadline ASC NULLS LAST, t.created_at DESC LIMIT 30`).all(...params), true
   );
 
   const byProject = isAdmin || hasReports || hasTeam ? db.prepare(`
