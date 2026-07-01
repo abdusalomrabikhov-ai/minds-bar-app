@@ -587,7 +587,8 @@ app.get('/api/tasks', auth, (req, res) => {
   }
   if (status) { where += ' AND t.status = ?'; params.push(status); }
   if (req.query.created_month && req.query.created_month !== 'all') {
-    where += " AND strftime('%Y-%m', t.created_at) = ?";
+    // Show tasks whose deadline falls in the selected month; if no deadline, fall back to created_at
+    where += " AND (CASE WHEN t.deadline IS NOT NULL AND t.deadline != '' THEN strftime('%Y-%m', t.deadline) ELSE strftime('%Y-%m', t.created_at) END) = ?";
     params.push(req.query.created_month);
   }
 
@@ -1140,7 +1141,7 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
   let dateWhere = '';
   const dateParams = [];
   if (month) {
-    dateWhere = " AND strftime('%Y-%m', t.created_at) = ?";
+    dateWhere = " AND (CASE WHEN t.deadline IS NOT NULL AND t.deadline != '' THEN strftime('%Y-%m', t.deadline) ELSE strftime('%Y-%m', t.created_at) END) = ?";
     dateParams.push(month);
   }
 
@@ -1214,7 +1215,7 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
   });
 
   // Global unique task counts — no double-counting of multi-assignee tasks
-  const globalWhere = month ? "WHERE strftime('%Y-%m', t.created_at) = ?" : '';
+  const globalWhere = month ? "WHERE (CASE WHEN t.deadline IS NOT NULL AND t.deadline != '' THEN strftime('%Y-%m', t.deadline) ELSE strftime('%Y-%m', t.created_at) END) = ?" : '';
   const globalParams = month ? [nowLocal, todayLocal, month] : [nowLocal, todayLocal];
   const globalStats = db.prepare(`
     SELECT
