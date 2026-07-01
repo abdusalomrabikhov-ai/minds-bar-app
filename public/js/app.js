@@ -1010,20 +1010,12 @@ function countUp(el, target, duration = 850, suffix = '') {
   requestAnimationFrame(step);
 }
 
-function renderMyTasksSummary(tasks) {
-  const uid = state.user.id;
-  // Personal done: overall done OR user marked their part done in multi-assignee
-  const myDone = t => {
-    if (t.status === 'done') return true;
-    const ma = t.multi_assignees;
-    if (ma && ma.length > 0) return ma.find(a => a.id === uid)?.done === 1;
-    return false;
-  };
-  const total = tasks.length;
-  const done  = tasks.filter(t => myDone(t)).length;
-  const inp   = tasks.filter(t => !myDone(t) && t.status === 'in_progress').length;
-  const nw    = tasks.filter(t => !myDone(t) && t.status === 'new').length;
-  const ov    = tasks.filter(t => !myDone(t) && t.deadline && parseDeadline(t.deadline) < new Date()).length;
+function renderMyTasksSummary({ stats, byProject, upcoming }) {
+  const total = stats?.total || 0;
+  const done  = stats?.done  || 0;
+  const inp   = stats?.in_progress || 0;
+  const nw    = stats?.new_count   || 0;
+  const ov    = stats?.overdue     || 0;
   const pct   = total > 0 ? Math.round(done / total * 100) : 0;
   const effColor = pct >= 80 ? '#059669' : pct >= 50 ? '#D97706' : pct > 0 ? '#DC2626' : '#94A3B8';
 
@@ -1033,37 +1025,13 @@ function renderMyTasksSummary(tasks) {
     { key: 'done',        label: 'Готово',   v: done,c: '#059669' },
   ];
 
-  const bars = [
-    { label: 'Новые',    v: nw,   c: '#3B82F6' },
-    { label: 'В работе', v: inp,  c: '#D97706' },
-    { label: 'Готово',   v: done, c: '#059669' },
-    { label: 'Просрочено', v: ov, c: '#EF4444' },
-  ];
+  const projs = (byProject || []).map(s => ({
+    id: s.id, name: s.name, color: s.color || '#881337',
+    total: s.total, done: s.done, inp: s.inp, nw: s.nw, ov: s.ov,
+    nextDeadline: s.next_deadline || null,
+  }));
 
-  // Build project breakdown
-  const projMap = {};
-  tasks.forEach(t => {
-    if (!t.project_name) return;
-    if (!projMap[t.project_id]) projMap[t.project_id] = { name: t.project_name, color: t.project_color || '#881337', id: t.project_id, total: 0, done: 0, inp: 0, nw: 0, ov: 0, nextDeadline: null, nextDeadlineDt: null };
-    const s = projMap[t.project_id];
-    s.total++;
-    if (t.status === 'done') s.done++;
-    else if (t.status === 'in_progress') s.inp++;
-    else s.nw++;
-    if (t.status !== 'done' && t.deadline) {
-      const dl = parseDeadline(t.deadline);
-      if (dl < new Date()) s.ov++;
-      else if (!s.nextDeadlineDt || dl < s.nextDeadlineDt) { s.nextDeadlineDt = dl; s.nextDeadline = t.deadline; }
-    }
-  });
-  const projs = Object.values(projMap).sort((a, b) => (b.total - b.done) - (a.total - a.done));
-
-  // Upcoming tasks: not done, deadline within 30 days from now
   const now = Date.now();
-  const in30 = now + 30 * 24 * 60 * 60 * 1000;
-  const upcoming = tasks
-    .filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) > now && parseDeadline(t.deadline) <= in30)
-    .sort((a, b) => parseDeadline(a.deadline) - parseDeadline(b.deadline));
 
   const fmtDayMonth = dt => {
     const d = /^\d{4}-\d{2}-\d{2}$/.test(dt) ? new Date(dt + 'T00:00:00') : new Date(dt);
@@ -1790,10 +1758,10 @@ async function loadAndRenderTasks() {
   if (container) container.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div>';
   try {
     if (myTasksMode) {
-      const allUserTasks = await GET('/tasks?all=1&my_tasks=1');
+      const myStats = await GET('/my-stats');
       const summaryEl = document.getElementById('mytasks-summary');
       if (summaryEl) {
-        summaryEl.innerHTML = renderMyTasksSummary(allUserTasks);
+        summaryEl.innerHTML = renderMyTasksSummary(myStats);
         triggerDashAnimations();
       }
     }
@@ -1806,31 +1774,13 @@ async function loadAndRenderTasks() {
       params.push('assignee_id=' + tasksFilter.assignee_id);
     }
 
-    // Client-side-only filters (overdue, priority, search) need all=1 to work
-    const needsAll = tasksFilter.overdue || tasksFilter.priority || tasksFilter.search;
-    let tasks, total, pages, page;
-    if (needsAll) {
-      params.push('all=1');
-      let all = await GET('/tasks?' + params.join('&'));
-      if (tasksFilter.overdue) all = all.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date());
-      if (tasksFilter.priority) all = all.filter(t => t.priority === tasksFilter.priority);
-      if (tasksFilter.search) {
-        const q = tasksFilter.search.toLowerCase();
-        all = all.filter(t => t.title.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q));
-      }
-      tasks = all;
-      total = all.length;
-      pages = 1;
-      page  = 1;
-    } else {
-      const data = await GET('/tasks?' + params.join('&'));
-      tasks = data.tasks;
-      total = data.total;
-      pages = data.pages;
-      page  = data.page;
-      tasksTotalPages = pages;
-      tasksTotalCount = total;
-    }
+    if (tasksFilter.overdue)  params.push('overdue=1');
+    if (tasksFilter.priority) params.push('priority=' + encodeURIComponent(tasksFilter.priority));
+    if (tasksFilter.search)   params.push('search='   + encodeURIComponent(tasksFilter.search));
+    const data = await GET('/tasks?' + params.join('&'));
+    let tasks = data.tasks, total = data.total, pages = data.pages, page = data.page;
+    tasksTotalPages = pages;
+    tasksTotalCount = total;
 
     renderTasksList(tasks, total, page, pages);
   } catch {}

@@ -558,6 +558,54 @@ function getTaskQueryPaged(extraWhere = '', params = [], limit = 20, offset = 0)
   `).all(...params, limit, offset);
 }
 
+app.get('/api/my-stats', auth, (req, res) => {
+  const uid = req.user.id;
+  const now = new Date(Date.now() + 5 * 3600000).toISOString().slice(0, 19);
+  const today = now.slice(0, 10);
+
+  const where = ' AND (t.assignee_id = ? OR t.created_by = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = ?))';
+  const params = [uid, uid, uid];
+
+  const stats = db.prepare(`
+    SELECT
+      COUNT(*) as total,
+      SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done,
+      SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+      SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) as new_count,
+      SUM(CASE WHEN status != 'done' AND deadline IS NOT NULL AND deadline != ''
+        AND substr(deadline,1,10) < ? THEN 1 ELSE 0 END) as overdue
+    FROM tasks t WHERE 1=1 ${where}
+  `).get(today, ...params);
+
+  const byProject = db.prepare(`
+    SELECT p.id, p.name, p.color,
+      COUNT(DISTINCT t.id) as total,
+      SUM(CASE WHEN t.status='done' THEN 1 ELSE 0 END) as done,
+      SUM(CASE WHEN t.status='in_progress' THEN 1 ELSE 0 END) as inp,
+      SUM(CASE WHEN t.status='new' THEN 1 ELSE 0 END) as nw,
+      SUM(CASE WHEN t.status!='done' AND t.deadline IS NOT NULL AND t.deadline!='' AND substr(t.deadline,1,10) < ? THEN 1 ELSE 0 END) as ov,
+      MIN(CASE WHEN t.status!='done' AND t.deadline IS NOT NULL AND t.deadline!='' AND substr(t.deadline,1,10) >= ? THEN t.deadline END) as next_deadline
+    FROM tasks t JOIN projects p ON p.id = t.project_id
+    WHERE 1=1 ${where}
+    GROUP BY p.id ORDER BY (total - done) DESC
+  `).all(today, today, ...params);
+
+  const upcoming = enrichTasksWithAssignees(db.prepare(`
+    SELECT t.*, u.name as assignee_name, u.avatar_color as assignee_color,
+      p.name as project_name, p.color as project_color, creator.name as creator_name
+    FROM tasks t
+    LEFT JOIN users u ON u.id = t.assignee_id
+    LEFT JOIN projects p ON p.id = t.project_id
+    LEFT JOIN users creator ON creator.id = t.created_by
+    WHERE t.status != 'done' AND t.deadline IS NOT NULL AND t.deadline != ''
+      AND substr(t.deadline,1,10) >= ? AND substr(t.deadline,1,10) <= date(?, '+30 days')
+      ${where}
+    ORDER BY t.deadline ASC LIMIT 20
+  `).all(today, today, ...params));
+
+  res.json({ stats, byProject, upcoming });
+});
+
 app.get('/api/dashboard', auth, (req, res) => {
   const isAdmin   = req.user.role === 'admin';
   const userPerms = JSON.parse(req.user.permissions || '{}');
@@ -657,6 +705,16 @@ app.get('/api/tasks', auth, (req, res) => {
     params.push(assignee_id, assignee_id);
   }
   if (status) { where += ' AND t.status = ?'; params.push(status); }
+  if (req.query.overdue === '1') {
+    const nowLocal = new Date(Date.now() + 5 * 3600000).toISOString().slice(0, 10);
+    where += " AND t.status != 'done' AND t.deadline IS NOT NULL AND t.deadline != '' AND substr(t.deadline,1,10) < ?";
+    params.push(nowLocal);
+  }
+  if (req.query.priority) { where += ' AND t.priority = ?'; params.push(req.query.priority); }
+  if (req.query.search) {
+    where += ' AND (t.title LIKE ? OR t.description LIKE ?)';
+    params.push(`%${req.query.search}%`, `%${req.query.search}%`);
+  }
   if (req.query.created_month && req.query.created_month !== 'all') {
     // Show tasks whose deadline falls in the selected month; if no deadline, fall back to created_at
     where += " AND (CASE WHEN t.deadline IS NOT NULL AND t.deadline != '' THEN strftime('%Y-%m', t.deadline) ELSE strftime('%Y-%m', t.created_at) END) = ?";
