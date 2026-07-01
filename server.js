@@ -556,6 +556,72 @@ function getTaskQueryPaged(extraWhere = '', params = [], limit = 20, offset = 0)
   `).all(...params, limit, offset);
 }
 
+app.get('/api/dashboard', auth, (req, res) => {
+  const isAdmin   = req.user.role === 'admin';
+  const userPerms = JSON.parse(req.user.permissions || '{}');
+  const hasReports = userPerms.reports;
+  const hasTeam    = userPerms.manage_team;
+  const hasAssign  = userPerms.assign_tasks;
+  const uid = req.user.id;
+  const monthParam = req.query.month;
+
+  let where = '';
+  const params = [];
+
+  if (!isAdmin && !hasTeam && !hasAssign) {
+    where += ' AND (t.assignee_id = ? OR t.created_by = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = ?))';
+    params.push(uid, uid, uid);
+  }
+  if (monthParam && monthParam !== 'all') {
+    where += " AND (CASE WHEN t.deadline IS NOT NULL AND t.deadline != '' THEN strftime('%Y-%m', t.deadline) ELSE strftime('%Y-%m', t.created_at) END) = ?";
+    params.push(monthParam);
+  }
+
+  const now = new Date(Date.now() + 5 * 3600000).toISOString().slice(0, 10);
+  const tomorrow = new Date(Date.now() + 5 * 3600000 + 86400000).toISOString().slice(0, 10);
+
+  const stats = db.prepare(`
+    SELECT
+      COUNT(*) as total,
+      SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done,
+      SUM(CASE WHEN status != 'done' THEN 1 ELSE 0 END) as active,
+      SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) as new_count,
+      SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+      SUM(CASE WHEN status != 'done' AND deadline IS NOT NULL AND deadline != '' AND substr(deadline,1,10) < ? THEN 1 ELSE 0 END) as overdue,
+      SUM(CASE WHEN status != 'done' AND deadline IS NOT NULL AND deadline != '' AND substr(deadline,1,10) = ? THEN 1 ELSE 0 END) as today,
+      SUM(CASE WHEN status != 'done' AND deadline IS NOT NULL AND deadline != '' AND substr(deadline,1,10) = ? THEN 1 ELSE 0 END) as tomorrow_count
+    FROM tasks t WHERE 1=1 ${where}
+  `).get(...[now, now, tomorrow, ...params]);
+
+  const urgentWhere = where + ` AND status != 'done' AND deadline IS NOT NULL AND deadline != '' AND substr(deadline,1,10) <= ?`;
+  const urgentTasks = enrichTasksWithAssignees(
+    db.prepare(`SELECT t.*, u.name as assignee_name, u.avatar_color as assignee_color, u.avatar_img as assignee_img, p.name as project_name, p.color as project_color, creator.name as creator_name
+      FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id LEFT JOIN projects p ON p.id = t.project_id LEFT JOIN users creator ON creator.id = t.created_by
+      WHERE 1=1 ${urgentWhere} ORDER BY t.deadline ASC LIMIT 50`).all(...params, tomorrow)
+  );
+
+  const recentWhere = where + ` AND status != 'done'`;
+  const recentTasks = enrichTasksWithAssignees(
+    db.prepare(`SELECT t.*, u.name as assignee_name, u.avatar_color as assignee_color, u.avatar_img as assignee_img, p.name as project_name, p.color as project_color, creator.name as creator_name
+      FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id LEFT JOIN projects p ON p.id = t.project_id LEFT JOIN users creator ON creator.id = t.created_by
+      WHERE 1=1 ${recentWhere} ORDER BY t.deadline ASC NULLS LAST, t.created_at DESC LIMIT 30`).all(...params)
+  );
+
+  const byProject = isAdmin || hasReports || hasTeam ? db.prepare(`
+    SELECT p.name, p.color, COUNT(*) as total, SUM(CASE WHEN t.status='done' THEN 1 ELSE 0 END) as done
+    FROM tasks t JOIN projects p ON p.id = t.project_id WHERE 1=1 ${where} GROUP BY p.id ORDER BY total DESC LIMIT 10
+  `).all(...params) : [];
+
+  const byEmployee = isAdmin || hasReports || hasTeam ? db.prepare(`
+    SELECT u.name, u.avatar_color as color,
+      COUNT(*) as total, SUM(CASE WHEN t.status='done' THEN 1 ELSE 0 END) as done
+    FROM task_assignees ta JOIN tasks t ON t.id = ta.task_id JOIN users u ON u.id = ta.user_id
+    WHERE 1=1 ${where.replace(/t\./g, 't.')} GROUP BY u.id ORDER BY total DESC LIMIT 10
+  `).all(...params) : [];
+
+  res.json({ stats, urgentTasks, recentTasks, byProject, byEmployee });
+});
+
 app.get('/api/tasks', auth, (req, res) => {
   const { project_id, assignee_id, status, my_tasks } = req.query;
   const page  = Math.max(1, parseInt(req.query.page) || 1);
@@ -2850,11 +2916,6 @@ app.get('/api/timesheet/export', auth, async (req, res) => {
   }
 });
 
-// TEMP: DB download for migration — DELETE AFTER USE
-app.get('/admin/download-db', (req, res) => {
-  const dbPath = process.env.DB_PATH || path.join(__dirname, 'teamtask.db');
-  res.download(dbPath, 'teamtask.db');
-});
 
 app.get('*', (req, res) => {
   if (!req.path.startsWith('/api')) {

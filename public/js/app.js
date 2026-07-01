@@ -1348,14 +1348,13 @@ function svgDonut(slices, total, size = 150) {
   return `<svg ${svgAttrs}>${arcs.join('')}<text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="20" font-weight="800" font-family="system-ui" class="donut-pct-text"><tspan class="donut-count" data-count="${donePct}">0%</tspan></text><text x="${cx}" y="${cy + 13}" text-anchor="middle" fill="#94A3B8" font-size="10" font-family="system-ui">выполнено</text></svg>`;
 }
 
-function renderDashboardCharts(tasks) {
-  const total = tasks.length;
-  const done = tasks.filter(t => t.status === 'done').length;
-  const inp = tasks.filter(t => t.status === 'in_progress').length;
-  const nw = tasks.filter(t => t.status === 'new').length;
-  const _todayStart = new Date(); _todayStart.setHours(0,0,0,0);
-  const ov = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < _todayStart).length;
-  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+function renderDashboardCharts({ stats, byProject, byEmployee }) {
+  const total = stats.total || 0;
+  const done  = stats.done  || 0;
+  const inp   = stats.in_progress || 0;
+  const nw    = stats.new_count   || 0;
+  const ov    = stats.overdue     || 0;
+  const pct   = total > 0 ? Math.round(done / total * 100) : 0;
 
   const donutSlices = [
     { key: 'new', label: 'Новые', v: nw, c: '#3B82F6' },
@@ -1363,36 +1362,11 @@ function renderDashboardCharts(tasks) {
     { key: 'done', label: 'Готово', v: done, c: '#059669' },
   ];
 
-  // Project stats
-  const projMap = {};
-  tasks.forEach(t => {
-    if (!t.project_name) return;
-    if (!projMap[t.project_name]) projMap[t.project_name] = { total: 0, done: 0, color: t.project_color || '#881337', id: t.project_id };
-    projMap[t.project_name].total++;
-    if (t.status === 'done') projMap[t.project_name].done++;
-  });
-  const projs = Object.entries(projMap).sort((a, b) => b[1].total - a[1].total);
-  const maxP = projs.length ? Math.max(...projs.map(([, s]) => s.total)) : 1;
-
-  // Employee stats (includes multi_assignees)
-  const empMap = {};
-  const _addEmpStat = (name, id, color, img, isDone) => {
-    if (!name) return;
-    if (!empMap[name]) empMap[name] = { total: 0, done: 0, color: color || '#881337', id, img: img || '' };
-    empMap[name].total++;
-    if (isDone) empMap[name].done++;
-  };
-  tasks.forEach(t => {
-    _addEmpStat(t.assignee_name, t.assignee_id, t.assignee_color, t.assignee_img, t.status === 'done');
-    (t.multi_assignees || []).forEach(a => {
-      if (a.id !== t.assignee_id) _addEmpStat(a.full_name, a.id, a.color, a.avatar_img, t.status === 'done');
-    });
-  });
-  // Обогатить avatar_img из state.users если не пришёл с задачей
-  Object.values(empMap).forEach(s => {
+  const projs = (byProject || []).map(p => [p.name, { total: p.total, done: p.done, color: p.color || '#881337', id: p.id }]);
+  const emps  = (byEmployee || []).map(e => [e.name, { total: e.total, done: e.done, color: e.color || '#881337', id: e.id, img: e.img || '' }]);
+  emps.forEach(([, s]) => {
     if (!s.img) { const u = state.users?.find(u => u.id === s.id); if (u?.avatar_img) s.img = u.avatar_img; }
   });
-  const emps = Object.entries(empMap).sort((a, b) => b[1].total - a[1].total);
 
   return `
     <div class="dash-stat-cards">
@@ -1477,25 +1451,20 @@ function renderDashboardCharts(tasks) {
 async function renderEmployeeDashboard() {
   const content = document.getElementById('page-content');
   try {
-    const tasks = await GET('/tasks?all=1');
-    const uid = state.user.id;
-    const myTasks = tasks.filter(t =>
-      t.assignee_id === uid || (t.multi_assignees || []).some(a => a.id === uid)
-    );
+    const { stats, urgentTasks, recentTasks } = await GET('/dashboard');
 
     const now = new Date();
     const todayStart = new Date(now); todayStart.setHours(0,0,0,0);
     const todayEnd   = new Date(now); todayEnd.setHours(23,59,59,999);
-    const weekStart  = new Date(now); weekStart.setDate(weekStart.getDate() - ((weekStart.getDay()+6)%7)); weekStart.setHours(0,0,0,0);
 
-    const overdueMe  = myTasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < todayStart);
-    const todayMe    = myTasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) >= todayStart && parseDeadline(t.deadline) <= todayEnd);
-    const inProgress = myTasks.filter(t => t.status === 'in_progress');
-    const doneWeek   = myTasks.filter(t => t.status === 'done' && new Date(t.updated_at) >= weekStart);
-    const totalActive = myTasks.filter(t => t.status !== 'done').length;
-    const weekPct = (doneWeek.length + totalActive) > 0 ? Math.round(doneWeek.length / (doneWeek.length + totalActive) * 100) : 0;
+    const overdueMe  = urgentTasks.filter(t => t.deadline && parseDeadline(t.deadline) < todayStart);
+    const todayMe    = urgentTasks.filter(t => t.deadline && parseDeadline(t.deadline) >= todayStart && parseDeadline(t.deadline) <= todayEnd);
+    const inProgress = recentTasks.filter(t => t.status === 'in_progress');
+    const doneWeek   = stats.done || 0;
+    const totalActive = stats.active || 0;
+    const weekPct = (doneWeek + totalActive) > 0 ? Math.round(doneWeek / (doneWeek + totalActive) * 100) : 0;
 
-    const newMe = myTasks.filter(t => t.status === 'new');
+    const newMe = recentTasks.filter(t => t.status === 'new');
 
     content.innerHTML = `
       <div class="emp-dash">
@@ -1528,7 +1497,7 @@ async function renderEmployeeDashboard() {
           <div class="emp-progress-bar-bg">
             <div class="emp-progress-bar-fill" style="width:${weekPct}%"></div>
           </div>
-          <div class="emp-progress-sub">${doneWeek.length} выполнено · ${totalActive} активных · всего ${myTasks.length}</div>
+          <div class="emp-progress-sub">${doneWeek} выполнено · ${totalActive} активных · всего ${stats.total || 0}</div>
         </div>
 
         <!-- Today's tasks -->
@@ -1562,7 +1531,7 @@ async function renderEmployeeDashboard() {
         ${newMe.length > 5 ? `<div style="padding:8px 24px"><button class="btn btn-outline btn-sm" onclick="navigateTo('mytasks')">Ещё ${newMe.length-5} задач →</button></div>` : ''}
         ` : ''}
 
-        ${myTasks.length === 0 ? `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.check,44)}</div><h3>Задач нет</h3><p>Руководитель ещё не назначил вам задачи</p></div>` : ''}
+        ${(stats.total || 0) === 0 ? `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.check,44)}</div><h3>Задач нет</h3><p>Руководитель ещё не назначил вам задачи</p></div>` : ''}
       </div>`;
 
     attachTaskCardListeners();
@@ -1579,20 +1548,19 @@ async function renderDashboard() {
   }
   dashTasksLimit = 10;
   try {
-    const monthParam = _dashMonth !== 'all' ? '&created_month=' + _dashMonth : '';
-    const tasks = await GET('/tasks?all=1' + monthParam);
+    const monthParam = _dashMonth !== 'all' ? '&month=' + _dashMonth : '';
+    const { stats, urgentTasks, recentTasks, byProject, byEmployee } = await GET('/dashboard' + (monthParam ? '?' + monthParam.slice(1) : ''));
     const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
     const todayEnd   = new Date(); todayEnd.setHours(23, 59, 59, 999);
     const tomorrowEnd = new Date(todayEnd.getTime() + 24 * 60 * 60 * 1000);
-    const active = tasks.filter(t => t.status !== 'done' && t.deadline);
-    const overdueT  = active.filter(t => parseDeadline(t.deadline) < todayStart);
-    const todayT    = active.filter(t => { const d = parseDeadline(t.deadline); return d >= todayStart && d <= todayEnd; });
-    const tomorrowT = active.filter(t => { const d = parseDeadline(t.deadline); return d > todayEnd && d <= tomorrowEnd; });
+    const overdueT  = urgentTasks.filter(t => t.deadline && parseDeadline(t.deadline) < todayStart);
+    const todayT    = urgentTasks.filter(t => { const d = parseDeadline(t.deadline); return d >= todayStart && d <= todayEnd; });
+    const tomorrowT = urgentTasks.filter(t => { const d = parseDeadline(t.deadline); return d > todayEnd && d <= tomorrowEnd; });
     const totalUrgent = overdueT.length + todayT.length + tomorrowT.length;
 
-    const urgentIds = new Set([...overdueT, ...todayT, ...tomorrowT].map(t => t.id));
+    const urgentIds = new Set(urgentTasks.map(t => t.id));
     const pStart = periodStart(dashPeriod);
-    dashRecentTasks = tasks.filter(t => t.status !== 'done' && new Date(t.created_at) >= pStart && !urgentIds.has(t.id));
+    dashRecentTasks = recentTasks.filter(t => new Date(t.created_at) >= pStart && !urgentIds.has(t.id));
 
     const periodNames = [['week','Неделя'],['month','Месяц'],['3month','3 мес.'],['6month','6 мес.'],['year','1 год']];
     const periodLabels = { week: 'за неделю', month: 'за месяц', '3month': 'за 3 месяца', '6month': 'за 6 месяцев', year: 'за год' };
@@ -1622,7 +1590,7 @@ async function renderDashboard() {
 
     document.getElementById('page-content').innerHTML = `
       ${_dashMonthBar}
-      ${renderDashboardCharts(tasks)}
+      ${renderDashboardCharts({ stats, byProject, byEmployee })}
 
       ${totalUrgent > 0 ? `
         <div class="urgent-section">
