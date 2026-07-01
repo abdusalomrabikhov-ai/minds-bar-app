@@ -623,7 +623,7 @@ async function initApp() {
     }
 
     if (!inInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      if ((e.key === 'n' || e.key === 'N') && ['dashboard','tasks','mytasks','project','team-tasks'].includes(state.currentPage)) {
+      if ((e.key === 'n' || e.key === 'N') && ['dashboard','tasks','mytasks','project'].includes(state.currentPage)) {
         e.preventDefault(); openTaskModal();
       }
     }
@@ -641,7 +641,7 @@ async function initApp() {
     navigateTo('activity');
     openUserActivityPage(parseInt(parts[1]), userActivityPeriod);
   } else {
-    const VALID_PAGES = new Set(['dashboard','tasks','mytasks','team-tasks','team','reports','settings','activity','review','finance-log','ideahast','kids','b2c','finance','best-employee','schedule','duty','calendar','timesheet']);
+    const VALID_PAGES = new Set(['dashboard','tasks','mytasks','team','reports','settings','activity','review','finance-log','ideahast','kids','b2c','finance','best-employee','schedule','duty','calendar','timesheet']);
     navigateTo(saved && VALID_PAGES.has(saved) ? saved : 'dashboard');
   }
 }
@@ -747,7 +747,6 @@ function setupNavigation() {
 }
 
 const PAGE_TITLES = {
-  'team-tasks': 'Задачи сотрудников',
   'finance-log': 'Активность финансов',
   'ideahast': 'Ideahast',
   'kids': 'Финансы Kids',
@@ -819,7 +818,6 @@ function navigateTo(page, projectId = null, pushHistory = true) {
       renderTasksPage();
       break;
     case 'project': renderProjectPage(projectId); break;
-    case 'team-tasks': renderTeamTasksPage(); break;
     case 'team': renderTeamPage(); break;
     case 'reports': renderReportsPage(); break;
     case 'settings': renderSettingsPage(); break;
@@ -10402,108 +10400,6 @@ async function exportB2CExcel(courseId) {
   ws['!cols']=[{wch:4},{wch:24},{wch:12},{wch:14},{wch:10},{wch:12},{wch:14},{wch:10},{wch:24}];
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, course?.title||'Курс');
   XLSX.writeFile(wb, `B2C_${course?.title||courseId}.xlsx`); toast('Excel скачан','success');
-}
-
-// ─── Team Tasks Page (for manage_team users) ─────────────────────────────────
-let _teamTasksFilter = { status: '', assignee_id: '', search: '', overdue: false };
-let _teamTasksCache    = []; // assigned tasks for list display
-let _teamTasksAllCache = []; // all tasks for global stat cards
-
-async function renderTeamTasksPage() {
-  const content = document.getElementById('page-content');
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
-  try {
-    const [allTasks, users] = await Promise.all([GET('/tasks?all=1'), GET('/users')]);
-    state.users = users;
-    _teamTasksAllCache = allTasks;
-    _teamTasksCache = allTasks.filter(t => t.assignee_id || (t.multi_assignees||[]).length);
-
-    const employeeOptions = `<option value="">Все сотрудники</option>` +
-      users.filter(u => u.role !== 'admin').map(u =>
-        `<option value="${u.id}" ${_teamTasksFilter.assignee_id === String(u.id) ? 'selected' : ''}>${u.name}</option>`
-      ).join('');
-
-    content.innerHTML = `
-      <div style="padding:0 0 40px">
-        <div class="dash-stat-cards" style="margin-bottom:16px" id="tt-stats"></div>
-        <div class="filters">
-          <div class="search-wrap">
-            <input class="search-input" id="tt-search" placeholder="Поиск задач..." value="${_escHtml(_teamTasksFilter.search)}"
-              oninput="_teamTasksFilter.search=this.value;_renderTeamTasksList()">
-          </div>
-          <div class="employee-filter">
-            <select id="tt-employee" onchange="_teamTasksFilter.assignee_id=this.value;_renderTeamTasksList()">
-              ${employeeOptions}
-            </select>
-          </div>
-          <button id="tt-btn-all" class="filter-btn" onclick="_teamTasksFilter.status='';_teamTasksFilter.overdue=false;_renderTeamTasksList()">Все</button>
-          <button id="tt-btn-new" class="filter-btn" onclick="_teamTasksFilter.status='new';_teamTasksFilter.overdue=false;_renderTeamTasksList()" style="display:inline-flex;align-items:center;gap:5px">${colorDot('#3B82F6')} Новые</button>
-          <button id="tt-btn-inp" class="filter-btn" onclick="_teamTasksFilter.status='in_progress';_teamTasksFilter.overdue=false;_renderTeamTasksList()" style="display:inline-flex;align-items:center;gap:5px">${colorDot('#D97706')} В работе</button>
-          <button id="tt-btn-done" class="filter-btn" onclick="_teamTasksFilter.status='done';_teamTasksFilter.overdue=false;_renderTeamTasksList()" style="display:inline-flex;align-items:center;gap:5px">${colorDot('#059669')} Готово</button>
-          <button id="tt-btn-ov" class="filter-btn" onclick="_teamTasksFilter.overdue=true;_teamTasksFilter.status='';_renderTeamTasksList()" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.warning)} Просрочено</button>
-        </div>
-        <div id="tt-task-list"></div>
-      </div>`;
-
-    _renderTeamTasksList();
-  } catch (err) {
-    content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
-  }
-}
-
-function _renderTeamTasksList() {
-  // Apply filters client-side from cache — no API call, no focus loss
-  let tasks = _teamTasksCache;
-  if (_teamTasksFilter.assignee_id) {
-    tasks = tasks.filter(t =>
-      String(t.assignee_id) === _teamTasksFilter.assignee_id ||
-      (t.multi_assignees||[]).some(a => String(a.id) === _teamTasksFilter.assignee_id)
-    );
-  }
-  if (_teamTasksFilter.status)  tasks = tasks.filter(t => t.status === _teamTasksFilter.status);
-  if (_teamTasksFilter.overdue) tasks = tasks.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date());
-  if (_teamTasksFilter.search) {
-    const q = _teamTasksFilter.search.toLowerCase();
-    tasks = tasks.filter(t => t.title.toLowerCase().includes(q) || (t.assignee_name||'').toLowerCase().includes(q));
-  }
-
-  // Update active filter buttons
-  ['all','new','inp','done','ov'].forEach(id => {
-    const btn = document.getElementById('tt-btn-' + id);
-    if (!btn) return;
-    const active =
-      (id==='all'  && !_teamTasksFilter.status && !_teamTasksFilter.overdue) ||
-      (id==='new'  && _teamTasksFilter.status==='new') ||
-      (id==='inp'  && _teamTasksFilter.status==='in_progress') ||
-      (id==='done' && _teamTasksFilter.status==='done') ||
-      (id==='ov'   && _teamTasksFilter.overdue);
-    btn.classList.toggle('active', active);
-  });
-
-  // Global stats — always from full task list (same as Dashboard) to ensure consistent numbers
-  const allT    = _teamTasksAllCache;
-  const total   = allT.length;
-  const done    = allT.filter(t => t.status === 'done').length;
-  const inProg  = allT.filter(t => t.status === 'in_progress').length;
-  const overdueN = allT.filter(t => t.status !== 'done' && t.deadline && parseDeadline(t.deadline) < new Date()).length;
-  const eff     = total > 0 ? Math.round(done / total * 100) : 0;
-  const statsEl = document.getElementById('tt-stats');
-  if (statsEl) statsEl.innerHTML = `
-    <div class="dash-stat-card"><div class="dsc-label">Всего задач</div><div class="dsc-value">${total}</div></div>
-    <div class="dash-stat-card"><div class="dsc-label">Выполнено</div><div class="dsc-value dsc-value--green">${done}</div></div>
-    <div class="dash-stat-card"><div class="dsc-label">В работе</div><div class="dsc-value" style="color:#D97706">${inProg}</div></div>
-    <div class="dash-stat-card"><div class="dsc-label">Просрочено</div><div class="dsc-value ${overdueN>0?'dsc-value--red':''}">${overdueN}</div></div>
-    <div class="dash-stat-card"><div class="dsc-label">Эффективность</div><div class="dsc-value dsc-value--green">${eff}%</div></div>`;
-
-  // Update task list
-  const listEl = document.getElementById('tt-task-list');
-  if (!listEl) return;
-
-  listEl.innerHTML = tasks.length === 0
-    ? `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.clip,44)}</div><h3>Нет задач</h3><p>Измените фильтры</p></div>`
-    : `<div class="tasks-list">${tasks.map(t => taskCard(t)).join('')}</div>`;
-
-  attachTaskCardListeners();
 }
 
 // ─── Schedule Page ────────────────────────────────────────────────────────────
