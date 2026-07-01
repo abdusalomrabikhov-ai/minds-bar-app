@@ -126,6 +126,10 @@ function avatar(name, color, cls = '', imgUrl = '') {
   return `<div class="avatar ${cls}" style="background:${color || '#6366f1'}">${initials(name)}</div>`;
 }
 
+function userImg(userId) {
+  return state.users?.find(u => u.id === userId)?.avatar_img || '';
+}
+
 const TZ = 'Asia/Dushanbe';
 
 const _DSH_OFFSET = 5 * 3600000; // UTC+5 in ms
@@ -2789,7 +2793,7 @@ function taskCard(t, urgencyLevel = null) {
     const extra = ma.length - shown.length;
     avatarsHtml = `
       <div class="ma-avatars">
-        ${shown.map(a => `<div class="ma-avatar-wrap${a.done ? ' ma-done' : ''}" title="${a.name}${a.done ? ' ✓' : ''}">${avatar(a.name, a.color, 'avatar-sm', a.img || '')}</div>`).join('')}
+        ${shown.map(a => `<div class="ma-avatar-wrap${a.done ? ' ma-done' : ''}" title="${a.name}${a.done ? ' ✓' : ''}">${avatar(a.name, a.color, 'avatar-sm', userImg(a.id))}</div>`).join('')}
         ${extra > 0 ? `<div class="ma-extra">+${extra}</div>` : ''}
       </div>
       ${ma.length > 1 ? `<span class="ma-progress" title="${doneCount} из ${ma.length} выполнено">${doneCount}/${ma.length}</span>` : ''}
@@ -2944,7 +2948,7 @@ async function openTaskDetail(taskId) {
                     ${ma.map(a => {
                       const canToggle = isAdmin || a.id === state.user.id;
                       return `<div class="ma-detail-item">
-                        ${avatar(a.name, a.color, 'avatar-sm', a.img || '')}
+                        ${avatar(a.name, a.color, 'avatar-sm', userImg(a.id))}
                         <span class="ma-detail-name">${a.name}</span>
                         ${canToggle
                           ? `<button class="ma-det-check ${a.done ? 'done' : ''}" onclick="toggleMyDone(${t.id},${!a.done},${a.id},this)">
@@ -2956,7 +2960,7 @@ async function openTaskDetail(taskId) {
                     }).join('')}
                   </div>
                 ` : `<div style="display:flex;align-items:center;gap:8px">
-                  ${t.assignee_name ? avatar(t.assignee_name, t.assignee_color, 'avatar-sm', t.assignee_img || '') : ''}
+                  ${t.assignee_name ? avatar(t.assignee_name, t.assignee_color, 'avatar-sm', userImg(t.assignee_id)) : ''}
                   ${t.assignee_name || '—'}
                 </div>`}
               </div>

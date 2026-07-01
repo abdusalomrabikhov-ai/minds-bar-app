@@ -515,7 +515,7 @@ function enrichTasksWithAssignees(tasks, skipImg = false) {
 function getTaskQuery(extraWhere = '', params = []) {
   return db.prepare(`
     SELECT t.*,
-      u.name as assignee_name, u.avatar_color as assignee_color, u.avatar_img as assignee_img,
+      u.name as assignee_name, u.avatar_color as assignee_color,
       p.name as project_name, p.color as project_color,
       creator.name as creator_name
     FROM tasks t
@@ -540,7 +540,7 @@ function getTaskCount(extraWhere = '', params = []) {
 function getTaskQueryPaged(extraWhere = '', params = [], limit = 20, offset = 0) {
   return db.prepare(`
     SELECT t.*,
-      u.name as assignee_name, u.avatar_color as assignee_color, u.avatar_img as assignee_img,
+      u.name as assignee_name, u.avatar_color as assignee_color,
       p.name as project_name, p.color as project_color,
       creator.name as creator_name
     FROM tasks t
