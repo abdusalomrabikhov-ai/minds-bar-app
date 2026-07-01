@@ -2897,12 +2897,11 @@ function attachTaskCardListeners() {
 // ─── Task Detail Modal ────────────────────────────────────────────────────────
 async function openTaskDetail(taskId) {
   try {
-    const [tasks, comments, history] = await Promise.all([
-      GET('/tasks?all=1&_force=1'),
+    const [t, comments, history] = await Promise.all([
+      GET('/tasks/' + taskId),
       GET('/tasks/' + taskId + '/comments'),
       GET('/tasks/' + taskId + '/history').catch(() => []),
     ]);
-    const t = tasks.find(t => String(t.id) === String(taskId));
     if (!t) return;
     const _aUser = state.users.find(u => u.id === t.assignee_id);
     if (!t.assignee_img && _aUser?.avatar_img) t.assignee_img = _aUser.avatar_img;
@@ -3359,10 +3358,7 @@ async function openTaskModal(taskId = null, defaultProjectId = null) {
   const isAdmin = state.user.role === 'admin';
   let task = null;
   if (taskId) {
-    try {
-      const tasks = await GET('/tasks?all=1');
-      task = tasks.find(t => String(t.id) === String(taskId));
-    } catch {}
+    try { task = await GET('/tasks/' + taskId); } catch {}
   }
 
   const projectOptions = state.projects.map(p =>
@@ -5409,7 +5405,7 @@ async function renderTeamPage() {
 
   const isAdmin = state.user.role === 'admin';
   try {
-    const [users, tasks, userProjects] = await Promise.all([GET('/users'), GET('/tasks?all=1'), GET('/user-projects')]);
+    const [users, dashData, userProjects] = await Promise.all([GET('/users'), GET('/dashboard'), GET('/user-projects')]);
     state.users = users;
 
     // Project memberships per user
@@ -5419,23 +5415,10 @@ async function renderTeamPage() {
       projsByUser[m.user_id].push(m);
     }
 
-    // Group task counts by assignee — include both single and multi-assignee tasks
+    // Task counts by user — from dashboard byEmployee (avoids fetching all tasks)
     const tasksByUser = {};
-    const addToUser = (uid, isDone, status) => {
-      if (!tasksByUser[uid]) tasksByUser[uid] = { total: 0, done: 0, in_progress: 0, new_count: 0 };
-      const s = tasksByUser[uid];
-      s.total++;
-      if (isDone) s.done++;
-      else if (status === 'in_progress') s.in_progress++;
-      else s.new_count++;
-    };
-    tasks.forEach(t => {
-      const ma = t.multi_assignees;
-      if (ma && ma.length > 0) {
-        ma.forEach(a => addToUser(a.id, t.status === 'done' || a.done === 1, t.status));
-      } else if (t.assignee_id) {
-        addToUser(t.assignee_id, t.status === 'done', t.status);
-      }
+    (dashData.byEmployee || []).forEach(e => {
+      tasksByUser[e.id] = { total: e.total, done: e.done, in_progress: e.in_progress || 0, new_count: e.new_count || 0 };
     });
 
     const canManageHr = isAdmin || (state.user.permissions?.manage_team);

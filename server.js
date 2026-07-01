@@ -11,6 +11,7 @@ const { db, initDB } = require('./database');
 const { sendTelegramNotification, processWebhookUpdate, WEBHOOK_PATH } = require('./bot');
 const { startScheduler } = require('./scheduler');
 const webpush = require('web-push');
+const compression = require('compression');
 
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
   webpush.setVapidDetails(
@@ -63,9 +64,10 @@ function updateReviewBadgeSSE() {
   });
 }
 
+app.use(compression());
 app.use(cors());
 app.use(express.json({ limit: '4mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), { etag: true, maxAge: '1h' }));
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
@@ -613,10 +615,13 @@ app.get('/api/dashboard', auth, (req, res) => {
   `).all(...params) : [];
 
   const byEmployee = isAdmin || hasReports || hasTeam ? db.prepare(`
-    SELECT u.name, u.avatar_color as color,
-      COUNT(*) as total, SUM(CASE WHEN t.status='done' THEN 1 ELSE 0 END) as done
+    SELECT u.id, u.name, u.avatar_color as color,
+      COUNT(*) as total,
+      SUM(CASE WHEN t.status='done' THEN 1 ELSE 0 END) as done,
+      SUM(CASE WHEN t.status='in_progress' THEN 1 ELSE 0 END) as in_progress,
+      SUM(CASE WHEN t.status='new' THEN 1 ELSE 0 END) as new_count
     FROM task_assignees ta JOIN tasks t ON t.id = ta.task_id JOIN users u ON u.id = ta.user_id
-    WHERE 1=1 ${where.replace(/t\./g, 't.')} GROUP BY u.id ORDER BY total DESC LIMIT 10
+    WHERE 1=1 ${where.replace(/t\./g, 't.')} GROUP BY u.id ORDER BY total DESC LIMIT 20
   `).all(...params) : [];
 
   res.json({ stats, urgentTasks, recentTasks, byProject, byEmployee });
@@ -666,6 +671,14 @@ app.get('/api/tasks', auth, (req, res) => {
   const total = getTaskCount(where, params);
   const tasks = enrichTasksWithAssignees(getTaskQueryPaged(where, params, limit, offset));
   res.json({ tasks, total, page, pages: Math.ceil(total / limit) || 1 });
+});
+
+app.get('/api/tasks/:id', auth, (req, res) => {
+  const taskId = parseInt(req.params.id);
+  if (!taskId) return res.status(400).json({ error: 'Invalid id' });
+  const rows = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [taskId]));
+  if (!rows.length) return res.status(404).json({ error: 'Задача не найдена' });
+  res.json(rows[0]);
 });
 
 function calcNextDeadline(deadline, recurrence) {
@@ -1225,35 +1238,70 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
   const todayLocal = nowLocal.slice(0,10);                                         // "2026-06-23"
 
   const employees = db.prepare(
-    "SELECT id, name, avatar_color, avatar_img FROM users WHERE role = 'employee' ORDER BY name"
+    "SELECT id, name, avatar_color FROM users WHERE role = 'employee' ORDER BY name"
   ).all();
 
+  // Batch: fetch all per-user task stats in one query, group by user_id
+  const allStats = db.prepare(`
+    SELECT
+      u.id as user_id,
+      COUNT(DISTINCT t.id) as total,
+      SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) as done,
+      SUM(CASE WHEN t.status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+      SUM(CASE WHEN t.status = 'new' THEN 1 ELSE 0 END) as new_count,
+      SUM(CASE WHEN t.status != 'done' AND t.deadline IS NOT NULL AND
+        (length(t.deadline) > 10 AND t.deadline < ? OR length(t.deadline) <= 10 AND t.deadline < ?)
+      THEN 1 ELSE 0 END) as overdue
+    FROM users u
+    LEFT JOIN tasks t ON (t.assignee_id = u.id OR EXISTS (
+      SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = u.id
+    ))
+    WHERE u.role = 'employee' ${dateWhere ? 'AND ' + dateWhere.trimStart().replace(/^AND\s+/, '') : ''}
+    GROUP BY u.id
+  `).all(nowLocal, todayLocal, ...dateParams);
+  const statsById = Object.fromEntries(allStats.map(s => [s.user_id, s]));
+
+  // Batch: fetch all deadline rows for on-time/late score
+  const allDlRows = db.prepare(`
+    SELECT DISTINCT
+      COALESCE(ta.user_id, t.assignee_id) as user_id,
+      t.id, t.status, t.deadline, t.updated_at,
+      ta.done AS my_done, ta.done_at AS my_done_at
+    FROM tasks t
+    LEFT JOIN task_assignees ta ON ta.task_id = t.id
+    WHERE t.deadline IS NOT NULL AND t.deadline != ''
+      AND (t.assignee_id IS NOT NULL OR ta.user_id IS NOT NULL)
+      ${dlDateWhere}
+  `).all(...dlDateParams);
+  const dlByUser = {};
+  for (const r of allDlRows) {
+    (dlByUser[r.user_id] = dlByUser[r.user_id] || []).push(r);
+  }
+
+  // Batch: fetch byProject for all employees at once
+  const allByProject = db.prepare(`
+    SELECT
+      COALESCE(ta.user_id, t.assignee_id) as user_id,
+      p.name, p.color,
+      COUNT(DISTINCT t.id) as total,
+      SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) as done
+    FROM tasks t
+    LEFT JOIN task_assignees ta ON ta.task_id = t.id
+    JOIN projects p ON p.id = t.project_id
+    WHERE (t.assignee_id IS NOT NULL OR ta.user_id IS NOT NULL)
+      ${dateWhere}
+    GROUP BY COALESCE(ta.user_id, t.assignee_id), p.id
+    ORDER BY total DESC
+  `).all(...dateParams);
+  const byProjectByUser = {};
+  for (const r of allByProject) {
+    (byProjectByUser[r.user_id] = byProjectByUser[r.user_id] || []).push(
+      { name: r.name, color: r.color, total: r.total, done: r.done }
+    );
+  }
+
   const report = employees.map(user => {
-    // Include both single-assignee AND multi-assignee tasks
-    const stats = db.prepare(`
-      SELECT
-        COUNT(DISTINCT t.id) as total,
-        SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) as done,
-        SUM(CASE WHEN t.status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
-        SUM(CASE WHEN t.status = 'new' THEN 1 ELSE 0 END) as new_count,
-        SUM(CASE WHEN t.status != 'done' AND t.deadline IS NOT NULL AND
-          (length(t.deadline) > 10 AND t.deadline < ? OR length(t.deadline) <= 10 AND t.deadline < ?)
-        THEN 1 ELSE 0 END) as overdue
-      FROM tasks t
-      LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
-      WHERE (t.assignee_id = ? OR ta.user_id = ?) ${dateWhere}
-    `).get(nowLocal, todayLocal, user.id, user.id, user.id, ...dateParams);
-
-    // On-time/late breakdown — filter by deadline month (same as /api/best-employee)
-    const dlRows = db.prepare(`
-      SELECT DISTINCT t.id, t.status, t.deadline, t.updated_at,
-        ta.done AS my_done, ta.done_at AS my_done_at
-      FROM tasks t
-      LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
-      WHERE (t.assignee_id = ? OR ta.user_id = ?)
-        AND t.deadline IS NOT NULL AND t.deadline != '' ${dlDateWhere}
-    `).all(user.id, user.id, user.id, ...dlDateParams);
-
+    const dlRows = dlByUser[user.id] || [];
     let doneOnTime = 0, doneLate = 0;
     for (const t of dlRows) {
       const isDone   = t.status === 'done' || t.my_done === 1;
@@ -1268,20 +1316,8 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
     const dlTotal = dlRows.length;
     const score = dlTotal > 0 ? Math.round((doneOnTime * 100 + doneLate * 50) / dlTotal) : null;
 
-    const byProject = db.prepare(`
-      SELECT p.name, p.color,
-        COUNT(DISTINCT t.id) as total,
-        SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) as done
-      FROM tasks t
-      LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
-      JOIN projects p ON p.id = t.project_id
-      WHERE (t.assignee_id = ? OR ta.user_id = ?) ${dateWhere}
-      GROUP BY p.id
-      ORDER BY total DESC
-    `).all(user.id, user.id, user.id, ...dateParams);
-
-    const baseStats = stats || { total: 0, done: 0, in_progress: 0, new_count: 0, overdue: 0 };
-    return { ...user, stats: { ...baseStats, doneOnTime, doneLate, dlTotal, score }, byProject };
+    const baseStats = statsById[user.id] || { total: 0, done: 0, in_progress: 0, new_count: 0, overdue: 0 };
+    return { ...user, stats: { ...baseStats, doneOnTime, doneLate, dlTotal, score }, byProject: byProjectByUser[user.id] || [] };
   });
 
   // Global unique task counts — no double-counting of multi-assignee tasks
@@ -2557,10 +2593,7 @@ function syncTimesheetEmployees() {
     VALUES (?, ?, ?, 1)
   `);
   for (const u of users) {
-    const exists = db.prepare('SELECT id FROM timesheet_employees WHERE user_id=?').get(u.id);
-    if (!exists) {
-      insert.run(u.id, u.name, u.avatar_color || '#6366f1');
-    }
+    insert.run(u.id, u.name, u.avatar_color || '#6366f1');
   }
 }
 

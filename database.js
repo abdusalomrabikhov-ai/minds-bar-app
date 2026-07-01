@@ -37,6 +37,9 @@ function initDB() {
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_activity_log_user ON activity_log(user_id)'); } catch {}
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_activity_log_date ON activity_log(created_at)'); } catch {}
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_comments_task ON comments(task_id)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_status_deadline ON tasks(status, deadline)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_task_history_task ON task_history(task_id)'); } catch {}
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
