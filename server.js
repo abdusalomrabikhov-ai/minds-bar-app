@@ -1087,7 +1087,11 @@ app.post('/api/tasks/:id/comments', auth, (req, res) => {
 // ─── Users ────────────────────────────────────────────────────────────────────
 
 app.get('/api/users', auth, (req, res) => {
-  const users = db.prepare('SELECT id, name, email, role, avatar_color, avatar_img, telegram_id, permissions FROM users ORDER BY name').all();
+  const full = req.query.full === '1';
+  const cols = full
+    ? 'id, name, email, role, avatar_color, avatar_img, telegram_id, permissions'
+    : 'id, name, email, role, avatar_color, telegram_id, permissions';
+  const users = db.prepare(`SELECT ${cols} FROM users ORDER BY name`).all();
   res.json(users.map(u => ({ ...u, permissions: parsePerms(u.permissions) })));
 });
 

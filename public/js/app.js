@@ -648,7 +648,7 @@ async function initApp() {
 
 async function loadSharedData() {
   try {
-    [state.projects, state.users] = await Promise.all([GET('/projects'), GET('/users')]);
+    [state.projects, state.users] = await Promise.all([GET('/projects'), GET('/users?full=1')]);
     renderSidebarProjects();
   } catch {}
 }
