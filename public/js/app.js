@@ -11321,7 +11321,7 @@ function openFeedbackDetail(rowId) {
 }
 
 // ─── Global Search ────────────────────────────────────────────────────────────
-let _gsAllTasks = null;
+let _gsSearchTimer = null;
 
 async function openGlobalSearch() {
   if (document.getElementById('global-search-overlay')) return;
@@ -11347,14 +11347,19 @@ async function openGlobalSearch() {
   const input = document.getElementById('gs-input');
   input.focus();
 
-  // Load tasks once
-  if (!_gsAllTasks) {
-    try { _gsAllTasks = await GET('/tasks?all=1'); } catch { _gsAllTasks = []; }
-  }
-
   let selectedIdx = -1;
 
-  input.addEventListener('input', () => renderGsResults(input.value.trim(), selectedIdx = -1));
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    clearTimeout(_gsSearchTimer);
+    if (q.length < 2) { renderGsResults(q, [], selectedIdx = -1); return; }
+    _gsSearchTimer = setTimeout(async () => {
+      try {
+        const tasks = await GET('/search?q=' + encodeURIComponent(q));
+        renderGsResults(q, tasks, selectedIdx = -1);
+      } catch { renderGsResults(q, [], selectedIdx = -1); }
+    }, 200);
+  });
 
   input.addEventListener('keydown', e => {
     const items = document.querySelectorAll('.gs-result-item');
@@ -11375,18 +11380,16 @@ async function openGlobalSearch() {
   });
 }
 
-function renderGsResults(q, selectedIdx) {
+function renderGsResults(q, serverTasks, selectedIdx) {
   const el = document.getElementById('gs-results');
   if (!el) return;
-  if (!q) { el.innerHTML = '<div class="gs-hint">Начните вводить для поиска</div>'; return; }
+  if (!q || q.length < 2) { el.innerHTML = '<div class="gs-hint">Начните вводить для поиска</div>'; return; }
 
   const ql = q.toLowerCase();
   const highlight = s => s.replace(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi'), '<mark class="gs-hl">$1</mark>');
 
-  // Tasks
-  const tasks = (_gsAllTasks || []).filter(t =>
-    t.title?.toLowerCase().includes(ql) || (t.description || '').toLowerCase().includes(ql)
-  ).slice(0, 5);
+  // Tasks from server
+  const tasks = (serverTasks || []).slice(0, 5);
 
   // Projects
   const projects = (state.projects || []).filter(p =>

@@ -58,9 +58,9 @@ function sendSSEAll(data) {
   sseClients.forEach(clients => clients.forEach(res => res.write(`data: ${JSON.stringify(data)}\n\n`)));
 }
 function updateReviewBadgeSSE() {
-  // Notify all admins to refresh their review badge
-  db.prepare("SELECT id FROM users WHERE role = 'admin'").all().forEach(a => {
-    sendSSE(a.id, { type: 'review_badge_update' });
+  const payload = JSON.stringify({ type: 'review_badge_update' });
+  sseClients.forEach((clients, userId) => {
+    clients.forEach(res => res.write(`data: ${payload}\n\n`));
   });
 }
 
@@ -353,7 +353,7 @@ app.get('/api/projects/:id/content', auth, (req, res) => {
 
 app.get('/api/projects/:id/members', auth, (req, res) => {
   const rows = db.prepare(`
-    SELECT u.id, u.name, u.avatar_color, u.avatar_img, u.role
+    SELECT u.id, u.name, u.avatar_color, u.role
     FROM project_members pm JOIN users u ON u.id = pm.user_id
     WHERE pm.project_id = ? ORDER BY u.name
   `).all(req.params.id);
@@ -495,7 +495,7 @@ function recomputeTaskStatus(taskId) {
     .run(allDone ? 'done' : anyDone ? 'in_progress' : 'new', localNow(), taskId);
 }
 
-function enrichTasksWithAssignees(tasks, skipImg = false) {
+function enrichTasksWithAssignees(tasks, skipImg = true) {
   if (!tasks.length) return tasks;
   const ids = tasks.map(t => t.id);
   const ph = ids.map(() => '?').join(',');
@@ -679,6 +679,24 @@ app.get('/api/tasks/:id', auth, (req, res) => {
   const rows = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [taskId]));
   if (!rows.length) return res.status(404).json({ error: 'Задача не найдена' });
   res.json(rows[0]);
+});
+
+app.get('/api/search', auth, (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q || q.length < 2) return res.json([]);
+  const userPerms = JSON.parse(req.user.permissions || '{}');
+  const isAdmin = req.user.role === 'admin';
+  const hasTeam = userPerms.manage_team;
+  const hasAssign = userPerms.assign_tasks;
+  const uid = req.user.id;
+  let where = " AND (t.title LIKE ? OR t.description LIKE ?)";
+  const params = [`%${q}%`, `%${q}%`];
+  if (!isAdmin && !hasTeam && !hasAssign) {
+    where += ' AND (t.assignee_id = ? OR t.created_by = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = ?))';
+    params.push(uid, uid, uid);
+  }
+  const tasks = enrichTasksWithAssignees(getTaskQuery(where + ' LIMIT 30', params));
+  res.json(tasks);
 });
 
 function calcNextDeadline(deadline, recurrence) {
@@ -1043,7 +1061,7 @@ app.get('/api/tasks/:id/history', auth, (req, res) => {
 app.get('/api/tasks/:id/comments', auth, (req, res) => {
   if (!canAccessTask(req, req.params.id)) return res.status(403).json({ error: 'Нет доступа' });
   const comments = db.prepare(`
-    SELECT c.*, u.name as user_name, u.avatar_color, u.avatar_img
+    SELECT c.*, u.name as user_name, u.avatar_color
     FROM comments c
     JOIN users u ON u.id = c.user_id
     WHERE c.task_id = ?
@@ -1060,7 +1078,7 @@ app.post('/api/tasks/:id/comments', auth, (req, res) => {
   const result = db.prepare('INSERT INTO comments (task_id, user_id, text) VALUES (?, ?, ?)')
     .run(req.params.id, req.user.id, text.trim());
   const comment = db.prepare(`
-    SELECT c.*, u.name as user_name, u.avatar_color, u.avatar_img
+    SELECT c.*, u.name as user_name, u.avatar_color
     FROM comments c JOIN users u ON u.id = c.user_id WHERE c.id = ?
   `).get(result.lastInsertRowid);
   const taskRow = db.prepare('SELECT title FROM tasks WHERE id = ?').get(req.params.id);
@@ -1523,7 +1541,7 @@ app.get('/api/activity', auth, requirePerm('view_activity'), (req, res) => {
   const days  = Math.min(parseInt(req.query.days)  || 30,  365);
   const logs = db.prepare(`
     SELECT al.id, al.action, al.entity_type, al.entity_id, al.entity_title, al.detail, al.created_at,
-           u.id as user_id, u.name as user_name, u.avatar_color as user_color, u.avatar_img as user_avatar
+           u.id as user_id, u.name as user_name, u.avatar_color as user_color
     FROM activity_log al
     JOIN users u ON u.id = al.user_id
     WHERE al.created_at >= date('now', '-${days} days')
@@ -1578,7 +1596,7 @@ app.get('/api/activity/user/:id', auth, requirePerm('view_activity'), (req, res)
 
 app.get('/api/users/last-seen', auth, requirePerm('view_activity'), (req, res) => {
   const users = db.prepare(`
-    SELECT id, name, avatar_color, avatar_img, role,
+    SELECT id, name, avatar_color, role,
            last_seen,
            (SELECT action FROM activity_log WHERE user_id = users.id ORDER BY created_at DESC LIMIT 1) as last_action,
            (SELECT created_at FROM activity_log WHERE user_id = users.id ORDER BY created_at DESC LIMIT 1) as last_activity_at
@@ -2161,7 +2179,7 @@ app.delete('/api/hr/salaries/:id', auth, requirePerm('manage_team'), (req, res) 
 // ─── Workload ─────────────────────────────────────────────────────────────────
 app.get('/api/workload', auth, (req, res) => {
   try {
-    const users = db.prepare('SELECT id, name, avatar_color, avatar_img FROM users ORDER BY name').all();
+    const users = db.prepare('SELECT id, name, avatar_color FROM users ORDER BY name').all();
     const projects = db.prepare('SELECT id, name, color FROM projects WHERE archived = 0 ORDER BY name').all();
     const memberships = db.prepare('SELECT user_id, project_id FROM project_members').all();
     const taskCounts = db.prepare(`
@@ -2245,7 +2263,7 @@ app.get('/api/best-employee', auth, (req, res) => {
   const month = req.query.month || localMonth();
 
   function calcMonth(m) {
-    const users = db.prepare("SELECT id, name, avatar_color, avatar_img FROM users WHERE role='employee' ORDER BY name").all();
+    const users = db.prepare("SELECT id, name, avatar_color FROM users WHERE role='employee' ORDER BY name").all();
     return users.map(u => {
       // Fetch tasks created in month m (same filter as /api/reports)
       const rows = db.prepare(`
@@ -2450,7 +2468,7 @@ app.get('/api/calendar/events', auth, (req, res) => {
   const isAdmin = req.user.role === 'admin';
   const { timeMin, timeMax } = req.query;
   let sql = `
-    SELECT e.*, u.name as creator_name, u.avatar_color as creator_color, u.avatar_img as creator_img,
+    SELECT e.*, u.name as creator_name, u.avatar_color as creator_color,
       (SELECT GROUP_CONCAT(ce.user_id||':'||us.name||':'||COALESCE(us.avatar_color,'#6366f1'), '|')
        FROM calendar_attendees ce JOIN users us ON us.id=ce.user_id WHERE ce.event_id=e.id) as attendees_raw
     FROM calendar_events e
@@ -2544,7 +2562,7 @@ app.delete('/api/calendar/events/:id', auth, (req, res) => {
 // ─── Duty Schedule ────────────────────────────────────────────────────────────
 app.get('/api/duty', auth, (req, res) => {
   const rows = db.prepare(`
-    SELECT d.*, u.avatar_color, u.avatar_img
+    SELECT d.*, u.avatar_color
     FROM duty_schedule d
     LEFT JOIN users u ON u.id = d.user_id
     ORDER BY d.week_start, d.employee_name
