@@ -578,7 +578,7 @@ app.get('/api/my-stats', auth, (req, res) => {
       SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
       SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) as new_count,
       SUM(CASE WHEN status != 'done' AND deadline IS NOT NULL AND deadline != ''
-        AND (CASE WHEN length(deadline) > 10 THEN deadline ELSE deadline || ' 23:59' END) < ? THEN 1 ELSE 0 END) as overdue
+        AND (CASE WHEN length(deadline) > 10 THEN replace(deadline,'T',' ') ELSE deadline || ' 23:59' END) < ? THEN 1 ELSE 0 END) as overdue
     FROM tasks t WHERE 1=1 ${where}
   `).get(now.slice(0, 16).replace('T', ' '), ...params);
 
@@ -589,7 +589,7 @@ app.get('/api/my-stats', auth, (req, res) => {
       SUM(CASE WHEN t.status='in_progress' THEN 1 ELSE 0 END) as inp,
       SUM(CASE WHEN t.status='new' THEN 1 ELSE 0 END) as nw,
       SUM(CASE WHEN t.status!='done' AND t.deadline IS NOT NULL AND t.deadline!=''
-        AND (CASE WHEN length(t.deadline) > 10 THEN t.deadline ELSE t.deadline || ' 23:59' END) < ? THEN 1 ELSE 0 END) as ov,
+        AND (CASE WHEN length(t.deadline) > 10 THEN replace(t.deadline,'T',' ') ELSE t.deadline || ' 23:59' END) < ? THEN 1 ELSE 0 END) as ov,
       MIN(CASE WHEN t.status!='done' AND t.deadline IS NOT NULL AND t.deadline!='' AND substr(t.deadline,1,10) >= ? THEN t.deadline END) as next_deadline
     FROM tasks t JOIN projects p ON p.id = t.project_id
     WHERE 1=1 ${where}
@@ -645,7 +645,7 @@ app.get('/api/dashboard', auth, (req, res) => {
       SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) as new_count,
       SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
       SUM(CASE WHEN status != 'done' AND deadline IS NOT NULL AND deadline != '' AND
-        (CASE WHEN length(deadline) > 10 THEN deadline ELSE deadline || ' 23:59' END) < ? THEN 1 ELSE 0 END) as overdue,
+        (CASE WHEN length(deadline) > 10 THEN replace(deadline,'T',' ') ELSE deadline || ' 23:59' END) < ? THEN 1 ELSE 0 END) as overdue,
       SUM(CASE WHEN status != 'done' AND deadline IS NOT NULL AND deadline != '' AND substr(deadline,1,10) = ? THEN 1 ELSE 0 END) as today,
       SUM(CASE WHEN status != 'done' AND deadline IS NOT NULL AND deadline != '' AND substr(deadline,1,10) = ? THEN 1 ELSE 0 END) as tomorrow_count
     FROM tasks t WHERE 1=1 ${where}
@@ -1339,7 +1339,7 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
       SUM(CASE WHEN t.status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
       SUM(CASE WHEN t.status = 'new' THEN 1 ELSE 0 END) as new_count,
       SUM(CASE WHEN t.status != 'done' AND t.deadline IS NOT NULL AND
-        (length(t.deadline) > 10 AND t.deadline < ? OR length(t.deadline) <= 10 AND t.deadline < ?)
+        (length(t.deadline) > 10 AND replace(t.deadline,'T',' ') < ? OR length(t.deadline) <= 10 AND t.deadline < ?)
       THEN 1 ELSE 0 END) as overdue
     FROM users u
     LEFT JOIN tasks t ON (t.assignee_id = u.id OR EXISTS (
@@ -1419,7 +1419,7 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
       COALESCE(SUM(CASE WHEN t.status = 'in_progress' THEN 1 ELSE 0 END), 0) as in_progress,
       COALESCE(SUM(CASE WHEN t.status = 'new' THEN 1 ELSE 0 END), 0) as new_count,
       COALESCE(SUM(CASE WHEN t.status != 'done' AND t.deadline IS NOT NULL AND
-        (length(t.deadline) > 10 AND t.deadline < ? OR length(t.deadline) <= 10 AND t.deadline < ?)
+        (length(t.deadline) > 10 AND replace(t.deadline,'T',' ') < ? OR length(t.deadline) <= 10 AND t.deadline < ?)
       THEN 1 ELSE 0 END), 0) as overdue
     FROM tasks t
     ${globalWhere}
