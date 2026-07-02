@@ -2595,7 +2595,7 @@ app.post('/api/calendar/events', auth, (req, res) => {
     for (const uid of attendees) ins.run(id, uid);
     // Telegram notifications — notify all attendees including creator
     const creator = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id);
-    const startFmt = new Date(start).toLocaleString('ru',{day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'});
+    const startFmt = new Date(start.length <= 19 ? start + '+05:00' : start).toLocaleString('ru',{timeZone:'Asia/Dushanbe',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'});
     const notifyIds = new Set(attendees);
     notifyIds.add(req.user.id); // always notify creator too
     for (const uid of notifyIds) {
@@ -2628,7 +2628,7 @@ app.patch('/api/calendar/events/:id', auth, (req, res) => {
     // notify newly added attendees
     const updEv = db.prepare('SELECT * FROM calendar_events WHERE id=?').get(req.params.id);
     const creator = db.prepare('SELECT name FROM users WHERE id=?').get(req.user.id);
-    const startFmt = new Date(updEv.start_dt).toLocaleString('ru',{day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'});
+    const startFmt = new Date(updEv.start_dt.length <= 19 ? updEv.start_dt + '+05:00' : updEv.start_dt).toLocaleString('ru',{timeZone:'Asia/Dushanbe',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'});
     for (const uid of attendees) {
       if (oldSet.has(uid) || uid === req.user.id) continue;
       const u = db.prepare('SELECT telegram_id FROM users WHERE id=?').get(uid);
