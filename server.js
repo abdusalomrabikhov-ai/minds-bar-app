@@ -2618,7 +2618,7 @@ app.post('/api/calendar/events', auth, (req, res) => {
       const u = db.prepare('SELECT telegram_id FROM users WHERE id=?').get(uid);
       if (u?.telegram_id) {
         sendTelegramNotification(u.telegram_id,
-          `📅 *Новое событие*\n\n*${summary}*\n🕐 ${startFmt}\n👤 Организатор: ${creator?.name||'—'}${location?'\n📍 '+location:''}`);
+          `📅 * Опять что-то намечается...*\n*${summary}*\n🕐 ${startFmt} — заводите будильник, я не шучу\n👤 Организатор: ${creator?.name||'—'}${location?'\n📍 '+location:'\n📍 организатор сам не определился'}`);
       }
     }
   }
