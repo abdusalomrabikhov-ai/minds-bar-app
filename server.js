@@ -67,6 +67,11 @@ function updateReviewBadgeSSE() {
 app.use(compression());
 app.use(cors());
 app.use(express.json({ limit: '4mb' }));
+// Versioned assets (app.js?v=N, style.css?v=N) get long-lived cache
+app.use((req, res, next) => {
+  if (req.query.v) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public'), { etag: true, maxAge: '1h' }));
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
@@ -139,7 +144,7 @@ const loginLimiter = rateLimit({
 app.post('/api/auth/login', loginLimiter, (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email и пароль обязательны' });
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase().trim());
+  const user = db.prepare('SELECT id, name, email, password, role, avatar_color, telegram_id, permissions FROM users WHERE email = ?').get(email.toLowerCase().trim());
   if (!user || !bcrypt.compareSync(password, user.password)) {
     return res.status(401).json({ error: 'Неверный email или пароль' });
   }
@@ -1675,11 +1680,13 @@ app.get('/api/activity/user/:id', auth, requirePerm('view_activity'), (req, res)
 
 app.get('/api/users/last-seen', auth, requirePerm('view_activity'), (req, res) => {
   const users = db.prepare(`
-    SELECT id, name, avatar_color, role,
-           last_seen,
-           (SELECT action FROM activity_log WHERE user_id = users.id ORDER BY created_at DESC LIMIT 1) as last_action,
-           (SELECT created_at FROM activity_log WHERE user_id = users.id ORDER BY created_at DESC LIMIT 1) as last_activity_at
-    FROM users ORDER BY last_seen DESC NULLS LAST
+    SELECT u.id, u.name, u.avatar_color, u.role, u.last_seen,
+           al.action as last_action, al.created_at as last_activity_at
+    FROM users u
+    LEFT JOIN activity_log al ON al.id = (
+      SELECT id FROM activity_log WHERE user_id = u.id ORDER BY id DESC LIMIT 1
+    )
+    ORDER BY u.last_seen DESC
   `).all();
   res.json(users);
 });
@@ -1892,7 +1899,8 @@ app.get('/api/finance', auth, requirePerm('manage_finance'), (req, res) => {
   if (payment_type) { where += ' AND payment_type=?'; params.push(payment_type); }
   if (direction)    { where += ' AND direction=?'; params.push(direction); }
   if (search)       { where += ' AND (project_name LIKE ? OR client_name LIKE ?)'; params.push('%'+search+'%','%'+search+'%'); }
-  const rows = db.prepare(`SELECT * FROM finance ${where} ORDER BY created_at DESC`).all(...params);
+  const limit = Math.min(parseInt(req.query.limit) || 500, 1000);
+  const rows = db.prepare(`SELECT * FROM finance ${where} ORDER BY created_at DESC LIMIT ?`).all(...params, limit);
   // Attach payments
   const ids = rows.map(r=>r.id);
   const payments = ids.length ? db.prepare(`SELECT * FROM finance_payments WHERE finance_id IN (${ids.map(()=>'?').join(',')}) ORDER BY payment_date`).all(...ids) : [];

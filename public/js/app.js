@@ -5370,8 +5370,8 @@ async function renderTeamPage() {
 
   const isAdmin = state.user.role === 'admin';
   try {
-    const [users, dashData, userProjects] = await Promise.all([GET('/users'), GET('/dashboard'), GET('/user-projects')]);
-    state.users = users;
+    const [dashData, userProjects] = await Promise.all([GET('/dashboard'), GET('/user-projects')]);
+    const users = state.users;
 
     // Project memberships per user
     const projsByUser = {};
@@ -5674,6 +5674,16 @@ async function openHrEmployeeView(id) {
 }
 
 // ─── Workload page ────────────────────────────────────────────────────────────
+let _workloadCache = null;
+let _workloadCacheTs = 0;
+
+async function _getWorkload(force = false) {
+  if (!force && _workloadCache && Date.now() - _workloadCacheTs < 60000) return _workloadCache;
+  _workloadCache = await GET('/workload');
+  _workloadCacheTs = Date.now();
+  return _workloadCache;
+}
+
 async function _renderWorkloadPage() {
   const content = document.getElementById('page-content');
   const isAdmin = state.user.role === 'admin' || state.user.permissions?.manage_team;
@@ -5689,7 +5699,7 @@ async function _renderWorkloadPage() {
   content.innerHTML = tabsBar + '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
 
   try {
-    const { users, projects, memberships, taskCounts } = await GET('/workload');
+    const { users, projects, memberships, taskCounts } = await _getWorkload();
 
     const projById = Object.fromEntries(projects.map(p => [p.id, p]));
 
@@ -5823,7 +5833,7 @@ async function _renderWorkloadPage() {
 }
 
 async function openAddProjectModal(userId) {
-  const { projects, memberships } = await GET('/workload');
+  const { projects, memberships } = await _getWorkload();
   const assigned = new Set(memberships.filter(m => m.user_id === userId).map(m => m.project_id));
   const available = projects.filter(p => !assigned.has(p.id));
   if (!available.length) { toast('Все проекты уже назначены', 'info'); return; }
@@ -5845,17 +5855,19 @@ async function openAddProjectModal(userId) {
 async function addUserProject(userId, projectId) {
   await api('POST', '/user-projects', { user_id: userId, project_id: projectId });
   closeModal();
+  _workloadCache = null;
   _renderWorkloadPage();
 }
 
 async function removeUserProject(userId, projectId) {
   await api('DELETE', '/user-projects', { user_id: userId, project_id: projectId });
+  _workloadCache = null;
   _renderWorkloadPage();
 }
 
 async function exportWorkloadPDF() {
   try {
-    const { users, projects, memberships, taskCounts } = await GET('/workload');
+    const { users, projects, memberships, taskCounts } = await _getWorkload();
     const projById = Object.fromEntries(projects.map(p => [p.id, p]));
     const memberMap = {};
     for (const m of memberships) {
