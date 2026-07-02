@@ -521,7 +521,7 @@ async function initApp() {
     const navActivity = document.getElementById('nav-activity');
     if (navActivity) navActivity.style.display = '';
   }
-  if (showAdmin) {
+  if (showAdmin || can('review_tasks')) {
     const navReview = document.getElementById('nav-review');
     if (navReview) navReview.style.display = '';
     updateReviewBadge();
@@ -5062,6 +5062,7 @@ const PERM_LABELS = {
   manage_ideahast:  { icon: svgI(SVG_PATHS.bars, 13), text: 'Анализ проектов' },
   manage_kids:      { icon: svgI(SVG_PATHS.users, 13), text: 'Финансы Kids' },
   manage_b2c:       { icon: svgI(SVG_PATHS.users, 13), text: 'Финансы В2С' },
+  review_tasks:     { icon: svgI(SVG_PATHS.check, 13), text: 'Проверка задач' },
 };
 
 function permTags(perms) {
