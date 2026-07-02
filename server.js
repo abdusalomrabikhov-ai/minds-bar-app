@@ -2351,28 +2351,41 @@ app.get('/api/best-employee', auth, (req, res) => {
   const userMap = new Map(users.map(u => [u.id, u]));
 
   // 2 queries total: one for selected month, one for all 12 months history
+  // Use UNION to avoid duplicates: task_assignees rows take priority (have my_done/my_done_at)
+  // single-assignee tasks (no task_assignees row) are covered by the second SELECT
   const taskRowsCurrent = db.prepare(`
-    SELECT DISTINCT t.id, t.status, t.deadline, t.updated_at, t.created_at,
-      COALESCE(ta.user_id, t.assignee_id) AS uid,
-      ta.done AS my_done, ta.done_at AS my_done_at
+    SELECT t.id, t.status, t.deadline, t.updated_at, t.created_at,
+      ta.user_id AS uid, ta.done AS my_done, ta.done_at AS my_done_at
     FROM tasks t
-    LEFT JOIN task_assignees ta ON ta.task_id = t.id
-    WHERE (t.assignee_id IS NOT NULL OR ta.user_id IS NOT NULL)
-      AND strftime('%Y-%m', t.created_at) = ?
-      AND (ta.user_id IN (SELECT id FROM users WHERE role='employee') OR t.assignee_id IN (SELECT id FROM users WHERE role='employee'))
-  `).all(month);
+    JOIN task_assignees ta ON ta.task_id = t.id
+    JOIN users u ON u.id = ta.user_id AND u.role = 'employee'
+    WHERE strftime('%Y-%m', t.created_at) = ?
+    UNION
+    SELECT t.id, t.status, t.deadline, t.updated_at, t.created_at,
+      t.assignee_id AS uid, NULL AS my_done, NULL AS my_done_at
+    FROM tasks t
+    JOIN users u ON u.id = t.assignee_id AND u.role = 'employee'
+    WHERE strftime('%Y-%m', t.created_at) = ?
+      AND NOT EXISTS (SELECT 1 FROM task_assignees ta2 WHERE ta2.task_id = t.id)
+  `).all(month, month);
 
   const taskRowsHistory = db.prepare(`
-    SELECT DISTINCT t.id, t.status, t.deadline, t.updated_at, t.created_at,
+    SELECT t.id, t.status, t.deadline, t.updated_at, t.created_at,
       strftime('%Y-%m', t.created_at) AS month,
-      COALESCE(ta.user_id, t.assignee_id) AS uid,
-      ta.done AS my_done, ta.done_at AS my_done_at
+      ta.user_id AS uid, ta.done AS my_done, ta.done_at AS my_done_at
     FROM tasks t
-    LEFT JOIN task_assignees ta ON ta.task_id = t.id
-    WHERE (t.assignee_id IS NOT NULL OR ta.user_id IS NOT NULL)
-      AND t.created_at >= ?
-      AND (ta.user_id IN (SELECT id FROM users WHERE role='employee') OR t.assignee_id IN (SELECT id FROM users WHERE role='employee'))
-  `).all(historyFrom);
+    JOIN task_assignees ta ON ta.task_id = t.id
+    JOIN users u ON u.id = ta.user_id AND u.role = 'employee'
+    WHERE t.created_at >= ?
+    UNION
+    SELECT t.id, t.status, t.deadline, t.updated_at, t.created_at,
+      strftime('%Y-%m', t.created_at) AS month,
+      t.assignee_id AS uid, NULL AS my_done, NULL AS my_done_at
+    FROM tasks t
+    JOIN users u ON u.id = t.assignee_id AND u.role = 'employee'
+    WHERE t.created_at >= ?
+      AND NOT EXISTS (SELECT 1 FROM task_assignees ta2 WHERE ta2.task_id = t.id)
+  `).all(historyFrom, historyFrom);
 
   function computeStats(taskRows, forMonth) {
     // Group by uid
