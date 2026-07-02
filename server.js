@@ -731,6 +731,15 @@ app.get('/api/tasks', auth, (req, res) => {
   res.json({ tasks, total, page, pages: Math.ceil(total / limit) || 1 });
 });
 
+// ─── Task Review (Approve / Reject) ───────────────────────────────────────────
+app.get('/api/tasks/pending-review', auth, (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Нет доступа' });
+  const tasks = enrichTasksWithAssignees(
+    getTaskQuery(" AND t.status = 'pending_review' AND t.created_by = ?", [req.user.id])
+  );
+  res.json(tasks);
+});
+
 app.get('/api/tasks/:id', auth, (req, res) => {
   const taskId = parseInt(req.params.id);
   if (!taskId) return res.status(400).json({ error: 'Invalid id' });
@@ -1024,15 +1033,6 @@ app.delete('/api/tasks/:id', auth, (req, res) => {
   sendSSEAll({ type: 'task_deleted', id: parseInt(req.params.id) });
   logActivity(req.user.id, 'task_deleted', 'task', parseInt(req.params.id), task?.title);
   res.json({ ok: true });
-});
-
-// ─── Task Review (Approve / Reject) ───────────────────────────────────────────
-app.get('/api/tasks/pending-review', auth, (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Нет доступа' });
-  const tasks = enrichTasksWithAssignees(
-    getTaskQuery(" AND t.status = 'pending_review' AND t.created_by = ?", [req.user.id])
-  );
-  res.json(tasks);
 });
 
 app.post('/api/tasks/:id/approve', auth, (req, res) => {
