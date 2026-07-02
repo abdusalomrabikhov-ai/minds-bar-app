@@ -40,6 +40,11 @@ function initDB() {
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_comments_task ON comments(task_id)'); } catch {}
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_status_deadline ON tasks(status, deadline)'); } catch {}
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_task_history_task ON task_history(task_id)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_content_plan_project ON content_plan(project_id)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_finance_month ON finance(month)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_expenses_month ON expenses(month)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_source_content ON tasks(source_content_id)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, read)'); } catch {}
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (

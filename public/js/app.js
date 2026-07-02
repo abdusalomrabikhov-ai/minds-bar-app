@@ -14,6 +14,18 @@ const state = {
   notifCount: 0,
 };
 
+// ─── Lazy XLSX loader ────────────────────────────────────────────────────────
+async function ensureXLSX() {
+  if (window.XLSX) return;
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
 // ─── API ─────────────────────────────────────────────────────────────────────
 async function api(method, path, body) {
   const res = await fetch('/api' + path, {
@@ -498,9 +510,9 @@ async function initApp() {
   document.getElementById('app-screen').classList.remove('hidden');
   applyTheme(localStorage.getItem('tt_dark') === '1');
 
-  // Fetch fresh user data (including permissions)
+  // Fetch fresh user data + shared data in parallel
   try {
-    const me = await GET('/auth/me');
+    const [me] = await Promise.all([GET('/auth/me'), loadSharedData()]);
     state.user = { ...state.user, ...me };
     localStorage.setItem('tt_user', JSON.stringify(state.user));
   } catch {}
@@ -531,8 +543,6 @@ async function initApp() {
   document.getElementById('sidebar-role').textContent = roleLabel(u).text;
   const av = document.getElementById('sidebar-avatar');
   updateSidebarAvatar(u);
-
-  await loadSharedData();
   setupNavigation();
   setupProjectsToggle();
   setupSSE();
@@ -880,18 +890,24 @@ function refreshCurrentPage() {
   }
 }
 
+let _dashDebounce = null;
+function debouncedRenderDashboard() {
+  clearTimeout(_dashDebounce);
+  _dashDebounce = setTimeout(() => { if (state.currentPage === 'dashboard') renderDashboard(); }, 600);
+}
+
 function handleSSEEvent(event) {
   switch (event.type) {
     case 'new_task':
     case 'notification':
       checkNotifCount();
       toast(event.message || 'Новое уведомление', 'success');
-      if (state.currentPage === 'dashboard') renderDashboard();
+      debouncedRenderDashboard();
       if (state.currentPage === 'tasks' || state.currentPage === 'mytasks') renderTasksPage();
       break;
     case 'task_updated':
       checkNotifCount();
-      if (state.currentPage === 'dashboard') renderDashboard();
+      debouncedRenderDashboard();
       if (state.currentPage === 'tasks' || state.currentPage === 'mytasks') renderTasksPage();
       if (state.currentPage === 'project') renderProjectPage(state.currentProjectId);
       break;
@@ -909,18 +925,18 @@ function handleSSEEvent(event) {
     case 'task_rejected':
       checkNotifCount();
       toast(event.message || (event.type === 'task_approved' ? 'Задача принята' : 'Задача возвращена на доработку'), event.type === 'task_approved' ? 'success' : 'info');
-      if (state.currentPage === 'dashboard') renderDashboard();
+      debouncedRenderDashboard();
       if (state.currentPage === 'tasks' || state.currentPage === 'mytasks') renderTasksPage();
       break;
     case 'status_changed':
       checkNotifCount();
       toast(event.message || 'Статус задачи изменён');
-      if (state.currentPage === 'dashboard') renderDashboard();
+      debouncedRenderDashboard();
       if (state.currentPage === 'tasks' || state.currentPage === 'mytasks') renderTasksPage();
       if (state.currentPage === 'project') renderProjectPage(state.currentProjectId);
       break;
     case 'task_deleted':
-      if (state.currentPage === 'dashboard') renderDashboard();
+      debouncedRenderDashboard();
       if (state.currentPage === 'tasks' || state.currentPage === 'mytasks') renderTasksPage();
       if (state.currentPage === 'project') renderProjectPage(state.currentProjectId);
       break;
@@ -928,14 +944,14 @@ function handleSSEEvent(event) {
     case 'project_updated':
     case 'project_deleted':
       loadSharedData().then(() => {
-        if (state.currentPage === 'dashboard') renderDashboard();
+        debouncedRenderDashboard();
         if (event.type === 'project_deleted' && String(state.currentProjectId) === String(event.id)) navigateTo('dashboard');
       });
       break;
     case 'project_deleted_notify':
       toast(event.message || 'Проект удалён, ваши задачи удалены', 'error');
       if (state.currentPage === 'tasks' || state.currentPage === 'mytasks') renderTasksPage();
-      if (state.currentPage === 'dashboard') renderDashboard();
+      debouncedRenderDashboard();
       break;
   }
 }
@@ -2488,7 +2504,7 @@ async function importContentExcel(input, projectId) {
   const file = input.files[0];
   if (!file) return;
   input.value = '';
-  if (typeof XLSX === 'undefined') { toast('Библиотека Excel не загружена', 'error'); return; }
+  await ensureXLSX();
   try {
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(new Uint8Array(buf), { type: 'array' });
@@ -9012,6 +9028,7 @@ function deleteFinance(id) {
 }
 
 async function exportFinanceProjectsExcel() {
+  await ensureXLSX();
   const data = await GET('/finance/by-project');
   if (!data.length) return toast('Нет данных', 'error');
   const rows = data.map((r,i) => ({ '№':i+1, 'Проект':r.project_name, 'Записей':r.count, 'Сумма услуг':+r.total_service, 'Оплачено':+r.total_paid, 'Задолженность':(+r.total_service-+r.total_paid), '%':r.total_service>0?Math.round(r.total_paid/r.total_service*100):0 }));
@@ -9032,6 +9049,7 @@ function exportFinanceProjectsPDF() {
 }
 
 async function exportFinanceAnnualExcel(year) {
+  await ensureXLSX();
   const data = await GET('/finance/annual?year=' + year);
   const MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   const rows = Array.from({length:12},(_,i)=>{
@@ -9057,6 +9075,7 @@ function exportFinanceAnnualPDF(year) {
 }
 
 async function exportFinanceExcel() {
+  await ensureXLSX();
   try {
     const rows = await GET('/finance?month=' + _finMonth);
     if (!rows.length) return toast('Нет данных для экспорта', 'error');
@@ -9839,6 +9858,7 @@ async function deleteSecPayment(sec,id,courseId){
   await DEL(`/${_secState[sec].api}/payments/${id}`); closeModal(); renderSectionCourse(sec,courseId); toast('Удалено','success');
 }
 async function exportSecExcel(sec,courseId){
+  await ensureXLSX();
   const s=_secState[sec];
   const [courses,payments]=await Promise.all([GET(`/${s.api}/courses`),GET(`/${s.api}/courses/${courseId}/payments`)]);
   const course=courses.find(c=>c.id===courseId);
@@ -10354,6 +10374,7 @@ async function deleteB2CPayment(id, courseId) {
 }
 
 async function exportB2CExcel(courseId) {
+  await ensureXLSX();
   const [courses, payments] = await Promise.all([GET('/b2c/courses'), GET(`/b2c/courses/${courseId}/payments`)]);
   const course = courses.find(c=>c.id===courseId);
   const data = payments.map((p,i)=>({ '№':i+1, 'ФИО':p.student_name, 'Статус':B2C_STATUS[p.status]||p.status, 'Контакт':p.phone, 'Сумма':+p.amount, 'Способ оплаты':B2C_METHOD[p.payment_method]||p.payment_method, 'Принимал':p.received_by, 'Дата':p.payment_date, 'Комментарий':p.comment }));

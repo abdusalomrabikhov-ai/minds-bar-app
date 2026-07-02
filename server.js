@@ -817,15 +817,16 @@ app.post('/api/tasks', auth, (req, res) => {
 
   const task = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [result.lastInsertRowid]))[0];
 
+  const telegramMapCreate = ids.length > 0
+    ? new Map(db.prepare(`SELECT id, telegram_id FROM users WHERE id IN (${ids.map(()=>'?').join(',')})`).all(...ids).map(u => [u.id, u.telegram_id]))
+    : new Map();
   ids.forEach(uid => {
     const message = `Вам назначена задача: «${task.title}»`;
     db.prepare(`INSERT INTO notifications (user_id, task_id, type, message) VALUES (?, ?, 'new_task', ?)`)
       .run(uid, task.id, message);
     sendSSE(uid, { type: 'new_task', task, message });
-    const assignee = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(uid);
-    if (assignee?.telegram_id) {
-      sendTelegramNewTask(assignee.telegram_id, task);
-    }
+    const tgId = telegramMapCreate.get(uid);
+    if (tgId) sendTelegramNewTask(tgId, task);
   });
 
   logActivity(req.user.id, 'task_created', 'task', task.id, task.title);
@@ -884,15 +885,16 @@ app.put('/api/tasks/:id', auth, (req, res) => {
   // Notify new assignees (Telegram only for new task assignment)
   const prevAssigneeId = existing.assignee_id;
   const notifyNew = newIds ? newIds.filter(uid => uid !== prevAssigneeId) : (assignee_id && assignee_id !== prevAssigneeId ? [assignee_id] : []);
+  const telegramMapUpdate = notifyNew.length > 0
+    ? new Map(db.prepare(`SELECT id, telegram_id FROM users WHERE id IN (${notifyNew.map(()=>'?').join(',')})`).all(...notifyNew).map(u => [u.id, u.telegram_id]))
+    : new Map();
   notifyNew.forEach(uid => {
     const message = `Вам назначена задача: «${task.title}»`;
     db.prepare(`INSERT INTO notifications (user_id, task_id, type, message) VALUES (?, ?, 'new_task', ?)`)
       .run(uid, task.id, message);
     sendSSE(uid, { type: 'new_task', task, message });
-    const assignee = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(uid);
-    if (assignee?.telegram_id) {
-      sendTelegramNewTask(assignee.telegram_id, task);
-    }
+    const tgId = telegramMapUpdate.get(uid);
+    if (tgId) sendTelegramNewTask(tgId, task);
   });
 
   // Notify creator + all admins on status change (in-app only, no Telegram)
@@ -1481,6 +1483,17 @@ app.get('/api/reports/analytics', auth, requirePerm('reports'), (req, res) => {
   const toMs    = new Date(toDate).getTime();
   const spanMs  = toMs - fromMs;
   const weekCount = Math.max(1, Math.ceil(spanMs / (7 * 86400000)));
+
+  // Weekly trend: 2 batch queries instead of 2×N per-week queries
+  const weeklyCreated = db.prepare(
+    `SELECT date(created_at) as day, COUNT(*) as cnt FROM tasks WHERE date(created_at) > ? AND date(created_at) <= ? GROUP BY day`
+  ).all(fromDate, toDate);
+  const weeklyDone = db.prepare(
+    `SELECT date(updated_at) as day, COUNT(*) as cnt FROM tasks WHERE status='done' AND date(updated_at) > ? AND date(updated_at) <= ? GROUP BY day`
+  ).all(fromDate, toDate);
+  const createdByDay = new Map(weeklyCreated.map(r => [r.day, r.cnt]));
+  const doneByDay    = new Map(weeklyDone.map(r => [r.day, r.cnt]));
+
   const weeks = [];
   for (let w = weekCount - 1; w >= 0; w--) {
     const wEnd   = new Date(toMs - w * 7 * 86400000);
@@ -1488,29 +1501,27 @@ app.get('/api/reports/analytics', auth, requirePerm('reports'), (req, res) => {
     const wStartStr = wStart.toISOString().slice(0, 10);
     const wEndStr   = wEnd.toISOString().slice(0, 10);
     const label = wStartStr.slice(5);
-
-    const created = db.prepare(
-      `SELECT COUNT(*) as cnt FROM tasks WHERE date(created_at) > ? AND date(created_at) <= ?`
-    ).get(wStartStr, wEndStr).cnt;
-
-    const done = db.prepare(
-      `SELECT COUNT(*) as cnt FROM tasks WHERE status='done' AND date(updated_at) > ? AND date(updated_at) <= ?`
-    ).get(wStartStr, wEndStr).cnt;
-
+    let created = 0, done = 0;
+    for (const [day, cnt] of createdByDay) { if (day > wStartStr && day <= wEndStr) created += cnt; }
+    for (const [day, cnt] of doneByDay)    { if (day > wStartStr && day <= wEndStr) done    += cnt; }
     weeks.push({ label, created, done });
   }
 
-  // Burndown: cumulative open tasks over time within period
-  const burndown = [];
+  // Burndown: 1 batch query instead of 1 per bucket (up to 365)
   const bucketDays = days <= 30 ? 1 : 7;
   const buckets = Math.ceil(days / bucketDays);
+  const burndownRows = db.prepare(`
+    SELECT date(created_at) as created_day, date(updated_at) as done_day, status FROM tasks
+    WHERE date(created_at) >= ? AND date(created_at) <= ?
+  `).all(fromDate, toDate);
+
+  const burndown = [];
   for (let i = buckets - 1; i >= 0; i--) {
     const atDate = new Date(toMs - i * bucketDays * 86400000).toISOString().slice(0, 10);
-    const open = db.prepare(`
-      SELECT COUNT(*) as cnt FROM tasks
-      WHERE date(created_at) <= ? AND date(created_at) >= ?
-        AND (status != 'done' OR date(updated_at) > ?)
-    `).get(atDate, fromDate, atDate).cnt;
+    const open = burndownRows.filter(t =>
+      t.created_day <= atDate && t.created_day >= fromDate &&
+      (t.status !== 'done' || t.done_day > atDate)
+    ).length;
     burndown.push({ label: atDate.slice(5), open });
   }
 
@@ -1551,13 +1562,17 @@ app.get('/api/reports/analytics/pdf', auth, requirePerm('reports'), async (req, 
     }
 
     const weekCount = Math.ceil(days / 7);
+    const pdfToDate = nowLocal.toISOString().slice(0, 10);
+    const pdfCreatedByDay = new Map(db.prepare(`SELECT date(created_at) as day, COUNT(*) as cnt FROM tasks WHERE date(created_at)>? AND date(created_at)<=? GROUP BY day`).all(fromDate, pdfToDate).map(r => [r.day, r.cnt]));
+    const pdfDoneByDay    = new Map(db.prepare(`SELECT date(updated_at) as day, COUNT(*) as cnt FROM tasks WHERE status='done' AND date(updated_at)>? AND date(updated_at)<=? GROUP BY day`).all(fromDate, pdfToDate).map(r => [r.day, r.cnt]));
     const weeks = [];
     for (let w = weekCount-1; w >= 0; w--) {
       const wEnd   = new Date(nowLocal.getTime() - w*7*86400000);
       const wStart = new Date(wEnd.getTime() - 7*86400000);
       const ws = wStart.toISOString().slice(0,10), we = wEnd.toISOString().slice(0,10);
-      const created = db.prepare(`SELECT COUNT(*) as cnt FROM tasks WHERE date(created_at)>? AND date(created_at)<=?`).get(ws,we).cnt;
-      const done    = db.prepare(`SELECT COUNT(*) as cnt FROM tasks WHERE status='done' AND date(updated_at)>? AND date(updated_at)<=?`).get(ws,we).cnt;
+      let created = 0, done = 0;
+      for (const [day, cnt] of pdfCreatedByDay) { if (day > ws && day <= we) created += cnt; }
+      for (const [day, cnt] of pdfDoneByDay)    { if (day > ws && day <= we) done    += cnt; }
       weeks.push({ label: ws.slice(5), created, done });
     }
 
@@ -2322,31 +2337,56 @@ app.delete('/api/feedback/:id', auth, adminOnly, (req, res) => {
 // ─── Best Employee ────────────────────────────────────────────────────────────
 app.get('/api/best-employee', auth, (req, res) => {
   const month = req.query.month || localMonth();
+  const nowIso = localNowT();
 
-  function calcMonth(m) {
-    const users = db.prepare("SELECT id, name, avatar_color FROM users WHERE role='employee' ORDER BY name").all();
-    return users.map(u => {
-      // Fetch tasks created in month m (same filter as /api/reports)
-      const rows = db.prepare(`
-        SELECT DISTINCT t.id, t.status, t.deadline, t.updated_at,
-          ta.done     AS my_done,
-          ta.done_at  AS my_done_at
-        FROM tasks t
-        LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
-        WHERE (t.assignee_id = ? OR ta.user_id = ?)
-          AND strftime('%Y-%m', t.created_at) = ?
-      `).all(u.id, u.id, u.id, m);
+  // Compute the start of the 12-month history window
+  const now12 = new Date(Date.now() + 5*3600000);
+  const historyFrom = `${new Date(now12.getFullYear(), now12.getMonth() - 11, 1).toISOString().slice(0, 7)}-01`;
 
-      const nowIso = localNowT();
+  // 1 query: all users
+  const users = db.prepare("SELECT id, name, avatar_color FROM users WHERE role='employee' ORDER BY name").all();
+  const userMap = new Map(users.map(u => [u.id, u]));
 
-      // Determine effective completion for each task:
-      // - multi-assignee: use ta.done + ta.done_at (this user's individual completion)
-      // - single-assignee: use tasks.status + tasks.updated_at
+  // 2 queries total: one for selected month, one for all 12 months history
+  const taskRowsCurrent = db.prepare(`
+    SELECT DISTINCT t.id, t.status, t.deadline, t.updated_at, t.created_at,
+      COALESCE(ta.user_id, t.assignee_id) AS uid,
+      ta.done AS my_done, ta.done_at AS my_done_at
+    FROM tasks t
+    LEFT JOIN task_assignees ta ON ta.task_id = t.id
+    WHERE (t.assignee_id IS NOT NULL OR ta.user_id IS NOT NULL)
+      AND strftime('%Y-%m', t.created_at) = ?
+      AND (ta.user_id IN (SELECT id FROM users WHERE role='employee') OR t.assignee_id IN (SELECT id FROM users WHERE role='employee'))
+  `).all(month);
+
+  const taskRowsHistory = db.prepare(`
+    SELECT DISTINCT t.id, t.status, t.deadline, t.updated_at, t.created_at,
+      strftime('%Y-%m', t.created_at) AS month,
+      COALESCE(ta.user_id, t.assignee_id) AS uid,
+      ta.done AS my_done, ta.done_at AS my_done_at
+    FROM tasks t
+    LEFT JOIN task_assignees ta ON ta.task_id = t.id
+    WHERE (t.assignee_id IS NOT NULL OR ta.user_id IS NOT NULL)
+      AND t.created_at >= ?
+      AND (ta.user_id IN (SELECT id FROM users WHERE role='employee') OR t.assignee_id IN (SELECT id FROM users WHERE role='employee'))
+  `).all(historyFrom);
+
+  function computeStats(taskRows, forMonth) {
+    // Group by uid
+    const byUser = new Map();
+    for (const t of taskRows) {
+      const uid = t.uid;
+      if (!uid || !userMap.has(uid)) continue;
+      if (!byUser.has(uid)) byUser.set(uid, []);
+      byUser.get(uid).push(t);
+    }
+    const result = [];
+    for (const [uid, rows] of byUser) {
+      const u = userMap.get(uid);
       const enriched = rows.map(t => {
-        const isDone   = t.status === 'done' || t.my_done === 1;
-        const doneAt   = t.status === 'done' ? t.updated_at : (t.my_done === 1 ? t.my_done_at : null);
+        const isDone  = t.status === 'done' || t.my_done === 1;
+        const doneAt  = t.status === 'done' ? t.updated_at : (t.my_done === 1 ? t.my_done_at : null);
         const doneNorm = doneAt ? doneAt.replace(' ', 'T') : null;
-        // onTime/late only possible when task has a deadline
         let onTime = false, late = false, overdue = false;
         if (t.deadline) {
           const dlRaw  = t.deadline.replace(' ', 'T');
@@ -2355,41 +2395,39 @@ app.get('/api/best-employee', auth, (req, res) => {
           late    = isDone && doneNorm !== null && doneNorm > dlNorm;
           overdue = !isDone && dlNorm < nowIso;
         }
-        return { ...t, isDone, onTime, late, overdue };
+        return { isDone, onTime, late, overdue, deadline: t.deadline };
       });
-
       const total      = enriched.length;
       const doneOnTime = enriched.filter(t => t.onTime).length;
       const doneLate   = enriched.filter(t => t.late).length;
       const overdue    = enriched.filter(t => t.overdue).length;
       const done       = enriched.filter(t => t.isDone).length;
-      // Efficiency same formula as /api/reports: based on tasks with deadline
       const dlTotal    = enriched.filter(t => t.deadline).length;
       const score = dlTotal > 0
         ? Math.round((doneOnTime * 100 + doneLate * 50) / dlTotal)
         : (total > 0 ? Math.round(done / total * 100) : null);
-
-      // Ranking score = absolute completions × (1 + efficiency)
-      // This rewards MORE tasks done even at lower %, over fewer tasks at 100%
-      // Example: 9 done × (1 + 0.53) = 13.77 > 2 done × (1 + 1.0) = 4.0
       const rankScore = doneOnTime * (1 + (score || 0) / 100);
-
-      return { ...u, total, done, doneOnTime, doneLate, overdue, score, rankScore };
-    }).filter(u => u.total > 0)
+      result.push({ ...u, total, done, doneOnTime, doneLate, overdue, score, rankScore });
+    }
+    return result.filter(u => u.total > 0)
       .sort((a, b) => (b.rankScore ?? -1) - (a.rankScore ?? -1) || b.doneOnTime - a.doneOnTime || a.overdue - b.overdue);
   }
 
-  // Current selected month
-  const current = calcMonth(month);
+  const current = computeStats(taskRowsCurrent, month);
 
-  // History: last 12 months, find winner of each
+  // Build history: group history rows by month, compute winner for each
+  const byMonth = new Map();
+  for (const t of taskRowsHistory) {
+    if (!byMonth.has(t.month)) byMonth.set(t.month, []);
+    byMonth.get(t.month).push(t);
+  }
+
   const history = [];
-  const now = new Date(Date.now() + 5*3600000); // Dushanbe local time
   for (let i = 0; i < 12; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const d = new Date(now12.getFullYear(), now12.getMonth() - i, 1);
     const m = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
     if (m === month && i === 0) { history.push({ month: m, winner: current[0] || null }); continue; }
-    const ranked = calcMonth(m);
+    const ranked = computeStats(byMonth.get(m) || [], m);
     if (ranked.length > 0) history.push({ month: m, winner: ranked[0] });
   }
 
