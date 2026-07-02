@@ -736,7 +736,7 @@ app.get('/api/tasks/pending-review', auth, (req, res) => {
   const canReview = req.user.role === 'admin' || can(req, 'review_tasks');
   if (!canReview) return res.status(403).json({ error: 'Нет доступа' });
   const tasks = enrichTasksWithAssignees(
-    getTaskQuery(" AND t.status = 'pending_review'", [])
+    getTaskQuery(" AND t.status = 'pending_review' AND t.created_by = ?", [req.user.id])
   );
   res.json(tasks);
 });
@@ -1040,6 +1040,7 @@ app.post('/api/tasks/:id/approve', auth, (req, res) => {
   if (req.user.role !== 'admin' && !can(req, 'review_tasks')) return res.status(403).json({ error: 'Нет доступа' });
   const existing = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Не найдено' });
+  if (req.user.role !== 'admin' && existing.created_by !== req.user.id) return res.status(403).json({ error: 'Нет доступа' });
   if (existing.status !== 'pending_review') return res.status(400).json({ error: 'Задача не ожидает проверки' });
 
   db.prepare("UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?").run(localNow(), req.params.id);
@@ -1065,6 +1066,7 @@ app.post('/api/tasks/:id/reject', auth, (req, res) => {
   if (req.user.role !== 'admin' && !can(req, 'review_tasks')) return res.status(403).json({ error: 'Нет доступа' });
   const existing = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Не найдено' });
+  if (req.user.role !== 'admin' && existing.created_by !== req.user.id) return res.status(403).json({ error: 'Нет доступа' });
   if (existing.status !== 'pending_review') return res.status(400).json({ error: 'Задача не ожидает проверки' });
 
   const { comment } = req.body;
