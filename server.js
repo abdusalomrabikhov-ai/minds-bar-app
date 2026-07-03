@@ -717,8 +717,8 @@ app.get('/api/tasks', auth, (req, res) => {
   }
   if (status) { where += ' AND t.status = ?'; params.push(status); }
   if (req.query.overdue === '1') {
-    const nowLocal = new Date(Date.now() + 5 * 3600000).toISOString().slice(0, 10);
-    where += " AND t.status != 'done' AND t.deadline IS NOT NULL AND t.deadline != '' AND substr(t.deadline,1,10) < ?";
+    const nowLocal = new Date(Date.now() + 5 * 3600000).toISOString().slice(0, 16).replace('T', ' ');
+    where += " AND t.status != 'done' AND t.deadline IS NOT NULL AND t.deadline != '' AND (CASE WHEN length(t.deadline) > 10 THEN replace(t.deadline,'T',' ') ELSE t.deadline || ' 23:59' END) < ?";
     params.push(nowLocal);
   }
   if (req.query.priority) { where += ' AND t.priority = ?'; params.push(req.query.priority); }
