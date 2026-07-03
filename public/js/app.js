@@ -5474,6 +5474,7 @@ function teamSetTab(t) {
 async function renderTeamPage() {
   if (_teamTab === 'hr') { await _renderHrPage(); return; }
   if (_teamTab === 'workload') { await _renderWorkloadPage(); return; }
+  if (_teamTab === 'archived') { await _renderArchivedUsersPage(); return; }
 
   const isAdmin = state.user.role === 'admin';
   try {
@@ -5499,6 +5500,7 @@ async function renderTeamPage() {
         <button class="fin-tab ${_teamTab==='members'?'active':''}" onclick="teamSetTab('members')">Сотрудники</button>
         ${canManageHr ? `<button class="fin-tab ${_teamTab==='hr'?'active':''}" onclick="teamSetTab('hr')">Кадры</button>` : ''}
         <button class="fin-tab ${_teamTab==='workload'?'active':''}" onclick="teamSetTab('workload')">Нагрузка</button>
+        ${isAdmin ? `<button class="fin-tab ${_teamTab==='archived'?'active':''}" onclick="teamSetTab('archived')">Архив</button>` : ''}
       </div>
       <div class="section-header" style="margin-top:16px">
         <div class="section-title">Участники команды (${users.length})</div>
@@ -5545,7 +5547,7 @@ async function renderTeamPage() {
             ${isAdmin && u.role !== 'admin' ? `
               <div class="member-actions" onclick="event.stopPropagation()">
                 <button class="btn btn-outline btn-sm" onclick="openUserModal(${u.id})" style="display:inline-flex;align-items:center;gap:4px">${svgI(SVG_PATHS.edit,13)} Права</button>
-                <button class="btn btn-danger btn-sm" onclick="deleteUser(${u.id})" style="display:inline-flex;align-items:center;gap:4px">${svgI(SVG_PATHS.trash,13)}</button>
+                <button class="btn btn-danger btn-sm" onclick="archiveUser(${u.id})" title="Архивировать" style="display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg></button>
               </div>
             ` : ''}
           </div>
@@ -5554,6 +5556,51 @@ async function renderTeamPage() {
     `;
   } catch (err) {
     document.getElementById('page-content').innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
+  }
+}
+
+async function _renderArchivedUsersPage() {
+  const isAdmin = state.user.role === 'admin';
+  const canManageHr = isAdmin || (state.user.permissions?.manage_team);
+  const content = document.getElementById('page-content');
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  try {
+    const users = await GET('/users?archived=1');
+    content.innerHTML = `
+      <div class="team-tabs-bar">
+        <button class="fin-tab ${_teamTab==='members'?'active':''}" onclick="teamSetTab('members')">Сотрудники</button>
+        ${canManageHr ? `<button class="fin-tab ${_teamTab==='hr'?'active':''}" onclick="teamSetTab('hr')">Кадры</button>` : ''}
+        <button class="fin-tab ${_teamTab==='workload'?'active':''}" onclick="teamSetTab('workload')">Нагрузка</button>
+        ${isAdmin ? `<button class="fin-tab ${_teamTab==='archived'?'active':''}" onclick="teamSetTab('archived')">Архив</button>` : ''}
+      </div>
+      <div class="section-header" style="margin-top:16px">
+        <div class="section-title">Архив сотрудников (${users.length})</div>
+      </div>
+      ${users.length === 0 ? '<div class="empty-state"><p>Архив пуст</p></div>' : `
+      <div class="team-grid" id="team-grid">
+        ${users.map(u => {
+          const rl = roleLabel(u);
+          return `
+          <div class="member-card" style="opacity:.7" data-name="${(u.name+' '+u.email).toLowerCase()}">
+            <div style="position:absolute;top:10px;right:10px;background:#f97316;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px">Архив</div>
+            ${avatar(u.name, u.avatar_color, 'avatar-lg', u.avatar_img || '')}
+            <div class="member-name">${u.name}</div>
+            <div class="member-email">${u.email}</div>
+            <span class="member-role ${rl.cls}">${rl.text}</span>
+            <div class="member-actions" onclick="event.stopPropagation()" style="margin-top:auto">
+              <button class="btn btn-outline btn-sm" onclick="unarchiveUser(${u.id})" style="display:inline-flex;align-items:center;gap:4px">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.47"/></svg>
+                Восстановить
+              </button>
+              <button class="btn btn-danger btn-sm" onclick="deleteUser(${u.id})" title="Удалить навсегда" style="display:inline-flex;align-items:center;gap:4px">${svgI(SVG_PATHS.trash,13)}</button>
+            </div>
+          </div>
+        `}).join('')}
+      </div>
+      `}
+    `;
+  } catch (err) {
+    content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
   }
 }
 
@@ -5610,6 +5657,7 @@ async function _renderHrPage() {
         <button class="fin-tab ${_teamTab==='members'?'active':''}" onclick="teamSetTab('members')">Сотрудники</button>
         <button class="fin-tab ${_teamTab==='hr'?'active':''}" onclick="teamSetTab('hr')">Кадры</button>
         <button class="fin-tab ${_teamTab==='workload'?'active':''}" onclick="teamSetTab('workload')">Нагрузка</button>
+        ${isAdmin ? `<button class="fin-tab ${_teamTab==='archived'?'active':''}" onclick="teamSetTab('archived')">Архив</button>` : ''}
       </div>
       <div class="hr-wrap">
         <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 10px">
@@ -5801,6 +5849,7 @@ async function _renderWorkloadPage() {
       <button class="fin-tab ${_teamTab==='members'?'active':''}" onclick="teamSetTab('members')">Сотрудники</button>
       ${canManageHr ? `<button class="fin-tab ${_teamTab==='hr'?'active':''}" onclick="teamSetTab('hr')">Кадры</button>` : ''}
       <button class="fin-tab ${_teamTab==='workload'?'active':''}" onclick="teamSetTab('workload')">Нагрузка</button>
+      ${isAdmin ? `<button class="fin-tab ${_teamTab==='archived'?'active':''}" onclick="teamSetTab('archived')">Архив</button>` : ''}
     </div>`;
 
   content.innerHTML = tabsBar + '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
@@ -6633,8 +6682,29 @@ async function openUserModal(userId = null) {
   });
 }
 
+async function archiveUser(userId) {
+  const ok = await showConfirmModal({ title: 'Архивировать сотрудника?', message: 'Сотрудник будет скрыт из команды. Восстановить можно из вкладки «Архив».', confirmLabel: 'Архивировать', confirmClass: 'btn-primary' });
+  if (!ok) return;
+  try {
+    await PUT('/users/' + userId + '/archive', { archived: true });
+    await loadSharedData();
+    toast('Сотрудник архивирован', 'success');
+    renderTeamPage();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function unarchiveUser(userId) {
+  try {
+    await PUT('/users/' + userId + '/archive', { archived: false });
+    await loadSharedData();
+    toast('Сотрудник восстановлен', 'success');
+    renderTeamPage();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 async function deleteUser(userId) {
-  if (!confirm('Удалить сотрудника?')) return;
+  const ok = await showConfirmModal({ title: 'Удалить сотрудника навсегда?', message: 'Это действие необратимо. Все данные будут потеряны.', confirmLabel: 'Удалить' });
+  if (!ok) return;
   try {
     await DEL('/users/' + userId);
     await loadSharedData();

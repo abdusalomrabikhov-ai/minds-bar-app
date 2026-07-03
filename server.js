@@ -1194,10 +1194,11 @@ app.post('/api/tasks/:id/comments', auth, (req, res) => {
 
 app.get('/api/users', auth, (req, res) => {
   const full = req.query.full === '1';
+  const showArchived = req.query.archived === '1';
   const cols = full
-    ? 'id, name, email, role, avatar_color, avatar_img, telegram_id, permissions'
-    : 'id, name, email, role, avatar_color, telegram_id, permissions';
-  const users = db.prepare(`SELECT ${cols} FROM users ORDER BY name`).all();
+    ? 'id, name, email, role, avatar_color, avatar_img, telegram_id, permissions, archived'
+    : 'id, name, email, role, avatar_color, telegram_id, permissions, archived';
+  const users = db.prepare(`SELECT ${cols} FROM users WHERE archived = ${showArchived ? 1 : 0} ORDER BY name`).all();
   res.json(users.map(u => ({ ...u, permissions: parsePerms(u.permissions) })));
 });
 
@@ -1240,6 +1241,18 @@ app.put('/api/users/:id', auth, (req, res) => {
     req.params.id
   );
   logActivity(req.user.id, 'user_updated', 'user', parseInt(req.params.id), name || user.name);
+  res.json({ ok: true });
+});
+
+app.put('/api/users/:id/archive', auth, adminOnly, (req, res) => {
+  if (parseInt(req.params.id) === req.user.id) {
+    return res.status(400).json({ error: 'Нельзя архивировать себя' });
+  }
+  const { archived } = req.body;
+  const user = db.prepare('SELECT name FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+  db.prepare('UPDATE users SET archived = ? WHERE id = ?').run(archived ? 1 : 0, req.params.id);
+  logActivity(req.user.id, archived ? 'user_archived' : 'user_unarchived', 'user', parseInt(req.params.id), user.name);
   res.json({ ok: true });
 });
 

@@ -1081,6 +1081,7 @@ input, textarea, select { font: inherit; }
   background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border);
   padding: 20px 16px; display: flex; flex-direction: column; align-items: center;
   gap: 9px; box-shadow: var(--shadow); text-align: center; transition: var(--transition);
+  position: relative;
 }
 .member-card.clickable { cursor: pointer; }
 .member-card.clickable:hover { box-shadow: var(--shadow-md); border-color: var(--primary-border); transform: translateY(-2px); }
