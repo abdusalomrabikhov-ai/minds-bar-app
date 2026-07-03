@@ -67,9 +67,10 @@ function updateReviewBadgeSSE() {
 app.use(compression());
 app.use(cors());
 app.use(express.json({ limit: '4mb' }));
-// Versioned assets (app.js?v=N, style.css?v=N) get long-lived cache
+// Versioned assets (app.js?v=N, style.css?v=N) get long-lived cache; HTML never cached
 app.use((req, res, next) => {
   if (req.query.v) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  else if (req.path.endsWith('.html') || req.path === '/') res.setHeader('Cache-Control', 'no-cache, no-store');
   next();
 });
 app.use(express.static(path.join(__dirname, 'public'), { etag: true, maxAge: '1h' }));
@@ -198,16 +199,18 @@ app.post('/api/auth/reset-confirm', resetLimiter, (req, res) => {
 
 app.get('/api/projects', auth, (req, res) => {
   const showArchived = req.query.archived === '1';
+  const curMonth = localMonth(); // YYYY-MM
   const projects = db.prepare(`
     SELECT p.*,
       COUNT(t.id) as task_count,
       SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) as done_count
     FROM projects p
     LEFT JOIN tasks t ON t.project_id = p.id
+      AND substr(t.deadline, 1, 7) = ?
     WHERE p.archived = ${showArchived ? 1 : 0}
     GROUP BY p.id
     ORDER BY p.name
-  `).all();
+  `).all(curMonth);
   res.json(projects);
 });
 
@@ -765,13 +768,14 @@ app.get('/api/search', auth, (req, res) => {
   const hasTeam = userPerms.manage_team;
   const hasAssign = userPerms.assign_tasks;
   const uid = req.user.id;
-  let where = " AND (t.title LIKE ? OR t.description LIKE ?)";
-  const params = [`%${q}%`, `%${q}%`];
+  const ql = q.toLowerCase();
+  let where = " AND (LOWER(t.title) LIKE ? OR LOWER(t.description) LIKE ?)";
+  const params = [`%${ql}%`, `%${ql}%`];
   if (!isAdmin && !hasTeam && !hasAssign) {
     where += ' AND (t.assignee_id = ? OR t.created_by = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = ?))';
     params.push(uid, uid, uid);
   }
-  const tasks = enrichTasksWithAssignees(getTaskQuery(where + ' LIMIT 30', params));
+  const tasks = enrichTasksWithAssignees(getTaskQueryPaged(where, params, 30, 0));
   res.json(tasks);
 });
 
@@ -1279,7 +1283,9 @@ app.post('/api/telegram/disconnect', auth, (req, res) => {
 
 app.get('/api/notifications', auth, (req, res) => {
   const notifications = db.prepare(`
-    SELECT n.*, t.title as task_title, p.name as project_name, p.color as project_color
+    SELECT n.id, n.user_id, n.task_id, n.type, n.message, n.read,
+      datetime(n.created_at, '+5 hours') as created_at,
+      t.title as task_title, p.name as project_name, p.color as project_color
     FROM notifications n
     LEFT JOIN tasks t ON t.id = n.task_id
     LEFT JOIN projects p ON p.id = t.project_id

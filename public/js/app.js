@@ -493,10 +493,17 @@ function roleLabel(user) {
 // ─── App Init ─────────────────────────────────────────────────────────────────
 function applyTheme(dark) {
   document.body.classList.toggle('dark', dark);
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  // topbar icons
   const moon = document.getElementById('theme-icon-moon');
   const sun  = document.getElementById('theme-icon-sun');
-  if (moon) moon.style.display = dark ? 'none'  : '';
+  if (moon) moon.style.display = dark ? 'none' : '';
   if (sun)  sun.style.display  = dark ? '' : 'none';
+  // sidebar icons
+  const moonS = document.getElementById('theme-icon-sidebar-moon');
+  const sunS  = document.getElementById('theme-icon-sidebar-sun');
+  if (moonS) moonS.style.display = dark ? 'none' : '';
+  if (sunS)  sunS.style.display  = dark ? '' : 'none';
 }
 
 function toggleTheme() {
@@ -778,6 +785,20 @@ const PAGE_TITLES = {
   review: 'Задачи для проверки',
 };
 
+const PAGE_SUBTITLES = {
+  dashboard: () => {
+    const d = new Date();
+    return d.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  },
+  tasks: () => 'Управление задачами',
+  mytasks: () => 'Мои задачи',
+  team: () => 'Управление командой',
+  reports: () => 'Аналитика и отчёты',
+  finance: () => 'Финансовый учёт',
+  calendar: () => 'Планирование',
+  'best-employee': () => 'Рейтинг сотрудников',
+};
+
 function navigateTo(page, projectId = null, pushHistory = true) {
   state.currentPage = page;
   state.currentProjectId = projectId;
@@ -809,6 +830,11 @@ function navigateTo(page, projectId = null, pushHistory = true) {
 
   const project = projectId ? state.projects.find(p => String(p.id) === String(projectId)) : null;
   document.getElementById('page-title').textContent = project ? project.name : (PAGE_TITLES[page] || page);
+  const subtitleEl = document.getElementById('page-subtitle');
+  if (subtitleEl) {
+    const subtitleFn = PAGE_SUBTITLES[page];
+    subtitleEl.textContent = project ? '' : (subtitleFn ? subtitleFn() : '');
+  }
 
   const mainContent = document.getElementById('main-content');
   if (mainContent) mainContent.scrollTop = 0;
@@ -1069,24 +1095,49 @@ function renderMyTasksSummary({ stats, byProject, upcoming }) {
 
     <div class="dash-stat-cards">
       <div class="dash-stat-card dash-stat-card--click" onclick="navigateToTasksWithFilter({status:'new'})" title="Новые задачи">
-        <div class="dsc-label">Всего задач</div>
+        <div class="dsc-top-row">
+          <div class="dsc-label">Всего задач</div>
+          <div class="dsc-icon" style="background:rgba(59,130,246,.12);color:#3B82F6">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          </div>
+        </div>
         <div class="dsc-value"><span data-count="${total}">0</span></div>
-        <div class="dsc-sub"><span data-count="${nw}">0</span> новых</div>
+        <div class="dsc-sub"><span style="color:#3B82F6;font-weight:700"><span data-count="${nw}">0</span> новая</span> · за ${new Date().toLocaleDateString('ru-RU',{month:'long'})}</div>
       </div>
-      <div class="dash-stat-card dash-stat-card--click" onclick="navigateToTasksWithFilter({status:'done'})" title="Завершённые задачи">
-        <div class="dsc-label">Завершено</div>
-        <div class="dsc-value dsc-value--green"><span data-count="${done}">0</span></div>
-        <div class="dsc-sub">из ${total} задач</div>
+      <div class="dash-stat-card dash-stat-card--click dash-stat-card--done" onclick="navigateToTasksWithFilter({status:'done'})" title="Завершённые задачи">
+        <div class="dsc-orb dsc-orb--1"></div>
+        <div class="dsc-orb dsc-orb--2"></div>
+        <div class="dsc-top-row">
+          <div class="dsc-label">Выполнено</div>
+          <div class="dsc-icon" style="background:rgba(255,255,255,.18);color:white">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+        </div>
+        <div class="dsc-value"><span data-count="${pct}">0</span>%</div>
+        <div class="dsc-progress" style="margin-top:10px;margin-bottom:6px">
+          <div class="dsc-progress-bar"><div class="dsc-progress-fill" style="width:${pct}%"></div></div>
+        </div>
+        <div class="dsc-sub">${done} из ${total} задач</div>
       </div>
       <div class="dash-stat-card dash-stat-card--click" onclick="navigateToTasksWithFilter({status:'in_progress'})" title="Задачи в работе">
-        <div class="dsc-label">В работе</div>
-        <div class="dsc-value" style="color:#D97706"><span data-count="${inp}">0</span></div>
-        <div class="dsc-sub">${inp > 0 ? 'активных' : 'нет активных'}</div>
+        <div class="dsc-top-row">
+          <div class="dsc-label">В работе</div>
+          <div class="dsc-icon" style="background:rgba(217,130,43,.12);color:#D9822B">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </div>
+        </div>
+        <div class="dsc-value" style="color:var(--warning)"><span data-count="${inp}">0</span></div>
+        <div class="dsc-sub">${inp > 0 ? 'активных задач' : 'нет активных'}</div>
       </div>
       <div class="dash-stat-card dash-stat-card--click" onclick="navigateToTasksWithFilter({overdue:true})" title="Просроченные задачи">
-        <div class="dsc-label">Просрочено</div>
+        <div class="dsc-top-row">
+          <div class="dsc-label">Просрочено</div>
+          <div class="dsc-icon" style="background:rgba(229,72,77,.12);color:#E5484D">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+        </div>
         <div class="dsc-value ${ov > 0 ? 'dsc-value--red' : ''}"><span data-count="${ov}">0</span></div>
-        <div class="dsc-sub">${ov > 0 ? 'требуют внимания' : 'всё в порядке'}</div>
+        <div class="dsc-sub">${ov > 0 ? 'требуют действий сейчас' : 'всё в порядке'}</div>
       </div>
     </div>
 
@@ -1354,45 +1405,97 @@ function renderDashboardCharts({ stats, byProject, byEmployee }) {
     if (!s.img) { const u = state.users?.find(u => u.id === s.id); if (u?.avatar_img) s.img = u.avatar_img; }
   });
 
+  const activeProjCount = (byProject||[]).filter(p => (p.in_progress||0) > 0).length;
+  const monthLabel = new Date().toLocaleDateString('ru-RU', { month: 'long' });
+
   return `
     <div class="dash-stat-cards">
       <div class="dash-stat-card dash-stat-card--click" onclick="navigateToTasksWithFilter({status:'new'})" title="Новые задачи">
-        <div class="dsc-label">Всего задач</div>
+        <div class="dsc-top-row">
+          <div class="dsc-label">Всего задач</div>
+          <div class="dsc-icon dsc-icon--stack">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          </div>
+        </div>
         <div class="dsc-value"><span data-count="${total}">0</span></div>
-        <div class="dsc-sub"><span data-count="${nw}">0</span> новых</div>
+        <div class="dsc-sub"><span class="dsc-new-badge"><span data-count="${nw}">0</span> новая</span><span class="dsc-separator">·</span> за ${monthLabel}</div>
       </div>
-      <div class="dash-stat-card dash-stat-card--click" onclick="navigateToTasksWithFilter({status:'done'})" title="Выполненные задачи">
-        <div class="dsc-label">Выполнено</div>
-        <div class="dsc-value dsc-value--green"><span data-count="${pct}" data-suffix="%">0%</span></div>
-        <div class="dsc-sub"><span data-count="${done}">0</span> из ${total}</div>
+
+      <div class="dash-stat-card dash-stat-card--click dash-stat-card--done" onclick="navigateToTasksWithFilter({status:'done'})" title="Выполненные задачи">
+        <div class="dsc-orb dsc-orb--1"></div>
+        <div class="dsc-orb dsc-orb--2"></div>
+        <div class="dsc-top-row">
+          <div class="dsc-label">Выполнено</div>
+          <div class="dsc-icon" style="background:rgba(255,255,255,.18);color:white;border-radius:50%">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+        </div>
+        <div class="dsc-value"><span data-count="${pct}">0</span>%</div>
+        <div class="dsc-progress" style="margin-top:12px;margin-bottom:8px">
+          <div class="dsc-progress-bar"><div class="dsc-progress-fill" style="width:${pct}%"></div></div>
+          <div class="dsc-progress-label"><span>${done} из ${total} задач</span><span>${pct}%</span></div>
+        </div>
       </div>
+
+      <div class="dash-stat-card dash-stat-card--click" onclick="navigateToTasksWithFilter({status:'in_progress'})" title="Задачи в работе">
+        <div class="dsc-top-row">
+          <div class="dsc-label">В работе</div>
+          <div class="dsc-icon dsc-icon--orange">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </div>
+        </div>
+        <div class="dsc-value" style="color:var(--warning)"><span data-count="${inp}">0</span></div>
+        <div class="dsc-sub">${activeProjCount > 0 ? `по ${activeProjCount} проектам` : inp > 0 ? 'активных задач' : 'нет активных'}</div>
+      </div>
+
       <div class="dash-stat-card dash-stat-card--click" onclick="navigateToTasksWithFilter({overdue:true})" title="Просроченные задачи">
-        <div class="dsc-label">Просрочено</div>
+        <div class="dsc-top-row">
+          <div class="dsc-label">Просрочено</div>
+          <div class="dsc-icon dsc-icon--red">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+        </div>
         <div class="dsc-value ${ov > 0 ? 'dsc-value--red' : ''}"><span data-count="${ov}">0</span></div>
-        <div class="dsc-sub">${ov > 0 ? 'требуют внимания' : 'всё в порядке'}</div>
+        <div class="dsc-sub">${ov > 0 ? 'требуют действий сейчас' : 'всё в порядке'}</div>
       </div>
     </div>
 
     <div class="dash-charts">
-      <div class="chart-panel donut-wrap">
+      <div class="chart-panel" style="display:flex;flex-direction:column">
         <div class="chart-title">Статусы</div>
-        ${svgDonut(donutSlices, total)}
-        <div class="donut-legend">
-          ${donutSlices.map(s => `
-            <div class="donut-legend-item">
-              <span class="donut-legend-dot" style="background:${s.c}"></span>
-              <span>${s.label}</span>
-              <span class="donut-legend-val">${s.v}</span>
-            </div>
-          `).join('')}
+        <div class="dash-pct-big"><span data-count="${pct}" data-suffix="%">0%</span></div>
+        <div class="dash-pct-label" style="margin-bottom:4px"><span style="color:#059669;font-weight:700">выполнено</span></div>
+        <div class="dash-pct-label">${total} задач · <span style="color:var(--text-muted)">${monthLabel}</span></div>
+        <div style="margin-top:14px">
+          <div class="dash-seg-bar">
+            ${donutSlices.map(s => {
+              const w = total > 0 ? Math.round(s.v/total*100) : 0;
+              return `<div class="dash-seg-fill" style="width:0%;background:${s.c};border-radius:4px" data-bar-to="${w}%"></div>`;
+            }).join('')}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:0;margin-top:12px;border-top:1px solid var(--border)">
+            ${donutSlices.map(s => {
+              const w = total > 0 ? Math.round(s.v/total*100) : 0;
+              return `
+              <div class="donut-legend-item" style="padding:10px 0;border-bottom:1px solid var(--border)">
+                <span style="width:10px;height:10px;border-radius:4px;background:${s.c};flex-shrink:0"></span>
+                <span style="flex:1;font-size:13px;font-weight:600">${s.label}</span>
+                <span style="font-size:12px;color:var(--text-muted)">${w}%</span>
+                <span class="donut-legend-val" style="font-size:14px;font-weight:800;min-width:28px;text-align:right">${s.v}</span>
+              </div>`;
+            }).join('')}
+          </div>
         </div>
       </div>
 
       <div class="chart-panel" style="display:flex;flex-direction:column">
-        <div class="chart-title">По проектам</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <div class="chart-title" style="margin-bottom:0">По проектам</div>
+          <div style="font-size:11px;color:var(--text-muted);font-weight:600;letter-spacing:0.04em">готово / всего</div>
+        </div>
         <div class="chart-scroll">
           ${projs.length === 0
-            ? '<div style="color:#94A3B8;font-size:12.5px;padding:8px 0">Нет данных по проектам</div>'
+            ? '<div style="color:var(--text-muted);font-size:12.5px;padding:8px 0">Нет данных по проектам</div>'
             : projs.map(([name, s]) => {
                 const p = s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
                 return `<div class="proj-bar-row" style="cursor:pointer" onclick="navigateTo('project',${s.id})">
@@ -1400,8 +1503,8 @@ function renderDashboardCharts({ stats, byProject, byEmployee }) {
                     <span class="proj-bar-name">${name}</span>
                     <span class="proj-bar-count">${s.done}/${s.total}</span>
                   </div>
-                  <div class="proj-bar-track">
-                    <div class="proj-bar-fill" style="width:0%;background:${s.color};transition:width 0.8s cubic-bezier(0.22,1,0.36,1)" data-bar-to="${p}%"></div>
+                  <div class="proj-bar-track" style="height:5px">
+                    <div class="proj-bar-fill" style="width:0%;background:${s.color};height:5px;transition:width 0.8s cubic-bezier(0.22,1,0.36,1)" data-bar-to="${p}%"></div>
                   </div>
                 </div>`;
               }).join('')}
@@ -1409,22 +1512,24 @@ function renderDashboardCharts({ stats, byProject, byEmployee }) {
       </div>
 
       <div class="chart-panel" style="display:flex;flex-direction:column">
-        <div class="chart-title">Сотрудники</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <div class="chart-title" style="margin-bottom:0">Сотрудники</div>
+          <div style="font-size:11px;color:var(--text-muted);font-weight:600;letter-spacing:0.04em">загрузка</div>
+        </div>
         <div class="chart-scroll">
           ${emps.length === 0
-            ? '<div style="color:#94A3B8;font-size:12.5px;padding:8px 0">Нет данных</div>'
+            ? '<div style="color:var(--text-muted);font-size:12.5px;padding:8px 0">Нет данных</div>'
             : emps.map(([name, s]) => {
                 const p = s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
-                const col = p >= 80 ? '#059669' : p >= 50 ? '#D97706' : '#DC2626';
                 return `<div class="emp-row" style="cursor:pointer" onclick="openEmployeeProfile(${s.id})">
-                  <div class="emp-avatar-sm" style="background:${s.color};${s.img?'padding:0;overflow:hidden':''}">${s.img?`<img src="${s.img}" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:50%">`:initials(name)}</div>
+                  <div class="emp-avatar-sm" style="background:${s.color};border-radius:10px;${s.img?'padding:0;overflow:hidden':''}">${s.img?`<img src="${s.img}" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:10px">`:initials(name)}</div>
                   <div class="emp-info">
                     <div class="emp-name">${name}</div>
                     <div class="emp-bar-track">
-                      <div class="emp-bar-fill" style="width:0%;background:${col};transition:width 0.8s cubic-bezier(0.22,1,0.36,1)" data-bar-to="${p}%"></div>
+                      <div class="emp-bar-fill" style="width:0%;background:${s.color};transition:width 0.8s cubic-bezier(0.22,1,0.36,1)" data-bar-to="${p}%"></div>
                     </div>
                   </div>
-                  <span class="emp-pct" style="color:${col}"><span data-count="${p}" data-suffix="%">0%</span></span>
+                  <span class="emp-pct" style="color:${s.color};font-weight:800"><span data-count="${p}" data-suffix="%">0%</span></span>
                 </div>`;
               }).join('')}
         </div>
@@ -1553,6 +1658,7 @@ async function renderDashboard() {
 
     // Month slider
     const _MNAMES = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+    const _MNAMES_FULL = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
     const _nowD = new Date(Date.now() + 5*3600000);
     const _curM = _nowD.toISOString().slice(0,7);
     const _winS = -2 + _dashWinOffset;
@@ -1561,14 +1667,15 @@ async function renderDashboard() {
       return d.toISOString().slice(0,7);
     });
     const _arrowD = (dir, disabled) =>
-      `<button class="be-arrow-btn ${disabled?'disabled':''}" onclick="${disabled?'':`dashShiftWindow(${dir})`}">${dir<0?'‹':'›'}</button>`;
-    const _dashMonthBar = `<div class="be-month-bar" style="margin-bottom:16px">
-      <button class="be-month-tab ${_dashMonth==='all'?'active':''}" onclick="setDashMonth('all')">Все</button>
+      `<button class="period-btn period-btn--arrow ${disabled?'disabled':''}" style="padding:6px 10px;${disabled?'opacity:0.35;cursor:default':''}" onclick="${disabled?'':`dashShiftWindow(${dir})`}">${dir<0?'‹':'›'}</button>`;
+    const _dashMonthBar = `<div class="period-filter">
+      <button class="period-btn ${_dashMonth==='all'?'active':''}" onclick="setDashMonth('all')">Все</button>
       ${_arrowD(-1, _dashWinOffset<=-24)}
       ${_vis5.map(m => {
         const isCur = m===_curM, isSel = m===_dashMonth;
-        return `<button class="be-month-tab ${isSel?'active':''} ${isCur&&!isSel?'be-month-tab-current':''}" onclick="setDashMonth('${m}')">
-          ${_MNAMES[+m.split('-')[1]-1]} ${m.split('-')[0]}${isCur?'<span class="be-tab-now">сейчас</span>':''}
+        const [yr, mn] = m.split('-');
+        return `<button class="period-btn ${isSel?'active':''}" onclick="setDashMonth('${m}')">
+          ${_MNAMES[+mn-1]} ${yr}${isCur?'<span class="period-now-badge">сейчас</span>':''}
         </button>`;
       }).join('')}
       ${_arrowD(1, _dashWinOffset>=24)}
@@ -1602,10 +1709,10 @@ async function renderDashboard() {
         </div>
       ` : ''}
 
-      <div class="section-header">
-        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-          <div class="section-title" style="display:inline-flex;align-items:center;gap:6px">${svgI(SVG_PATHS.clip,15)} Активные задачи</div>
-          <div class="period-filter">
+      <div class="section-header" style="align-items:center">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <div class="section-title" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">${svgI(SVG_PATHS.clip,15)} Активные задачи</div>
+          <div class="period-filter" style="margin-bottom:0">
             ${periodNames.map(([p,l]) => `<button class="period-btn ${dashPeriod===p?'active':''}" onclick="setDashPeriod('${p}')">${l}</button>`).join('')}
           </div>
         </div>
