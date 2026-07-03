@@ -46,6 +46,9 @@ function initDB() {
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_source_content ON tasks(source_content_id)'); } catch {}
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, read)'); } catch {}
 
+  // Migrations
+  try { db.exec('ALTER TABLE users ADD COLUMN archived INTEGER DEFAULT 0'); } catch {}
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
