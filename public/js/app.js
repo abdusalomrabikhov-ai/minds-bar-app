@@ -862,8 +862,8 @@ function navigateTo(page, projectId = null, pushHistory = true) {
     case 'review': renderReviewPage(); break;
     case 'finance-log': renderFinanceLogPage(); break;
     case 'ideahast': renderIdeahastPage(); break;
-    case 'kids': _secState.kids.monthFilter = ''; renderSectionPage('kids'); break;
-    case 'b2c': _b2cMonthFilter = ''; renderB2CPage(); break;
+    case 'kids': _secState.kids.monthFilter = ''; _secState.kids.courseId = null; renderSectionPage('kids'); break;
+    case 'b2c': _b2cMonthFilter = ''; _b2cCourseId = null; try { sessionStorage.removeItem('b2c_course_id'); } catch {} renderB2CPage(); break;
     case 'finance':
       _finMonth = new Date().toISOString().slice(0, 7);
       try { sessionStorage.setItem('fin_month', _finMonth); } catch {}
