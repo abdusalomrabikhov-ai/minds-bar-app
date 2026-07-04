@@ -1200,10 +1200,10 @@ function renderMyTasksSummary({ stats, byProject, upcoming }) {
           return `
             <div class="mytasks-proj-card" onclick="navigateTo('project',${s.id})" style="--proj-color:${s.color}">
 
-              <div class="mpc-header" style="background:${s.color}">
+              <div class="mpc-header">
                 <div class="mpc-header-top">
                   <div class="mpc-title-row">
-                    <span class="mpc-dot-white"></span>
+                    <span class="mpc-dot"></span>
                     <span class="mpc-proj-name">${s.name}</span>
                   </div>
                   ${s.nextDeadline ? `<span class="mpc-date-badge">${fmtDayMonth(s.nextDeadline)}</span>` : ''}
@@ -1223,23 +1223,23 @@ function renderMyTasksSummary({ stats, byProject, upcoming }) {
                   <div class="mpc-sgrid-num">${s.total}</div>
                   <div class="mpc-sgrid-lbl">всего</div>
                 </div>
-                <div class="mpc-sgrid-cell mpc-sgrid-mid">
-                  <div class="mpc-sgrid-num" style="color:#1D9E75">${s.done}</div>
-                  <div class="mpc-sgrid-lbl" style="color:#0F6E56">готово</div>
+                <div class="mpc-sgrid-cell mpc-sgrid-mid mpc-sgrid-cell--done">
+                  <div class="mpc-sgrid-num">${s.done}</div>
+                  <div class="mpc-sgrid-lbl">готово</div>
                 </div>
-                <div class="mpc-sgrid-cell">
-                  <div class="mpc-sgrid-num" style="color:${s.ov > 0 ? '#D85A30' : 'var(--text-muted)'}">${s.ov}</div>
-                  <div class="mpc-sgrid-lbl" style="color:${s.ov > 0 ? '#993C1D' : 'var(--text-light)'}">просроч.</div>
+                <div class="mpc-sgrid-cell${s.ov > 0 ? ' mpc-sgrid-cell--overdue' : ''}">
+                  <div class="mpc-sgrid-num">${s.ov}</div>
+                  <div class="mpc-sgrid-lbl">просроч.</div>
                 </div>
               </div>
 
               <div class="mpc-footer">
                 <div class="mpc-prog-wrap">
-                  <div class="mpc-prog-circle" style="border-color:${s.color};color:${s.color}">${p}%</div>
+                  <div class="mpc-prog-circle">${p}%</div>
                   <span class="mpc-prog-label">прогресс</span>
                 </div>
                 ${s.ov > 0
-                  ? `<div class="mpc-ov-pill" style="background:#FEE2E2;color:#DC2626"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${s.ov} просрочено</div>`
+                  ? `<div class="mpc-ov-pill"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${s.ov} просрочено</div>`
                   : s.inp > 0
                     ? `<div class="mpc-inp-pill">${s.inp} в работе</div>`
                     : s.total > 0 && s.done === s.total ? `<div class="mpc-ok-pill">✓ всё готово</div>` : ''
