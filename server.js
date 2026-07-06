@@ -119,6 +119,13 @@ function can(req, perm) {
   return parsePerms(req.user.permissions)[perm] === true;
 }
 
+function userCan(userId, perm) {
+  const user = db.prepare('SELECT role, permissions FROM users WHERE id = ?').get(userId);
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  return parsePerms(user.permissions)[perm] === true;
+}
+
 function requirePerm(perm) {
   return (req, res, next) => {
     if (!can(req, perm)) return res.status(403).json({ error: 'Нет доступа к этому разделу' });
@@ -866,8 +873,7 @@ app.put('/api/tasks/:id', auth, (req, res) => {
   // ── Review gate: if task was created by admin and employee marks as done → pending_review ──
   let newStatus = status || existing.status;
   if (status === 'done' && existing.status !== 'done' && req.user.role !== 'admin') {
-    const creator = db.prepare('SELECT role FROM users WHERE id = ?').get(existing.created_by);
-    if (creator?.role === 'admin') newStatus = 'pending_review';
+    if (existing.created_by && userCan(existing.created_by, 'review_tasks')) newStatus = 'pending_review';
   }
   const newAssignee = newIds ? (newIds[0] || null) : (assignee_id !== undefined ? (assignee_id || null) : existing.assignee_id);
   const newRecurrence = recurrence !== undefined ? (recurrence || 'none') : (existing.recurrence || 'none');
@@ -998,8 +1004,7 @@ app.patch('/api/tasks/:id/my-done', auth, (req, res) => {
   if (done && req.user.role !== 'admin') {
     const taskRow = db.prepare('SELECT created_by, status FROM tasks WHERE id = ?').get(req.params.id);
     if (taskRow?.status === 'done') {
-      const creator = db.prepare('SELECT role FROM users WHERE id = ?').get(taskRow.created_by);
-      if (creator?.role === 'admin') {
+      if (taskRow.created_by && userCan(taskRow.created_by, 'review_tasks')) {
         db.prepare("UPDATE tasks SET status = 'pending_review', updated_at = ? WHERE id = ?").run(localNow(), req.params.id);
       }
     }
