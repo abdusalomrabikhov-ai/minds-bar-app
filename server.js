@@ -206,7 +206,7 @@ app.get('/api/projects', auth, (req, res) => {
       SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) as done_count
     FROM projects p
     LEFT JOIN tasks t ON t.project_id = p.id
-      AND substr(t.deadline, 1, 7) = ?
+      AND (CASE WHEN t.deadline IS NOT NULL AND t.deadline != '' THEN strftime('%Y-%m', t.deadline) ELSE strftime('%Y-%m', t.created_at) END) = ?
     WHERE p.archived = ${showArchived ? 1 : 0}
     GROUP BY p.id
     ORDER BY p.name
@@ -669,7 +669,7 @@ app.get('/api/dashboard', auth, (req, res) => {
   );
 
   const byProject = isAdmin || hasReports || hasTeam ? db.prepare(`
-    SELECT p.name, p.color, COUNT(*) as total, SUM(CASE WHEN t.status='done' THEN 1 ELSE 0 END) as done
+    SELECT p.id, p.name, p.color, COUNT(*) as total, SUM(CASE WHEN t.status='done' THEN 1 ELSE 0 END) as done
     FROM tasks t JOIN projects p ON p.id = t.project_id WHERE 1=1 ${where} GROUP BY p.id ORDER BY total DESC LIMIT 10
   `).all(...params) : [];
 
