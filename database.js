@@ -6,6 +6,11 @@ const path = require('path');
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'teamtask.db');
 const db = new DatabaseSync(DB_PATH);
 
+// SQLite's built-in LOWER() is ASCII-only and leaves Cyrillic (and other
+// non-ASCII) letters unchanged, so case-insensitive search silently fails
+// for Cyrillic text. Register a Unicode-aware replacement.
+db.function('lower_u', (s) => s == null ? null : String(s).toLowerCase());
+
 // Compatibility wrapper to match better-sqlite3-style API
 function wrap(stmt) {
   return {

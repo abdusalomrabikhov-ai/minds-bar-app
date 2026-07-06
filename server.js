@@ -778,7 +778,7 @@ app.get('/api/search', auth, (req, res) => {
   const hasAssign = userPerms.assign_tasks;
   const uid = req.user.id;
   const ql = q.toLowerCase();
-  let where = " AND (LOWER(t.title) LIKE ? OR LOWER(t.description) LIKE ?)";
+  let where = " AND (lower_u(t.title) LIKE ? OR lower_u(t.description) LIKE ?)";
   const params = [`%${ql}%`, `%${ql}%`];
   if (!isAdmin && !hasTeam && !hasAssign) {
     where += ' AND (t.assignee_id = ? OR t.created_by = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = ?))';
