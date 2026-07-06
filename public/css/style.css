@@ -1973,7 +1973,7 @@ input, textarea, select { font: inherit; }
   .dash-stat-card--done .dsc-value { font-size: 42px; }
 
   /* page content */
-  .page-content { padding: 12px 12px 76px; }
+  .page-content { padding: 12px 12px calc(76px + env(safe-area-inset-bottom, 0px)); }
 
   /* layout */
   .form-row { grid-template-columns: 1fr; }

@@ -5,3 +5,4 @@ teamtask.db
 .env
 *.log
 .DS_Store
+desktop/dist/

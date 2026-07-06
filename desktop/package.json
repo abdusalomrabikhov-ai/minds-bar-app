@@ -1,0 +1,31 @@
+{
+  "name": "teamtask-desktop",
+  "version": "1.0.0",
+  "description": "Десктоп-обёртка TeamTask (Electron)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "io.mindstech.teamtask",
+    "productName": "TeamTask",
+    "files": [
+      "main.js",
+      "icon.png",
+      "icon.icns"
+    ],
+    "mac": {
+      "icon": "icon.icns",
+      "target": "dmg"
+    },
+    "win": {
+      "icon": "icon.png",
+      "target": "nsis"
+    }
+  }
+}
