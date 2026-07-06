@@ -30,3 +30,9 @@ railway open           # открыть сайт в браузере
 
 - `railway.toml`: `startCommand = "node server.js"`, restart policy — ON_FAILURE, max 3 retries
 - `package.json`: `start` → `node server.js`, `dev` → `nodemon server.js`
+
+## Deploy log
+
+(новые записи сверху)
+
+- 2026-07-06 — создан DEPLOY.md/MEMORY.md, деплоя не было
