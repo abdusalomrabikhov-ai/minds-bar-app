@@ -15,7 +15,7 @@
 
 ## Кэш и деплой
 
-- CSS кэшируется через `?v=N` в `index.html` — бампать версию при каждом деплое CSS-изменений (текущая: v=3).
+- CSS **и JS** кэшируются через `?v=N` в `index.html` — бампать версию при каждом деплое изменений соответствующего файла, иначе правки не долетают до браузеров (assets кэшируются `immutable` на год). Текущие: `style.css?v=29`, `app.js?v=9`.
 - Подробности деплоя — см. `DEPLOY.md`.
 - Домен `bar.mindstech.io` подключён к Railway (CNAME + TXT verify записи в DNS mindstech.io).
 
@@ -29,6 +29,7 @@
 
 (новые записи сверху)
 
+- 2026-07-06 — fix: мобильные модалки не реагировали на скролл — body scroll не блокировался при открытии, touch проваливался на контент под модалкой. openModal()/closeModal()/confirmDel() теперь блокируют/восстанавливают body.style.overflow. Добавлен -webkit-overflow-scrolling:touch на .modal. Заодно бампнуты cache-busting версии (app.js v=9, style.css v=29) — без этого правки не долетали до реальных браузеров.
 - 2026-07-06 — fix: PWA-иконки (192/512/apple-touch) заменены на wordmark "minds bar" — старый equalizer-логотип заменён по просьбе юзера. Кроп: bbox текста + равный паддинг вокруг, центрировано на bbox (не на геометрический центр исходника — тот сам смещён вниз в оригинальном файле).
 - 2026-07-06 — feat: PWA install-иконки (192/512/apple-touch), iOS safe-area fix (viewport-fit=cover + .page-content padding учитывает safe-area-inset-bottom), Electron desktop-обёртка (desktop/).
 - 2026-07-06 — fix: SSE-события задерживались из-за глобального compression() middleware, буферизующего /api/events (задачи "на проверку" появлялись только после re-render страницы, не в реальном времени). Исключён /api/events из сжатия, refreshCurrentPage() теперь также освежает review-страницу при SSE reconnect.
