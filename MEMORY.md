@@ -24,11 +24,13 @@
 - SSE (`/api/events`) должен быть исключён из `compression()` middleware — gzip буферизует stream и рвёт realtime-доставку событий. Если добавляются новые global middleware в server.js — проверять, что они не оборачивают SSE-роут.
 - **PWA**: manifest.json + иконки (192/512/apple-touch) готовы, устанавливается на Android/iOS. Мобильный safe-area (iPhone home indicator) требует `viewport-fit=cover` в viewport meta — без него `env(safe-area-inset-*)` всегда 0.
 - **Desktop**: `desktop/` — Electron-обёртка, грузит прод-URL напрямую (не bundled статику). Обновления сервера подхватываются сами; пересборка `.dmg`/`.exe` (`cd desktop && npm run build`) нужна только при изменении самого `desktop/main.js`. `desktop/dist/` — build-артефакт, в `.gitignore`, не коммитится.
+- **SQLite `LOWER()` — ASCII-only**, не лоуеркейзит кириллицу. Для case-insensitive сравнения кириллического текста в SQL использовать `lower_u()` (custom function, зарегистрирована в `database.js` через `db.function()`, backed by JS `.toLowerCase()`), не встроенный `LOWER()`.
 
 ## Лог изменений
 
 (новые записи сверху)
 
+- 2026-07-06 — fix: глобальный поиск не находил задачи с заглавными кириллическими буквами (SQLite LOWER() не работает с не-ASCII). Зарегистрирована lower_u() unicode-aware функция, используется в /api/search вместо LOWER(). Проверено: заглавные↔строчные кириллица, смешанный регистр, ASCII без регрессии.
 - 2026-07-06 — fix: мобильные модалки не реагировали на скролл — body scroll не блокировался при открытии, touch проваливался на контент под модалкой. openModal()/closeModal()/confirmDel() теперь блокируют/восстанавливают body.style.overflow. Добавлен -webkit-overflow-scrolling:touch на .modal. Заодно бампнуты cache-busting версии (app.js v=9, style.css v=29) — без этого правки не долетали до реальных браузеров.
 - 2026-07-06 — fix: PWA-иконки (192/512/apple-touch) заменены на wordmark "minds bar" — старый equalizer-логотип заменён по просьбе юзера. Кроп: bbox текста + равный паддинг вокруг, центрировано на bbox (не на геометрический центр исходника — тот сам смещён вниз в оригинальном файле).
 - 2026-07-06 — feat: PWA install-иконки (192/512/apple-touch), iOS safe-area fix (viewport-fit=cover + .page-content padding учитывает safe-area-inset-bottom), Electron desktop-обёртка (desktop/).

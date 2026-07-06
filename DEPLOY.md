@@ -36,6 +36,7 @@ railway open           # открыть сайт в браузере
 
 (новые записи сверху)
 
+- 2026-07-06 — fix: глобальный поиск (/api/search) не находил задачи с заглавными кириллическими буквами в названии — SQLite LOWER() ASCII-only, не лоуеркейзит кириллицу. Добавлена unicode-aware SQL-функция lower_u() (commit c0c5985). Задеплоено, Online.
 - 2026-07-06 — fix: мобильные модалки не реагировали на скролл (touch проваливался на body под модалкой) — body.style.overflow теперь блокируется/восстанавливается при открытии/закрытии. Также бампнуты cache-busting версии app.js (v=9) и style.css (v=29) — раньше правки от сегодняшних более ранних фиксов не долетали до браузеров из-за immutable-кэша (commit 3f323e1). Задеплоено, Online.
 - 2026-07-06 — fix: PWA-иконки заменены на wordmark-лого "minds bar" вместо старого equalizer-логотипа (commit 4903d37). Задеплоено, Online.
 - 2026-07-06 — feat: PWA install icons (192/512/apple-touch), iOS safe-area fix (viewport-fit=cover), Electron desktop wrapper добавлен (commit b6f9d9d). desktop/ не деплоится на сервер — только public/+server.js. Задеплоено, Online.
