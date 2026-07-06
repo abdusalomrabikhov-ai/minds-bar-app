@@ -39,4 +39,4 @@
 - 2026-07-06 — добавлены DEPLOY.md, MEMORY.md, CLAUDE.md с правилом session-end логирования
 
 ---
-Последнее обновление: 2026-07-06
+Последнее обновление: 2026-07-06 (deployment 422dd055 — search fix confirmed online)
