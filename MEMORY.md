@@ -29,7 +29,8 @@
 
 (новые записи сверху)
 
-- 2026-07-06 — feat: PWA install-иконки (192/512/apple-touch), iOS safe-area fix (viewport-fit=cover + .page-content padding учитывает safe-area-inset-bottom), Electron desktop-обёртка (desktop/). Логотип "minds bar" (текстовый wordmark) прислан для замены иконки — кроп/паддинг под квадратную иконку не доведён до конца, отложено.
+- 2026-07-06 — fix: PWA-иконки (192/512/apple-touch) заменены на wordmark "minds bar" — старый equalizer-логотип заменён по просьбе юзера. Кроп: bbox текста + равный паддинг вокруг, центрировано на bbox (не на геометрический центр исходника — тот сам смещён вниз в оригинальном файле).
+- 2026-07-06 — feat: PWA install-иконки (192/512/apple-touch), iOS safe-area fix (viewport-fit=cover + .page-content padding учитывает safe-area-inset-bottom), Electron desktop-обёртка (desktop/).
 - 2026-07-06 — fix: SSE-события задерживались из-за глобального compression() middleware, буферизующего /api/events (задачи "на проверку" появлялись только после re-render страницы, не в реальном времени). Исключён /api/events из сжатия, refreshCurrentPage() теперь также освежает review-страницу при SSE reconnect.
 - 2026-07-06 — fix: раздел "Задачи на проверку" не получал задачи для менеджеров без admin-роли (право review_tasks игнорировалось, gate проверял только role==='admin'). Три места в server.js: PUT /api/tasks/:id, PATCH /api/tasks/:id/my-done, добавлен helper userCan(). Подтверждено на реальном юзере (Пулатова Камилла, id=2).
 - 2026-07-06 — добавлены DEPLOY.md, MEMORY.md, CLAUDE.md с правилом session-end логирования
