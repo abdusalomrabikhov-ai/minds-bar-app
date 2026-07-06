@@ -1170,6 +1170,7 @@ input, textarea, select { font: inherit; }
 .modal {
   background: var(--surface); border-radius: var(--radius-lg); width: 100%;
   max-width: 520px; max-height: 90vh; overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   box-shadow: var(--shadow-lg); animation: slideUp 0.2s ease;
 }
 .modal-lg { max-width: 680px; }
@@ -2002,6 +2003,7 @@ input, textarea, select { font: inherit; }
     width: 100% !important; max-width: 100% !important;
     border-radius: 18px 18px 0 0 !important;
     max-height: 92vh; overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     margin: 0 !important;
   }
 

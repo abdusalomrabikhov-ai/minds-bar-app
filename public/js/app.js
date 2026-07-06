@@ -69,6 +69,7 @@ function openModal(html, onClose) {
   const overlay = root.querySelector('.modal-overlay');
   overlay.addEventListener('click', e => { if (e.target === overlay && window._overlayMouseDownTarget === overlay) closeModal(); });
   if (onClose) overlay._onClose = onClose;
+  document.body.style.overflow = 'hidden';
   // Push modal state so Back button closes the modal instead of leaving the page
   history.pushState({ modal: true, page: state.currentPage, projectId: state.currentProjectId }, '');
 }
@@ -76,6 +77,7 @@ function closeModal() {
   const overlay = document.getElementById('modal-overlay');
   if (overlay?._onClose) overlay._onClose();
   document.getElementById('modal-root').innerHTML = '';
+  document.body.style.overflow = '';
 }
 
 function showConfirmModal({ title, message, confirmLabel = 'Удалить', confirmClass = 'btn-danger-solid', cancelLabel = 'Отмена' }) {
@@ -111,6 +113,7 @@ function confirmDel(msg, onYes) {
       </div>
     </div>
   </div>`;
+  document.body.style.overflow = 'hidden';
   const btn = document.getElementById('cdel-ok-btn');
   const handler = e => { if (e.key === 'Enter') { document.removeEventListener('keydown', handler); closeModal(); onYes(); } };
   btn.onclick = () => { document.removeEventListener('keydown', handler); closeModal(); onYes(); };
