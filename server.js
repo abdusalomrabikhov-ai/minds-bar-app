@@ -64,7 +64,9 @@ function updateReviewBadgeSSE() {
   });
 }
 
-app.use(compression());
+app.use(compression({
+  filter: (req, res) => req.path === '/api/events' ? false : compression.filter(req, res)
+}));
 app.use(cors());
 app.use(express.json({ limit: '4mb' }));
 // Versioned assets (app.js?v=N, style.css?v=N) get long-lived cache; HTML never cached

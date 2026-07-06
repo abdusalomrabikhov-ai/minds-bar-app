@@ -916,8 +916,10 @@ function refreshCurrentPage() {
     case 'dashboard': renderDashboard(); break;
     case 'tasks': case 'mytasks': renderTasksPage(); break;
     case 'project': if (state.currentProjectId) renderProjectPage(state.currentProjectId); break;
+    case 'review': renderReviewPage(); break;
     default: break;
   }
+  updateReviewBadge();
 }
 
 let _dashDebounce = null;
