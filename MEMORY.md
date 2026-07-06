@@ -22,6 +22,7 @@
 
 (новые записи сверху)
 
+- 2026-07-06 — fix: раздел "Задачи на проверку" не получал задачи для менеджеров без admin-роли (право review_tasks игнорировалось, gate проверял только role==='admin'). Три места в server.js: PUT /api/tasks/:id, PATCH /api/tasks/:id/my-done, добавлен helper userCan(). Подтверждено на реальном юзере (Пулатова Камилла, id=2).
 - 2026-07-06 — добавлены DEPLOY.md, MEMORY.md, CLAUDE.md с правилом session-end логирования
 
 ---

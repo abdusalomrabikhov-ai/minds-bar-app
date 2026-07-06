@@ -35,4 +35,5 @@ railway open           # открыть сайт в браузере
 
 (новые записи сверху)
 
+- 2026-07-06 — fix: review-gate игнорировал review_tasks permission, проверял только role==='admin' (commit 724f2c2). Деплой на Railway (minds-bar-app), билд запущен.
 - 2026-07-06 — создан DEPLOY.md/MEMORY.md, деплоя не было
