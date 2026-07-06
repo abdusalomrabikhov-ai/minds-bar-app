@@ -17,11 +17,17 @@
 
 - CSS кэшируется через `?v=N` в `index.html` — бампать версию при каждом деплое CSS-изменений (текущая: v=3).
 - Подробности деплоя — см. `DEPLOY.md`.
+- Домен `bar.mindstech.io` подключён к Railway (CNAME + TXT verify записи в DNS mindstech.io).
+
+## Инфраструктура
+
+- SSE (`/api/events`) должен быть исключён из `compression()` middleware — gzip буферизует stream и рвёт realtime-доставку событий. Если добавляются новые global middleware в server.js — проверять, что они не оборачивают SSE-роут.
 
 ## Лог изменений
 
 (новые записи сверху)
 
+- 2026-07-06 — fix: SSE-события задерживались из-за глобального compression() middleware, буферизующего /api/events (задачи "на проверку" появлялись только после re-render страницы, не в реальном времени). Исключён /api/events из сжатия, refreshCurrentPage() теперь также освежает review-страницу при SSE reconnect.
 - 2026-07-06 — fix: раздел "Задачи на проверку" не получал задачи для менеджеров без admin-роли (право review_tasks игнорировалось, gate проверял только role==='admin'). Три места в server.js: PUT /api/tasks/:id, PATCH /api/tasks/:id/my-done, добавлен helper userCan(). Подтверждено на реальном юзере (Пулатова Камилла, id=2).
 - 2026-07-06 — добавлены DEPLOY.md, MEMORY.md, CLAUDE.md с правилом session-end логирования
 

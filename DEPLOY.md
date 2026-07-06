@@ -30,10 +30,12 @@ railway open           # открыть сайт в браузере
 
 - `railway.toml`: `startCommand = "node server.js"`, restart policy — ON_FAILURE, max 3 retries
 - `package.json`: `start` → `node server.js`, `dev` → `nodemon server.js`
+- Домен: `bar.mindstech.io` (CNAME → Railway) подключён к сервису minds-bar-app
 
 ## Deploy log
 
 (новые записи сверху)
 
+- 2026-07-06 — fix: SSE-события (в т.ч. "Задачи для проверки") задерживались из-за глобального compression() middleware, буферизовавшего /api/events. Исключён из сжатия + refreshCurrentPage() теперь освежает страницу review (commit 0468d47). Задеплоено, Online на bar.mindstech.io.
 - 2026-07-06 — fix: review-gate игнорировал review_tasks permission, проверял только role==='admin' (commit 724f2c2). Деплой на Railway (minds-bar-app), билд запущен.
 - 2026-07-06 — создан DEPLOY.md/MEMORY.md, деплоя не было
