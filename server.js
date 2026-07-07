@@ -6,7 +6,6 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const { google } = require('googleapis');
 const { db, initDB } = require('./database');
 const { sendTelegramNotification, processWebhookUpdate, WEBHOOK_PATH } = require('./bot');
 const { startScheduler } = require('./scheduler');
@@ -18,16 +17,6 @@ if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
     'mailto:abdusalomrabikhov@gmail.com',
     process.env.VAPID_PUBLIC_KEY,
     process.env.VAPID_PRIVATE_KEY
-  );
-}
-
-// ─── Google OAuth2 client ─────────────────────────────────────────────────────
-const GOOGLE_REDIRECT = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback';
-function makeOAuth2Client() {
-  return new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    GOOGLE_REDIRECT
   );
 }
 
