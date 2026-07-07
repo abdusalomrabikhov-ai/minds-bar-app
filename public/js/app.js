@@ -2894,6 +2894,10 @@ function taskCard(t, urgencyLevel = null) {
     const assigneeImg = t.assignee_img || assigneeUser?.avatar_img || '';
     avatarsHtml = avatar(t.assignee_name, t.assignee_color, 'avatar-sm', assigneeImg);
     assigneeMetaHtml = `<span class="task-meta-item" style="display:inline-flex;align-items:center;gap:4px">${svgI(SVG_PATHS.user)} ${t.assignee_name}</span>`;
+    if (t.assignee_id === state.user.id && t.status !== 'pending_review') {
+      const isDone = t.status === 'done';
+      myDoneHtml = `<button class="ma-done-btn ${isDone ? 'done' : ''}" onclick="event.stopPropagation();toggleTaskDone(${t.id},${!isDone},this)" title="${isDone ? 'Отменить выполнение' : 'Задача выполнена'}">${svgI('<polyline points="20 6 9 17 4 12"/>',13)}</button>`;
+    }
   }
 
   const urgentBorder = { overdue: '#DC2626', today: '#EA580C', tomorrow: '#D97706' }[urgencyLevel] || '';
@@ -2943,14 +2947,16 @@ async function toggleMyDone(taskId, done, userId, btn) {
 
     if (btn) btn.disabled = false;
 
-    // Update status badge inside modal without closing
+    const isFinal = result.status === 'done' || result.status === 'pending_review';
     const statusEl = document.getElementById('td-status');
-    if (statusEl && result.status) statusEl.innerHTML = statusBadge(result.status);
+    if (statusEl && !isFinal && result.status) statusEl.innerHTML = statusBadge(result.status);
 
     if (result.status === 'done') toast('Задача выполнена всеми исполнителями! ✅', 'success');
     if (result.status === 'pending_review') toast('Задача отправлена руководителю на проверку', 'info');
 
-    // Re-render background page (modal stays open)
+    // Close the detail modal once the task reaches a final state
+    if (isFinal && document.getElementById('modal-overlay')) closeModal();
+
     if (state.currentPage === 'dashboard') renderDashboard();
     else if (state.currentPage === 'tasks' || state.currentPage === 'mytasks') renderTasksPage();
     else if (state.currentPage === 'project') renderProjectPage(state.currentProjectId);
@@ -2967,6 +2973,38 @@ async function toggleMyDone(taskId, done, userId, btn) {
         btn.classList.toggle('done', !done);
       }
     }
+    toast(e.message, 'error');
+  }
+}
+
+// Single-assignee equivalent of toggleMyDone — used when a task has exactly
+// one assignee (no task_assignees row), so it goes through the regular
+// status field instead of the per-person checklist.
+async function toggleTaskDone(taskId, done, btn) {
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.toggle('done', done);
+  }
+  try {
+    const result = await PUT(`/tasks/${taskId}`, { status: done ? 'done' : 'new' });
+
+    if (btn) btn.disabled = false;
+
+    const isFinal = done && (result.status === 'done' || result.status === 'pending_review');
+    const statusEl = document.getElementById('td-status');
+    if (statusEl && !isFinal && result.status) statusEl.innerHTML = statusBadge(result.status);
+
+    if (result.status === 'done') toast('Задача выполнена! ✅', 'success');
+    if (result.status === 'pending_review') toast('Задача отправлена руководителю на проверку', 'info');
+
+    // Close the detail modal once the task reaches a final state
+    if (isFinal && document.getElementById('modal-overlay')) closeModal();
+
+    if (state.currentPage === 'dashboard') renderDashboard();
+    else if (state.currentPage === 'tasks' || state.currentPage === 'mytasks') renderTasksPage();
+    else if (state.currentPage === 'project') renderProjectPage(state.currentProjectId);
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.classList.toggle('done', !done); }
     toast(e.message, 'error');
   }
 }
@@ -3063,6 +3101,9 @@ async function openTaskDetail(taskId) {
 
           ${canEdit ? `
             <div style="display:flex;gap:10px;margin-bottom:20px">
+              ${!isMultiAssignee && t.assignee_id === state.user.id && t.status !== 'pending_review' ? `
+                <button class="btn ${t.status==='done' ? 'btn-outline' : 'btn-primary'} btn-sm" onclick="toggleTaskDone(${t.id},${t.status!=='done'},this)" style="display:inline-flex;align-items:center;gap:5px">${svgI('<polyline points="20 6 9 17 4 12"/>',13)} ${t.status==='done' ? 'Отменить выполнение' : 'Готово'}</button>
+              ` : ''}
               <button class="btn btn-outline btn-sm" onclick="closeModal();openTaskModal(${t.id})" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.edit)} Редактировать</button>
               ${isAdmin || can('assign_tasks') ? `<button class="btn btn-danger btn-sm" onclick="deleteTask(${t.id})" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.trash)} Удалить</button>` : ''}
             </div>
@@ -3278,7 +3319,7 @@ async function deleteTask(taskId) {
     closeModal();
     toast('Задача удалена', 'success');
     if (state.currentPage === 'dashboard') renderDashboard();
-    else if (state.currentPage === 'tasks') renderTasksPage();
+    else if (state.currentPage === 'tasks' || state.currentPage === 'mytasks') renderTasksPage();
     else if (state.currentPage === 'project') renderProjectPage(state.currentProjectId);
   } catch (err) { toast(err.message, 'error'); }
 }
@@ -3560,7 +3601,7 @@ async function openTaskModal(taskId = null, defaultProjectId = null) {
       closeModal();
       toast(task ? 'Задача обновлена' : 'Задача создана', 'success');
       if (state.currentPage === 'dashboard') renderDashboard();
-      else if (state.currentPage === 'tasks') renderTasksPage();
+      else if (state.currentPage === 'tasks' || state.currentPage === 'mytasks') renderTasksPage();
       else if (state.currentPage === 'project') renderProjectPage(state.currentProjectId);
     } catch (err) {
       toast(err.message, 'error');

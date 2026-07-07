@@ -495,11 +495,16 @@ app.delete('/api/projects/:id/content/month/:ym', auth, requirePerm('manage_proj
 
 // ─── Tasks ────────────────────────────────────────────────────────────────────
 
+// Multi-assignee (task_assignees) records are only used for 2+ assignees.
+// A single assignee is tracked solely via tasks.assignee_id so the task
+// goes through the regular status flow (not the per-person checklist).
 function setTaskAssignees(taskId, userIds) {
   db.prepare('DELETE FROM task_assignees WHERE task_id = ?').run(taskId);
-  userIds.forEach(uid => {
-    db.prepare('INSERT OR IGNORE INTO task_assignees (task_id, user_id) VALUES (?, ?)').run(taskId, uid);
-  });
+  if (userIds.length > 1) {
+    userIds.forEach(uid => {
+      db.prepare('INSERT OR IGNORE INTO task_assignees (task_id, user_id) VALUES (?, ?)').run(taskId, uid);
+    });
+  }
   db.prepare('UPDATE tasks SET assignee_id = ? WHERE id = ?').run(userIds[0] ?? null, taskId);
 }
 
@@ -819,6 +824,32 @@ function calcNextDeadline(deadline, recurrence) {
   return localDt.toISOString().slice(0, 16); // "YYYY-MM-DDTHH:MM"
 }
 
+// Creates the next occurrence of a recurring task. Call once a task's final
+// status becomes 'done' (not 'pending_review' — wait for approval first).
+function spawnRecurringTask(task) {
+  if (!task.recurrence || task.recurrence === 'none') return;
+  const nextDl = calcNextDeadline(task.deadline, task.recurrence);
+  const nextResult = db.prepare(`
+    INSERT INTO tasks (title, description, project_id, assignee_id, created_by, priority, deadline, recurrence)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(task.title, task.description, task.project_id, task.assignee_id,
+         task.created_by, task.priority, nextDl, task.recurrence);
+
+  if (task.assignee_id) {
+    const recurLabels = { daily: 'ежедневная', every2days: 'каждые 2 дня', weekly: 'еженедельная', monthly: 'ежемесячная' };
+    const msg = `🔄 Создана новая ${recurLabels[task.recurrence] || ''} задача: «${task.title}»`;
+    db.prepare(`INSERT INTO notifications (user_id, task_id, type, message) VALUES (?, ?, 'recurring', ?)`)
+      .run(task.assignee_id, nextResult.lastInsertRowid, msg);
+    sendSSE(task.assignee_id, { type: 'new_task', message: msg });
+
+    const assignee = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(task.assignee_id);
+    if (assignee?.telegram_id) {
+      const recurTask = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [nextResult.lastInsertRowid]))[0];
+      if (recurTask) sendTelegramNewTask(assignee.telegram_id, recurTask);
+    }
+  }
+}
+
 app.post('/api/tasks', auth, (req, res) => {
   const { title, description, project_id, assignee_id, assignee_ids, priority, deadline, recurrence } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Название задачи обязательно' });
@@ -938,28 +969,9 @@ app.put('/api/tasks/:id', auth, (req, res) => {
     });
   }
 
-  // Spawn next recurring task when done
-  if (newStatus === 'done' && existing.status !== 'done' && newRecurrence !== 'none') {
-    const nextDl = calcNextDeadline(existing.deadline, newRecurrence);
-    const nextResult = db.prepare(`
-      INSERT INTO tasks (title, description, project_id, assignee_id, created_by, priority, deadline, recurrence)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(existing.title, existing.description, existing.project_id, existing.assignee_id,
-           existing.created_by, existing.priority, nextDl, newRecurrence);
-
-    if (existing.assignee_id) {
-      const recurLabels = { daily: 'ежедневная', every2days: 'каждые 2 дня', weekly: 'еженедельная', monthly: 'ежемесячная' };
-      const msg = `🔄 Создана новая ${recurLabels[newRecurrence] || ''} задача: «${existing.title}»`;
-      db.prepare(`INSERT INTO notifications (user_id, task_id, type, message) VALUES (?, ?, 'recurring', ?)`)
-        .run(existing.assignee_id, nextResult.lastInsertRowid, msg);
-      sendSSE(existing.assignee_id, { type: 'new_task', message: msg });
-
-      const assignee = db.prepare('SELECT telegram_id FROM users WHERE id = ?').get(existing.assignee_id);
-      if (assignee?.telegram_id) {
-        const recurTask = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [nextResult.lastInsertRowid]))[0];
-        if (recurTask) sendTelegramNewTask(assignee.telegram_id, recurTask);
-      }
-    }
+  // Spawn next recurring task when done (not when redirected to pending_review)
+  if (newStatus === 'done' && existing.status !== 'done') {
+    spawnRecurringTask({ ...existing, recurrence: newRecurrence });
   }
 
   const statusLabels = { new: 'Новая', in_progress: 'В работе', done: 'Готово', pending_review: 'На проверке' };
@@ -998,6 +1010,7 @@ app.patch('/api/tasks/:id/my-done', auth, (req, res) => {
   const targetId = (req.user.role === 'admin' && user_id) ? Number(user_id) : req.user.id;
   const row = db.prepare('SELECT * FROM task_assignees WHERE task_id = ? AND user_id = ?').get(req.params.id, targetId);
   if (!row) return res.status(403).json({ error: 'Вы не являетесь исполнителем этой задачи' });
+  const existing = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   db.prepare('UPDATE task_assignees SET done = ?, done_at = ? WHERE task_id = ? AND user_id = ?')
     .run(done ? 1 : 0, done ? localNow() : null, req.params.id, targetId);
   recomputeTaskStatus(req.params.id);
@@ -1010,6 +1023,12 @@ app.patch('/api/tasks/:id/my-done', auth, (req, res) => {
         db.prepare("UPDATE tasks SET status = 'pending_review', updated_at = ? WHERE id = ?").run(localNow(), req.params.id);
       }
     }
+  }
+
+  // ── Spawn next recurring task when done (not when redirected to pending_review) ──
+  const afterStatus = db.prepare('SELECT status FROM tasks WHERE id = ?').get(req.params.id)?.status;
+  if (done && afterStatus === 'done' && existing.status !== 'done') {
+    spawnRecurringTask(existing);
   }
 
   const task = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [req.params.id]))[0];
@@ -1066,6 +1085,8 @@ app.post('/api/tasks/:id/approve', auth, (req, res) => {
 
   db.prepare("UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?").run(localNow(), req.params.id);
   const task = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [req.params.id]))[0];
+
+  spawnRecurringTask(existing);
 
   const message = `Задача «${task.title}» принята и отмечена как выполненная`;
   const notifyIds = new Set();
