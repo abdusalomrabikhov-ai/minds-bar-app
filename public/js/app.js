@@ -243,7 +243,7 @@ function statusBadge(s) {
 function projectBadge(name, color) {
   if (!name) return '';
   const bg = color + '22';
-  return `<span class="project-badge" style="background:${bg};color:${color}">${name}</span>`;
+  return `<span class="project-badge" style="background:${bg};color:${color}">${_escHtml(name)}</span>`;
 }
 
 function deadlineFmt(dt, status) {
@@ -678,7 +678,7 @@ function renderSidebarProjects() {
   list.innerHTML = state.projects.map(p => `
     <div class="project-tree-item" data-page="project" data-id="${p.id}">
       <span class="project-dot" style="background:${p.color}"></span>
-      <span class="label">${p.name}</span>
+      <span class="label">${_escHtml(p.name)}</span>
       ${p.task_count > 0 ? `<span class="project-count">${p.done_count || 0}/${p.task_count}</span>` : ''}
     </div>
   `).join('');
@@ -709,7 +709,7 @@ async function openArchivedProjects() {
         <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1.5px solid var(--border);border-radius:10px;background:var(--bg)">
           <span style="width:12px;height:12px;border-radius:50%;background:${p.color};flex-shrink:0"></span>
           <div style="flex:1">
-            <div style="font-size:14px;font-weight:600;color:var(--text)">${p.name}</div>
+            <div style="font-size:14px;font-weight:600;color:var(--text)">${_escHtml(p.name)}</div>
             <div style="font-size:12px;color:var(--text-muted)">${p.task_count||0} задач · ${p.done_count||0} выполнено</div>
           </div>
           <button class="btn btn-outline btn-sm" onclick="unarchiveProject(${p.id})">Восстановить</button>
@@ -1278,7 +1278,7 @@ function renderMyTasksSummary({ stats, byProject, upcoming }) {
             return `
               <div class="upc-card" onclick="openTaskDetail(${t.id})">
                 <div class="upc-card-top">
-                  <span class="upc-card-title">${t.title}</span>
+                  <span class="upc-card-title">${_escHtml(t.title)}</span>
                   ${initials ? `<div class="upc-card-avatar" style="background:${t.assignee_color || '#881337'}" title="${t.assignee_name}">${initials}</div>` : ''}
                 </div>
                 <div class="upc-card-meta">
@@ -2910,7 +2910,7 @@ function taskCard(t, urgencyLevel = null) {
           ${recurrenceBadge(t.recurrence)}
           ${t.source_content_id ? `<span class="cp-task-badge">Контент-план</span>` : ''}
         </div>
-        <div class="task-title">${t.title}</div>
+        <div class="task-title">${_escHtml(t.title)}</div>
         <div class="task-meta" style="margin-top:6px">
           ${assigneeMetaHtml}
           ${dl}
@@ -3044,7 +3044,7 @@ async function openTaskDetail(taskId) {
                 ${priorityBadge(t.priority)}
                 ${t.project_name ? projectBadge(t.project_name, t.project_color) : ''}
               </div>
-              <div style="font-size:18px;font-weight:700;line-height:1.3">${t.title}</div>
+              <div style="font-size:18px;font-weight:700;line-height:1.3">${_escHtml(t.title)}</div>
               ${t.description ? `<div style="font-size:13.5px;color:#6b7280;margin-top:8px;line-height:1.5;white-space:pre-wrap;word-break:break-word">${_escHtml(t.description)}</div>` : ''}
             </div>
             <button class="modal-close" onclick="closeModal()">✕</button>
@@ -3487,7 +3487,7 @@ async function openTaskModal(taskId = null, defaultProjectId = null) {
   }
 
   const projectOptions = state.projects.map(p =>
-    `<option value="${p.id}" ${(task?.project_id === p.id || String(defaultProjectId) === String(p.id)) ? 'selected' : ''}>${p.name}</option>`
+    `<option value="${p.id}" ${(task?.project_id === p.id || String(defaultProjectId) === String(p.id)) ? 'selected' : ''}>${_escHtml(p.name)}</option>`
   ).join('');
 
   const selectedIds = new Set(
@@ -5212,7 +5212,7 @@ async function loadReport() {
                     ${u.byProject.map(p => `
                       <div class="report-project-row">
                         <div class="report-project-dot" style="background:${p.color}"></div>
-                        <span class="report-project-name">${p.name}</span>
+                        <span class="report-project-name">${_escHtml(p.name)}</span>
                         <span class="report-project-count">${p.done}/${p.total}</span>
                       </div>
                     `).join('')}
@@ -5455,7 +5455,7 @@ async function renderEmployeeProfile(userId, month) {
                     <div class="proj-bar-top">
                       <div style="display:flex;align-items:center;gap:6px">
                         <div style="width:8px;height:8px;border-radius:50%;background:${p.color};flex-shrink:0"></div>
-                        <span class="proj-bar-name">${p.name}</span>
+                        <span class="proj-bar-name">${_escHtml(p.name)}</span>
                       </div>
                       <span class="proj-bar-count">${p.done}/${p.total}</span>
                     </div>
@@ -6105,7 +6105,7 @@ async function exportWorkloadPDF() {
             const p = projById[pid];
             const tc = tcMap[u.id]?.[pid] || { total: 0, done: 0 };
             return `<span style="display:inline-flex;align-items:center;gap:4px;margin:2px 4px 2px 0;padding:2px 7px;border-radius:12px;border:1px solid ${p.color}40;background:${p.color}15;font-size:11px">
-              <span style="width:7px;height:7px;border-radius:50%;background:${p.color};display:inline-block"></span>${p.name} <span style="color:#6b7280">${tc.done}/${tc.total}</span></span>`;
+              <span style="width:7px;height:7px;border-radius:50%;background:${p.color};display:inline-block"></span>${_escHtml(p.name)} <span style="color:#6b7280">${tc.done}/${tc.total}</span></span>`;
           }).join('')
         : '<span style="color:#9ca3af;font-size:11px">—</span>';
       const countText = assignedIds.length === 0 ? '—'
@@ -9135,7 +9135,7 @@ function _showFinanceModal(row) {
             <div style="display:flex;gap:8px">
               <select id="fin-proj-sel" class="input" style="flex:1" onchange="finProjSelect(this)">
                 <option value="">— выбрать из списка —</option>
-                ${proj.map(p=>`<option value="${p.id}|${p.name}" ${row?.project_id===p.id?'selected':''}>${p.name}</option>`).join('')}
+                ${proj.map(p=>`<option value="${p.id}|${_escHtml(p.name)}" ${row?.project_id===p.id?'selected':''}>${_escHtml(p.name)}</option>`).join('')}
               </select>
             </div>
             <input id="fin-proj-name" class="input" style="margin-top:6px" placeholder="Или введите вручную..." value="${_escHtml(row?.project_name||'')}">
