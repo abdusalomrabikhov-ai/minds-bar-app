@@ -728,7 +728,8 @@ async function unarchiveProject(id) {
 }
 
 async function archiveProject(id) {
-  if (!confirm('Архивировать проект? Задачи сохранятся, проект скроется из списка.')) return;
+  const ok = await showConfirmModal({ title: 'Архивировать проект?', message: 'Задачи сохранятся, проект скроется из списка.', confirmLabel: 'Архивировать', confirmClass: 'btn-primary' });
+  if (!ok) return;
   try {
     await PUT(`/projects/${id}/archive`, { archived: true });
     await loadSharedData();
@@ -2260,7 +2261,8 @@ function cpChangeMonth(delta, projectId) {
 
 async function clearCpMonth(projectId) {
   const ym = `${cpYear}-${String(cpMonth + 1).padStart(2, '0')}`;
-  if (!confirm(`Удалить весь контент за ${CP_MONTHS[cpMonth]} ${cpYear}?`)) return;
+  const ok = await showConfirmModal({ title: 'Удалить весь контент?', message: `Весь контент за ${CP_MONTHS[cpMonth]} ${cpYear} будет удалён.`, confirmLabel: 'Удалить' });
+  if (!ok) return;
   await api('DELETE', `/projects/${projectId}/content/month/${ym}`);
   renderProjectContentTab(projectId);
 }
@@ -2606,7 +2608,8 @@ async function cpAddMember(projectId, userId) {
 async function cpRemoveMember(projectId, userId, e) {
   e.stopPropagation();
   const user = state.users.find(u => u.id === userId);
-  if (!confirm(`Удалить ${user?.name || 'участника'} из проекта?\nВсе контент-задачи этого участника по данному проекту будут удалены.`)) return;
+  const ok = await showConfirmModal({ title: `Удалить ${user?.name || 'участника'} из проекта?`, message: 'Все контент-задачи этого участника по данному проекту будут удалены.', confirmLabel: 'Удалить' });
+  if (!ok) return;
   try {
     await api('DELETE', `/projects/${projectId}/members/${userId}`);
     toast(`${user?.name || 'Участник'} удалён из проекта`, 'success');
@@ -3004,7 +3007,7 @@ async function openTaskDetail(taskId) {
                 ${t.project_name ? projectBadge(t.project_name, t.project_color) : ''}
               </div>
               <div style="font-size:18px;font-weight:700;line-height:1.3">${t.title}</div>
-              ${t.description ? `<div style="font-size:13.5px;color:#6b7280;margin-top:8px;line-height:1.5">${t.description}</div>` : ''}
+              ${t.description ? `<div style="font-size:13.5px;color:#6b7280;margin-top:8px;line-height:1.5;white-space:pre-wrap;word-break:break-word">${_escHtml(t.description)}</div>` : ''}
             </div>
             <button class="modal-close" onclick="closeModal()">✕</button>
           </div>
@@ -3268,7 +3271,8 @@ async function submitComment(taskId) {
 }
 
 async function deleteTask(taskId) {
-  if (!confirm('Удалить задачу?')) return;
+  const ok = await showConfirmModal({ title: 'Удалить задачу?', message: 'Это действие необратимо.', confirmLabel: 'Удалить' });
+  if (!ok) return;
   try {
     await DEL('/tasks/' + taskId);
     closeModal();
@@ -3535,7 +3539,8 @@ async function openTaskModal(taskId = null, defaultProjectId = null) {
     if (!title) { toast('Укажите название задачи', 'error'); return; }
     const deadlineVal = document.getElementById('f-deadline').value || null;
     if (deadlineVal && new Date(deadlineVal) < new Date() && !task) {
-      if (!confirm('Указанный срок уже прошёл. Создать задачу с прошедшим дедлайном?')) return;
+      const ok = await showConfirmModal({ title: 'Срок уже прошёл', message: 'Создать задачу с прошедшим дедлайном?', confirmLabel: 'Создать', confirmClass: 'btn-primary' });
+      if (!ok) return;
     }
     const btn = document.getElementById('save-task-btn');
     btn.disabled = true; btn.textContent = 'Сохраняю...';
@@ -3623,7 +3628,8 @@ async function openProjectModal(projectId = null) {
 }
 
 async function deleteProject(id) {
-  if (!confirm('Удалить проект и все его задачи?')) return;
+  const ok = await showConfirmModal({ title: 'Удалить проект?', message: 'Проект и все его задачи будут удалены безвозвратно.', confirmLabel: 'Удалить' });
+  if (!ok) return;
   try {
     await DEL('/projects/' + id);
     await loadSharedData();
@@ -6879,7 +6885,8 @@ async function connectTelegram() {
 }
 
 async function disconnectTelegram() {
-  if (!confirm('Отключить Telegram уведомления?')) return;
+  const ok = await showConfirmModal({ title: 'Отключить Telegram?', message: 'Уведомления перестанут приходить в Telegram.', confirmLabel: 'Отключить', confirmClass: 'btn-primary' });
+  if (!ok) return;
   try {
     await POST('/telegram/disconnect');
     toast('Telegram отключён', 'success');
@@ -7834,7 +7841,7 @@ function openCalEventDetail(eventId) {
         ${_escHtml(start)}${end?' — '+_escHtml(end):''}
       </div>
       ${location ? `<div style="display:flex;gap:10px;align-items:center;font-size:13px;color:var(--text-muted)">${icon('<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>')} ${_escHtml(location)}</div>` : ''}
-      ${desc ? `<div style="display:flex;gap:10px;align-items:flex-start;font-size:13px;color:var(--text)">${icon('<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>')} <span>${_escHtml(desc)}</span></div>` : ''}
+      ${desc ? `<div style="display:flex;gap:10px;align-items:flex-start;font-size:13px;color:var(--text)">${icon('<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>')} <span style="white-space:pre-wrap;word-break:break-word">${_escHtml(desc)}</span></div>` : ''}
       ${attendeesHtml ? `<div style="display:flex;gap:10px;align-items:flex-start">${icon('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>')} ${attendeesHtml}</div>` : ''}
     </div>
     <div class="modal-footer">
@@ -9394,7 +9401,8 @@ let _flSection = '', _flDays = 30;
 let _flShowAll = false;
 
 async function deleteFinanceLog(id) {
-  if (!confirm('Удалить эту запись из лога?')) return;
+  const ok = await showConfirmModal({ title: 'Удалить запись?', message: 'Запись из лога будет удалена безвозвратно.', confirmLabel: 'Удалить' });
+  if (!ok) return;
   try {
     await DEL(`/finance-log/${id}`);
     renderFinanceLogPage();
@@ -9703,7 +9711,8 @@ async function saveIhProject(id) {
 }
 
 async function deleteIhProject(id) {
-  if (!confirm('Удалить проект?')) return;
+  const ok = await showConfirmModal({ title: 'Удалить проект?', message: 'Действие необратимо.', confirmLabel: 'Удалить' });
+  if (!ok) return;
   await DEL(`/ideahast/${id}`); closeModal(); renderIdeahastPage(); toast('Удалено','success');
 }
 
@@ -9993,7 +10002,8 @@ async function saveSecCourse(sec,id) {
   try { if(id&&id!=='null') await PUT(`/${api}/courses/${id}`,body); else { const r=await POST(`/${api}/courses`,body); _secState[sec].courseId=r.id; } closeModal(); renderSectionPage(sec); toast('Сохранено','success'); } catch(err){ toast(err.message,'error'); }
 }
 async function deleteSecCourse(sec,id) {
-  if(!confirm('Удалить курс и всех студентов?')) return;
+  const ok = await showConfirmModal({ title: 'Удалить курс?', message: 'Курс и все студенты будут удалены безвозвратно.', confirmLabel: 'Удалить' });
+  if (!ok) return;
   await DEL(`/${_secState[sec].api}/courses/${id}`); _secState[sec].courseId=null; closeModal(); renderSectionPage(sec); toast('Удалено','success');
 }
 function openSecPaymentModal(sec,courseId,paymentId=null) {
@@ -10052,7 +10062,8 @@ async function saveSecPayment(sec,courseId,id){
   try{ if(id&&id!=='null') await PUT(`/${api}/payments/${id}`,body); else await POST(`/${api}/courses/${courseId}/payments`,body); closeModal(); renderSectionCourse(sec,courseId); toast('Сохранено','success'); } catch(err){toast(err.message,'error');}
 }
 async function deleteSecPayment(sec,id,courseId){
-  if(!confirm('Удалить студента?')) return;
+  const ok = await showConfirmModal({ title: 'Удалить студента?', message: 'Запись о студенте будет удалена безвозвратно.', confirmLabel: 'Удалить' });
+  if (!ok) return;
   await DEL(`/${_secState[sec].api}/payments/${id}`); closeModal(); renderSectionCourse(sec,courseId); toast('Удалено','success');
 }
 async function exportSecExcel(sec,courseId){
@@ -10452,7 +10463,8 @@ async function saveB2CCourse(id) {
 }
 
 async function deleteB2CCourse(id) {
-  if (!confirm('Удалить курс и всех студентов?')) return;
+  const ok = await showConfirmModal({ title: 'Удалить курс?', message: 'Курс и все студенты будут удалены безвозвратно.', confirmLabel: 'Удалить' });
+  if (!ok) return;
   await DEL(`/b2c/courses/${id}`); _b2cCourseId=null; closeModal(); renderB2CPage(); toast('Удалено','success');
 }
 
@@ -10567,7 +10579,8 @@ async function saveB2CPayment(courseId, id) {
 }
 
 async function deleteB2CPayment(id, courseId) {
-  if (!confirm('Удалить студента?')) return;
+  const ok = await showConfirmModal({ title: 'Удалить студента?', message: 'Запись о студенте будет удалена безвозвратно.', confirmLabel: 'Удалить' });
+  if (!ok) return;
   await DEL(`/b2c/payments/${id}`); closeModal(); renderB2CCourse(courseId); toast('Удалено','success');
 }
 
@@ -10900,7 +10913,8 @@ async function saveScheduleEvent(id) {
 }
 
 async function deleteScheduleEvent(id) {
-  if (!confirm('Удалить эту занятость?')) return;
+  const ok = await showConfirmModal({ title: 'Удалить занятость?', message: 'Запись будет удалена безвозвратно.', confirmLabel: 'Удалить' });
+  if (!ok) return;
   try {
     await DEL(`/schedule/${id}`);
     closeModal();
@@ -11009,7 +11023,8 @@ function openFeedbackForm() {
 }
 
 async function deleteFeedback(id) {
-  if (!confirm('Удалить этот ответ навсегда? Действие необратимо.')) return;
+  const ok = await showConfirmModal({ title: 'Удалить ответ?', message: 'Действие необратимо.', confirmLabel: 'Удалить' });
+  if (!ok) return;
   try {
     await DEL(`/feedback/${id}`);
     window._fbAllRows = window._fbAllRows?.filter(r => r.id !== id);
