@@ -3616,3 +3616,8 @@ body.dark, [data-theme="dark"] { color-scheme: dark; }
 .ts-col-day { width: 32px; min-width: 32px; }
 .ts-col-total { width: 48px; min-width: 48px; }
 .ts-salary, .ts-bonus, .ts-advance, .ts-earned { width: 72px; min-width: 72px; text-align: right; }
+
+/* ─── Touch target sizing (mobile) ──────────────────────────────────────── */
+@media (max-width: 768px) {
+  .btn, .ma-done-btn, .task-card button, .modal-close { min-height: 44px; min-width: 44px; }
+}

@@ -35,9 +35,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 if (!process.env.JWT_SECRET) {
-  console.warn('⚠️  JWT_SECRET not set in .env — using insecure default. Set a random 256-bit secret in production.');
+  console.error('❌ JWT_SECRET is required. Set it in .env before starting the server.');
+  process.exit(1);
 }
-const JWT_SECRET = process.env.JWT_SECRET || 'teamtask-secret-key-change-me';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // Timezone helpers — Dushanbe is UTC+5
 const TZ_OFFSET = 5;
@@ -158,7 +159,7 @@ app.post('/api/auth/login', loginLimiter, (req, res) => {
   if (!user || !bcrypt.compareSync(password, user.password)) {
     return res.status(401).json({ error: 'Неверный email или пароль' });
   }
-  const token = jwt.sign({ id: user.id, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '30d' });
+  const token = jwt.sign({ id: user.id, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '7d' });
   logActivity(user.id, 'login');
   res.json({ token, user: { id: user.id, name: user.name, role: user.role, email: user.email, avatar_color: user.avatar_color, permissions: parsePerms(user.permissions) } });
 });
@@ -1290,6 +1291,10 @@ app.delete('/api/users/:id', auth, adminOnly, (req, res) => {
     return res.status(400).json({ error: 'Нельзя удалить себя' });
   }
   const deletedUser = db.prepare('SELECT name FROM users WHERE id = ?').get(req.params.id);
+  const hasCreatedTasks = db.prepare('SELECT 1 FROM tasks WHERE created_by = ? LIMIT 1').get(req.params.id);
+  if (hasCreatedTasks) {
+    return res.status(400).json({ error: 'Нельзя удалить — пользователь является автором задач. Переназначьте задачи и попробуйте снова.' });
+  }
   db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
   logActivity(req.user.id, 'user_deleted', 'user', parseInt(req.params.id), deletedUser?.name);
   res.json({ ok: true });
@@ -3167,6 +3172,12 @@ function sendPushToUser(userId, payload) {
   }
 }
 module.exports = { sendPushToUser };
+
+// ─── Global error handler — must be last, after all routes ────────────────────
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+});
 
 initDB();
 startScheduler(sseClients);
