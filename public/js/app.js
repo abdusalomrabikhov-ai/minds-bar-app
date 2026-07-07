@@ -7475,7 +7475,7 @@ function _calRender() {
           draggable="true"
           ondragstart="event.stopPropagation();_calDragStart(event,'${ev.id}')"
           ondragend="_calDragEnd(event)"
-          onclick="event.stopPropagation();openCalEventDetail('${_escHtml(ev.id)}')">
+          onclick="event.stopPropagation();openCalEventDetail('${_escHtml(ev.id)}','${_escHtml(ev.start?.dateTime||'')}')">
           ${time ? `<span>${time}</span> ` : ''}${_escHtml(title.slice(0,20))}${title.length>20?'…':''}
         </div>`);
       } else {
@@ -7485,7 +7485,7 @@ function _calRender() {
           draggable="true"
           ondragstart="event.stopPropagation();_calDragStart(event,'${ev.id}')"
           ondragend="_calDragEnd(event)"
-          onclick="event.stopPropagation();openCalEventDetail('${_escHtml(ev.id)}')"> </div>`);
+          onclick="event.stopPropagation();openCalEventDetail('${_escHtml(ev.id)}','${_escHtml(ev.start?.dateTime||'')}')"> </div>`);
       }
     }
     const moreHtml = hiddenCount > 0 ? `<div class="cal-ev-more">+${hiddenCount} ещё</div>` : '';
@@ -7858,8 +7858,12 @@ async function saveCalEvent() {
   } catch(e) { toast('Ошибка: ' + e.message, 'error'); }
 }
 
-function openCalEventDetail(eventId) {
-  const ev = _calEvents.find(e => e.id == eventId);
+function openCalEventDetail(eventId, occurrenceStart) {
+  // Recurring events expand into multiple occurrences that share the same id —
+  // match on start time too, otherwise this always resolves to the first occurrence.
+  const ev = occurrenceStart
+    ? (_calEvents.find(e => e.id == eventId && e.start?.dateTime === occurrenceStart) || _calEvents.find(e => e.id == eventId))
+    : _calEvents.find(e => e.id == eventId);
   if (!ev) return;
   const title    = ev.summary || '(без названия)';
   const start    = ev.start?.dateTime ? new Date(ev.start.dateTime).toLocaleString('ru',{day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'}) : '';
