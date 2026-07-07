@@ -24,6 +24,22 @@ function wrap(stmt) {
 const _prepare = db.prepare.bind(db);
 db.prepare = (sql) => wrap(_prepare(sql));
 
+// better-sqlite3-style transaction wrapper: db.transaction(fn) returns a
+// function that runs fn inside BEGIN/COMMIT, rolling back on any throw.
+db.transaction = (fn) => {
+  return (...args) => {
+    db.exec('BEGIN');
+    try {
+      const result = fn(...args);
+      db.exec('COMMIT');
+      return result;
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+  };
+};
+
 db.exec('PRAGMA journal_mode = WAL');
 db.exec('PRAGMA foreign_keys = ON');
 db.exec('PRAGMA synchronous = NORMAL');
@@ -50,6 +66,11 @@ function initDB() {
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_expenses_month ON expenses(month)'); } catch {}
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_source_content ON tasks(source_content_id)'); } catch {}
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, read)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_finance_payments_finance ON finance_payments(finance_id)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_b2c_payments_course ON b2c_payments(course_id)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_kids_payments_course ON kids_payments(course_id)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_hr_position_history_emp ON hr_position_history(employee_id)'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_hr_salary_history_emp ON hr_salary_history(employee_id)'); } catch {}
 
   // Migrations
   try { db.exec('ALTER TABLE users ADD COLUMN archived INTEGER DEFAULT 0'); } catch {}
@@ -112,6 +133,7 @@ function initDB() {
   try { db.exec("ALTER TABLE tasks ADD COLUMN recurrence TEXT DEFAULT 'none'"); } catch {}
   try { db.exec("ALTER TABLE users ADD COLUMN permissions TEXT DEFAULT '{}'"); } catch {}
   try { db.exec("ALTER TABLE users ADD COLUMN avatar_img TEXT DEFAULT NULL"); } catch {}
+  try { db.exec("ALTER TABLE users ADD COLUMN telegram_token_expires DATETIME DEFAULT NULL"); } catch {}
   try { db.exec(`CREATE TABLE IF NOT EXISTS content_plan (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,

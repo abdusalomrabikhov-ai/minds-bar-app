@@ -19,7 +19,10 @@ if (BOT_TOKEN && process.env.NODE_ENV === 'production') {
     if (WEBHOOK_URL) {
       // Webhook mode — no polling, no 409 conflicts on redeploy
       bot = new TelegramBot(BOT_TOKEN, { webHook: false });
-      bot.setWebHook(WEBHOOK_URL)
+      const webhookOpts = process.env.TELEGRAM_WEBHOOK_SECRET
+        ? { secret_token: process.env.TELEGRAM_WEBHOOK_SECRET }
+        : undefined;
+      bot.setWebHook(WEBHOOK_URL, webhookOpts)
         .then(() => console.log('🤖 Telegram бот запущен (webhook):', WEBHOOK_URL))
         .catch(e => console.error('⚠️  Webhook error:', e.message));
     } else {
@@ -34,13 +37,16 @@ if (BOT_TOKEN && process.env.NODE_ENV === 'production') {
 
       if (token) {
         const user = db.prepare('SELECT * FROM users WHERE telegram_token = ?').get(token);
-        if (user) {
-          db.prepare('UPDATE users SET telegram_id = ?, telegram_token = NULL WHERE id = ?')
+        const expired = user?.telegram_token_expires && new Date(user.telegram_token_expires) < new Date();
+        if (user && !expired) {
+          db.prepare('UPDATE users SET telegram_id = ?, telegram_token = NULL, telegram_token_expires = NULL WHERE id = ?')
             .run(String(chatId), user.id);
           bot.sendMessage(chatId,
             `✅ *Аккаунт привязан!*\n\nПривет, ${user.name}\\! Теперь вы будете получать уведомления о задачах здесь\\.`,
             { parse_mode: 'MarkdownV2' }
           );
+        } else if (expired) {
+          bot.sendMessage(chatId, '❌ Код истёк. Запросите новый код в разделе Настройки платформы.');
         } else {
           bot.sendMessage(chatId, '❌ Неверный код. Попробуйте снова в разделе Настройки платформы.');
         }

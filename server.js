@@ -68,7 +68,18 @@ function updateReviewBadgeSSE() {
 app.use(compression({
   filter: (req, res) => req.path === '/api/events' ? false : compression.filter(req, res)
 }));
-app.use(cors());
+const ALLOWED_ORIGINS = [
+  'https://bar.mindstech.io',
+  'https://minds-bar-app-production.up.railway.app',
+];
+app.use(cors({
+  origin: (origin, cb) => {
+    // No Origin header (curl, server-to-server, Electron BrowserWindow same-origin
+    // navigation) — allow. Only block cross-origin browser requests from unknown sites.
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    cb(new Error('Not allowed by CORS'));
+  },
+}));
 app.use(express.json({ limit: '4mb' }));
 // Versioned assets (app.js?v=N, style.css?v=N) get long-lived cache; HTML never cached
 app.use((req, res, next) => {
@@ -138,6 +149,10 @@ function requirePerm(perm) {
 
 // ─── Telegram Webhook ─────────────────────────────────────────────────────────
 app.post(WEBHOOK_PATH, (req, res) => {
+  if (process.env.TELEGRAM_WEBHOOK_SECRET &&
+      req.headers['x-telegram-bot-api-secret-token'] !== process.env.TELEGRAM_WEBHOOK_SECRET) {
+    return res.sendStatus(401);
+  }
   processWebhookUpdate(req.body);
   res.sendStatus(200);
 });
@@ -256,6 +271,13 @@ app.put('/api/projects/:id', auth, requirePerm('manage_projects'), (req, res) =>
   res.json(project);
 });
 
+const deleteProjectCascade = db.transaction((projectId) => {
+  db.prepare('DELETE FROM notifications WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)').run(projectId);
+  db.prepare('DELETE FROM comments WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)').run(projectId);
+  db.prepare('DELETE FROM tasks WHERE project_id = ?').run(projectId);
+  db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
+});
+
 app.delete('/api/projects/:id', auth, requirePerm('manage_projects'), (req, res) => {
   const proj = db.prepare('SELECT name FROM projects WHERE id = ?').get(req.params.id);
   // Notify assigned employees before cascade-deletion so they know why tasks disappeared
@@ -263,10 +285,7 @@ app.delete('/api/projects/:id', auth, requirePerm('manage_projects'), (req, res)
     SELECT DISTINCT ta.user_id FROM task_assignees ta
     JOIN tasks t ON t.id = ta.task_id WHERE t.project_id = ?
   `).all(req.params.id);
-  db.prepare('DELETE FROM notifications WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)').run(req.params.id);
-  db.prepare('DELETE FROM comments WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)').run(req.params.id);
-  db.prepare('DELETE FROM tasks WHERE project_id = ?').run(req.params.id);
-  db.prepare('DELETE FROM projects WHERE id = ?').run(req.params.id);
+  deleteProjectCascade(req.params.id);
   sendSSEAll({ type: 'project_deleted', id: parseInt(req.params.id) });
   affectedUsers.forEach(({ user_id }) => {
     if (user_id !== req.user.id) {
@@ -1057,6 +1076,12 @@ app.patch('/api/tasks/:id/my-done', auth, (req, res) => {
   res.json({ ok: true, status: task?.status });
 });
 
+const deleteTaskCascade = db.transaction((taskId) => {
+  db.prepare('DELETE FROM notifications WHERE task_id = ?').run(taskId);
+  db.prepare('DELETE FROM comments WHERE task_id = ?').run(taskId);
+  db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
+});
+
 app.delete('/api/tasks/:id', auth, (req, res) => {
   const perms = parsePerms(req.user.permissions);
   if (req.user.role !== 'admin' && !perms.assign_tasks) {
@@ -1070,9 +1095,7 @@ app.delete('/api/tasks/:id', auth, (req, res) => {
     const isCreator = task.created_by === req.user.id;
     if (!isAssigned && !isCreator) return res.status(403).json({ error: 'Можно удалять только свои задачи' });
   }
-  db.prepare('DELETE FROM notifications WHERE task_id = ?').run(req.params.id);
-  db.prepare('DELETE FROM comments WHERE task_id = ?').run(req.params.id);
-  db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
+  deleteTaskCascade(req.params.id);
   sendSSEAll({ type: 'task_deleted', id: parseInt(req.params.id) });
   logActivity(req.user.id, 'task_deleted', 'task', parseInt(req.params.id), task?.title);
   res.json({ ok: true });
@@ -1315,8 +1338,9 @@ app.post('/api/profile/avatar', auth, (req, res) => {
 // ─── Telegram ─────────────────────────────────────────────────────────────────
 
 app.post('/api/telegram/token', auth, (req, res) => {
-  const token = Math.random().toString(36).substring(2, 8).toUpperCase();
-  db.prepare('UPDATE users SET telegram_token = ? WHERE id = ?').run(token, req.user.id);
+  const token = String(crypto.randomInt(100000, 999999));
+  const expires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  db.prepare('UPDATE users SET telegram_token = ?, telegram_token_expires = ? WHERE id = ?').run(token, expires, req.user.id);
   const botName = process.env.TELEGRAM_BOT_USERNAME || 'ваш_бот';
   res.json({ token, link: `https://t.me/${botName}?start=${token}` });
 });
