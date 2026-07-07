@@ -15,7 +15,7 @@
 
 ## Кэш и деплой
 
-- CSS **и JS** кэшируются через `?v=N` в `index.html` — бампать версию при каждом деплое изменений соответствующего файла, иначе правки не долетают до браузеров (assets кэшируются `immutable` на год). Текущие: `style.css?v=29`, `app.js?v=15`.
+- CSS **и JS** кэшируются через `?v=N` в `index.html` — бампать версию при каждом деплое изменений соответствующего файла, иначе правки не долетают до браузеров (assets кэшируются `immutable` на год). Текущие: `style.css?v=30`, `app.js?v=16`.
 - Подробности деплоя — см. `DEPLOY.md`.
 - Домен `bar.mindstech.io` подключён к Railway (CNAME + TXT verify записи в DNS mindstech.io).
 
@@ -27,11 +27,15 @@
 - **SQLite `LOWER()` — ASCII-only**, не лоуеркейзит кириллицу. Для case-insensitive сравнения кириллического текста в SQL использовать `lower_u()` (custom function, зарегистрирована в `database.js` через `db.function()`, backed by JS `.toLowerCase()`), не встроенный `LOWER()`.
 - **Задачи**: одиночный исполнитель = обычный `tasks.status`, 2+ исполнителя = `task_assignees` (чеклист-формат, `PATCH .../my-done`). Любое место, меняющее статус на `done` (PUT, my-done, approve), должно вызывать `spawnRecurringTask()` — три существующих места уже это делают, если добавляется новый способ завершить задачу, не забыть про recurring.
 - **Календарь**: повторяющиеся события — одна строка в БД, occurrences считаются на лету (`_calExpandRecurring`) и **все делят один и тот же `id`**. Любой код, работающий с конкретным occurrence (detail modal, delete, edit), обязан матчить по `id` **и** `start.dateTime` вместе — иначе всегда резолвится первое вхождение серии.
+- **CORS**: ограничен списком `ALLOWED_ORIGINS` в server.js (bar.mindstech.io + railway domain). Запросы без Origin header (curl, Electron same-origin) всегда проходят. Новый клиентский домен — добавить в список.
+- **Транзакции**: `db.transaction(fn)` доступна в database.js (better-sqlite3-style). Используется на project/task delete каскадах. Новые многошаговые DELETE/UPDATE — оборачивать так же.
+- **Telegram**: `TELEGRAM_WEBHOOK_SECRET` опционален — если не задан в Railway, webhook работает без проверки secret token (backward-compat). Установить переменную = включить проверку без доп. кода.
 
 ## Лог изменений
 
 (новые записи сверху)
 
+- 2026-07-07 — fix: полный security-аудит (16 находок), 4 коммита. Критично: IDOR в GET /api/tasks/:id (нет canAccessTask), XSS через title/name в 12 местах, удалён мёртвый seed-эндпоинт с реальными bcrypt-хешами 16 аккаунтов из исходников (git history не чистили — пароли стоит сменить отдельно). Важно: JWT_SECRET fatal вместо fallback, JWT 30d→7d, global error handler, DELETE user не падает с FK error, mobile touch targets 44px. Желательно: CORS ограничен, Telegram token TTL+webhook secret, транзакции на каскадных удалениях, 5 индексов добавлено. Cleanup: мёртвый Google OAuth код + googleapis зависимость удалены. Не сделано (по решению юзера): git history rewrite, GET /api/users permissions restriction, JWT invalidation по смене пароля, доп. mobile breakpoints (нужен визуальный проход). Полный отчёт был в отдельном Artifact.
 - 2026-07-07 — fix: удаление occurrence повторяющегося календарного события ("это и все последующие") удаляло всю серию — openCalEventDetail() матчил только по id (все occurrences делят один id), всегда резолвя первое вхождение вместо того на которое кликнул юзер. Теперь матчит по id+start.dateTime.
 - 2026-07-07 — fix: повторяющиеся задачи не спавнили следующую через checklist/approve пути (только через обычный PUT-статус) — вынесено в shared spawnRecurringTask(), вызывается из всех трёх мест. Root cause: одиночный исполнитель ошибочно создавал task_assignees запись — setTaskAssignees() теперь только для 2+ исполнителей. Побочный эффект пришлось чинить: одиночные задачи потеряли единственный способ отметить "готово" (кнопка рендерилась только для мульти) — добавлена toggleTaskDone() + кнопка в карточке/detail. Detail-модалка теперь закрывается сама при финальном статусе (done/pending_review), но не при частичном мульти-завершении. deleteTask/save-задачи теперь также обновляют страницу "Мои задачи" (раньше только "Все задачи").
 - 2026-07-07 — fix: описание задачи/календарного события теряло переносы строк (нет white-space:pre-wrap на detail-view). Заодно task description теперь экранируется (_escHtml) — раньше вставлялся сырым, XSS-риск. Отдельно: убраны последние нативные confirm() (16 мест) в пользу showConfirmModal() — finance/kids/b2c удаление курса/студента, задачи, проекты, content-plan, расписание, feedback, telegram disconnect.
