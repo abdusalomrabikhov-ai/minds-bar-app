@@ -19,10 +19,17 @@ function sendSSE(userId, data) {
 
 // Returns all (task, user) pairs for tasks with deadline in [fromISO, toISO].
 // Handles both date-only deadlines ("2026-06-21") and datetime deadlines.
+// A date-only deadline means "end of that day" (23:59:59), matching how the
+// frontend computes "time until deadline" for such tasks — comparing the bare
+// date string against a same-day window would otherwise match all day long,
+// firing the "1 hour left" notification any time on the deadline day.
 // Covers both legacy single-assignee and multi-assignee (task_assignees) tasks.
 function getTasksWithDeadline(fromISO, toISO, notifType, cooldownHours) {
-  const fromDate = fromISO.slice(0, 10);
-  const toDate = toISO.slice(0, 10);
+  const dateWhere = `(
+    (length(t.deadline) > 10 AND t.deadline BETWEEN ? AND ?)
+    OR (length(t.deadline) <= 10 AND (t.deadline || 'T23:59:59') BETWEEN ? AND ?)
+  )`;
+  const params = [fromISO, toISO, fromISO, toISO];
 
   // Single-assignee tasks (no task_assignees rows)
   const single = db.prepare(`
@@ -30,17 +37,14 @@ function getTasksWithDeadline(fromISO, toISO, notifType, cooldownHours) {
     FROM tasks t
     JOIN users u ON u.id = t.assignee_id
     WHERE t.status != 'done'
-      AND (
-        (length(t.deadline) > 10 AND t.deadline BETWEEN ? AND ?)
-        OR (length(t.deadline) <= 10 AND t.deadline BETWEEN ? AND ?)
-      )
+      AND ${dateWhere}
       AND NOT EXISTS (SELECT 1 FROM task_assignees WHERE task_id = t.id)
       AND NOT EXISTS (
         SELECT 1 FROM notifications n
         WHERE n.task_id = t.id AND n.user_id = u.id AND n.type = ?
           AND n.created_at > datetime('now', '-${cooldownHours} hours')
       )
-  `).all(fromISO, toISO, fromDate, toDate, notifType);
+  `).all(...params, notifType);
 
   // Multi-assignee tasks — notify each assignee who hasn't done their part
   const multi = db.prepare(`
@@ -49,16 +53,13 @@ function getTasksWithDeadline(fromISO, toISO, notifType, cooldownHours) {
     JOIN task_assignees ta ON ta.task_id = t.id AND ta.done = 0
     JOIN users u ON u.id = ta.user_id
     WHERE t.status != 'done'
-      AND (
-        (length(t.deadline) > 10 AND t.deadline BETWEEN ? AND ?)
-        OR (length(t.deadline) <= 10 AND t.deadline BETWEEN ? AND ?)
-      )
+      AND ${dateWhere}
       AND NOT EXISTS (
         SELECT 1 FROM notifications n
         WHERE n.task_id = t.id AND n.user_id = u.id AND n.type = ?
           AND n.created_at > datetime('now', '-${cooldownHours} hours')
       )
-  `).all(fromISO, toISO, fromDate, toDate, notifType);
+  `).all(...params, notifType);
 
   return [...single, ...multi];
 }
