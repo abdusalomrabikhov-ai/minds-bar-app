@@ -9,9 +9,12 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/img/icon-180.png">
   <meta name="theme-color" content="#881237">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="/css/style.css?v=30">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="TeamTask">
+  <link rel="preload" href="/fonts/gotham_book.woff2?v=1" as="font" type="font/woff2">
+  <link rel="preload" href="/fonts/gotham_bold.woff2?v=1" as="font" type="font/woff2">
+  <link rel="stylesheet" href="/css/style.min.css?v=38">
 </head>
 <body>
 
@@ -31,7 +34,7 @@
       <form id="login-form">
         <div class="form-group">
           <label>Email</label>
-          <input type="email" id="login-email" placeholder="admin@teamtask.com" required>
+          <input type="email" id="login-email" placeholder="name@minds.com" required>
         </div>
         <div class="form-group">
           <label>Пароль</label>
@@ -278,7 +281,7 @@
 <!-- ─── TOASTS ────────────────────────────────────────────────────────────── -->
 <div class="toast-container" id="toast-container"></div>
 
-<script src="/js/app.js?v=16"></script>
+<script src="/js/app.min.js?v=23"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(e => console.warn('SW:', e));

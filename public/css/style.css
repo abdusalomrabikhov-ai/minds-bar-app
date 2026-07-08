@@ -1,15 +1,18 @@
-/* ─── Google Font: Plus Jakarta Sans ─────────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-
-/* ─── Gotham Font (fallback / kept for legacy) ──────────────────────────── */
-@font-face { font-family: 'Gotham'; src: url('/fonts/gotham_thin.otf') format('opentype'); font-weight: 100; font-style: normal; }
-@font-face { font-family: 'Gotham'; src: url('/fonts/gotham_light.otf') format('opentype'); font-weight: 300; font-style: normal; }
-@font-face { font-family: 'Gotham'; src: url('/fonts/gotham_book.otf') format('opentype'); font-weight: 400; font-style: normal; }
-@font-face { font-family: 'Gotham'; src: url('/fonts/gotham_medium.otf') format('opentype'); font-weight: 500; font-style: normal; }
-@font-face { font-family: 'Gotham'; src: url('/fonts/gotham_bold.otf') format('opentype'); font-weight: 700; font-style: normal; }
-@font-face { font-family: 'Gotham'; src: url('/fonts/gotham_black.otf') format('opentype'); font-weight: 900; font-style: normal; }
-@font-face { font-family: 'Gotham Pro'; src: url('/fonts/gothampro.ttf') format('truetype'); font-weight: 400; font-style: normal; }
-@font-face { font-family: 'Gotham Pro'; src: url('/fonts/gothampro_bold.ttf') format('truetype'); font-weight: 700; font-style: normal; }
+/* ─── Gotham (primary font) ────────────────────────────────────────────── */
+@font-face {
+  font-family: 'Gotham';
+  src: url('/fonts/gotham_book.woff2?v=1') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Gotham';
+  src: url('/fonts/gotham_bold.woff2?v=1') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
 
 /* ─── Variables — Light theme (design) ──────────────────────────────────── */
 :root {
@@ -105,11 +108,11 @@
 }
 
 /* ─── Reset ─────────────────────────────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 img { outline: none; border: none; }
 html, body {
   height: 100%;
-  font-family: 'Plus Jakarta Sans', 'Gotham', system-ui, -apple-system, sans-serif;
+  font-family: 'Gotham', system-ui, -apple-system, sans-serif;
   font-size: 14px; color: var(--text); background: var(--bg);
   -webkit-font-smoothing: antialiased;
 }
@@ -1202,10 +1205,10 @@ input, textarea, select { font: inherit; }
   width: 100%; padding: 9px 12px; border: 1.5px solid var(--border);
   border-radius: var(--radius-sm); font-size: 13.5px; outline: none;
   transition: var(--transition); background: var(--surface); color: var(--text);
-  font-family: 'Gotham', 'Gotham Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'Gotham', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 .field select option, select option {
-  font-family: 'Gotham', 'Gotham Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'Gotham', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 .field input:focus, .field select:focus, .field textarea:focus {
   border-color: var(--primary); box-shadow: 0 0 0 3px rgba(136,19,55,0.07);
@@ -1705,6 +1708,12 @@ input, textarea, select { font: inherit; }
 /* ─── Google Calendar ───────────────────────────────────────────────────── */
 .cal-page { display: flex; flex-direction: column; gap: 16px; }
 .cal-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.cal-view-select {
+  padding: 7px 12px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 13px; font-weight: 600;
+  background: var(--surface); color: var(--text); cursor: pointer; outline: none; transition: var(--transition);
+}
+.cal-view-select:hover { border-color: var(--primary); }
+.cal-view-select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(136,19,55,0.07); }
 .cal-grid-wrap { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
 .cal-head-row { display: grid; grid-template-columns: repeat(7,1fr); border-bottom: 1px solid var(--border); }
 .cal-head-cell { padding: 10px 0; text-align: center; font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
@@ -1732,6 +1741,79 @@ input, textarea, select { font: inherit; }
 .cal-ev:hover { opacity: 0.85; }
 .cal-ev span { flex-shrink: 0; opacity: 0.85; }
 .cal-ev-more { font-size: 10px; color: var(--text-muted); padding: 1px 4px; }
+
+/* ─── Time-grid views (Day / 4-day / Week) ──────────────────────────────── */
+:root { --cal-hour-h: 48px; }
+.cal-timegrid-wrap { display: flex; flex-direction: column; max-height: calc(100vh - 220px); }
+.cal-timegrid-header {
+  display: grid; position: sticky; top: 0; z-index: 2;
+  background: var(--card-bg); border-bottom: 1px solid var(--border);
+}
+.cal-hour-gutter-spacer { border-right: 1px solid var(--border); }
+.cal-tg-head-cell {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 8px 0; border-right: 1px solid var(--border); gap: 4px;
+}
+.cal-timegrid-header .cal-tg-head-cell:last-child { border-right: none; }
+.cal-tg-head-dow { font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.cal-tg-head-num { font-size: 15px; font-weight: 700; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%; }
+.cal-tg-head-today .cal-tg-head-dow { color: var(--primary); }
+.cal-timegrid-allday { display: grid; border-bottom: 1px solid var(--border); }
+.cal-allday-col { padding: 3px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
+.cal-timegrid-allday .cal-day-col:last-child { border-right: none; }
+.cal-tg-allday { font-size: 11px; padding: 2px 6px; }
+.cal-timegrid-body { display: grid; grid-template-columns: 56px 1fr; overflow-y: auto; flex: 1; }
+.cal-hour-gutter { border-right: 1px solid var(--border); }
+.cal-hour-label {
+  font-size: 11px; color: var(--text-muted); text-align: right; padding-right: 8px;
+  transform: translateY(-7px); box-sizing: border-box;
+}
+.cal-timegrid-cols { display: grid; position: relative; }
+.cal-day-col { position: relative; border-right: 1px solid var(--border); }
+.cal-timegrid-cols .cal-day-col:last-child { border-right: none; }
+.cal-hour-row { border-top: 1px solid var(--border); box-sizing: border-box; cursor: pointer; }
+.cal-hour-row:hover { background: var(--bg); }
+.cal-day-col.drag-over { background: rgba(136,18,55,0.06); }
+.cal-tg-ev {
+  position: absolute; overflow: hidden; padding: 3px 6px; box-sizing: border-box;
+  flex-direction: column; align-items: flex-start; z-index: 1;
+}
+.cal-tg-ev span { opacity: 0.85; font-size: 10px; }
+.cal-now-line { position: absolute; left: 0; right: 0; height: 2px; background: #e11d48; z-index: 3; pointer-events: none; }
+.cal-now-line::before {
+  content: ''; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px;
+  border-radius: 50%; background: #e11d48;
+}
+.cal-view-select { margin-right: 4px; }
+
+/* ─── Year view ──────────────────────────────────────────────────────────── */
+.cal-year-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; }
+.cal-year-month { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+.cal-year-month-title { font-size: 13px; font-weight: 700; margin-bottom: 8px; text-align: center; }
+.cal-year-dow-row { display: grid; grid-template-columns: repeat(7,1fr); margin-bottom: 4px; }
+.cal-year-dow-row span { font-size: 9px; color: var(--text-muted); text-align: center; text-transform: uppercase; }
+.cal-year-days { display: grid; grid-template-columns: repeat(7,1fr); gap: 2px; }
+.cal-year-day {
+  font-size: 10px; text-align: center; padding: 3px 0; border-radius: 4px; cursor: pointer; color: var(--text);
+}
+.cal-year-day:hover { background: var(--bg); }
+.cal-year-day-empty { cursor: default; }
+.cal-year-day-empty:hover { background: none; }
+.cal-year-day-today { background: var(--primary); color: #fff; font-weight: 700; }
+
+/* ─── Agenda / Schedule view ─────────────────────────────────────────────── */
+.cal-agenda-list { padding: 8px 0; }
+.cal-agenda-day-group { padding: 4px 0; }
+.cal-agenda-date-header { font-size: 13px; font-weight: 700; color: var(--text); padding: 10px 20px 6px; }
+.cal-agenda-row {
+  display: flex; gap: 16px; padding: 10px 20px; cursor: pointer; align-items: baseline;
+  border-left: 3px solid #881237; margin: 0 20px 4px; border-radius: 0 8px 8px 0; background: var(--bg);
+}
+.cal-agenda-row:hover { background: rgba(136,18,55,0.06); }
+.cal-agenda-row-time { font-size: 12px; color: var(--text-muted); white-space: nowrap; min-width: 100px; }
+.cal-agenda-row-title { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.cal-agenda-row-loc { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+
 .cal-form-row { display: flex; align-items: flex-start; gap: 10px; }
 .cal-form-row svg { margin-top: 10px; flex-shrink: 0; }
 
@@ -1861,6 +1943,26 @@ input, textarea, select { font: inherit; }
 
   /* event detail modal fullscreen on mobile handled by global modal rule */
   .cal-event-modal { max-width: 100%; }
+
+  /* time-grid views (day/4day/week): shrink hour rows, hide secondary text, allow horizontal scroll */
+  :root { --cal-hour-h: 36px; }
+  .cal-tg-ev span { display: none; }
+  .cal-tg-ev { font-size: 9px; padding: 2px 4px; }
+  .cal-hour-label { font-size: 9px; }
+  .cal-tg-head-dow { font-size: 9px; }
+  .cal-tg-head-num { font-size: 12px; width: 22px; height: 22px; }
+  .cal-tg-head-cell { padding: 4px 0; gap: 1px; }
+
+  /* year view: 2 columns on mobile */
+  .cal-year-grid { grid-template-columns: repeat(2,1fr); gap: 10px; }
+  .cal-year-month { padding: 8px; }
+  .cal-year-month-title { font-size: 11px; }
+  .cal-year-day { font-size: 9px; padding: 2px 0; }
+
+  /* agenda view: tighter padding */
+  .cal-agenda-row { padding: 8px 12px; margin: 0 12px 4px; gap: 10px; }
+  .cal-agenda-date-header { padding: 8px 12px 4px; }
+  .cal-agenda-row-time { min-width: 80px; font-size: 11px; }
 }
 
 /* ─── Duty Schedule ─────────────────────────────────────────────────────── */

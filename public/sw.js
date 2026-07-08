@@ -1,8 +1,10 @@
-const CACHE = 'teamtask-v2';
+const CACHE = 'teamtask-v4';
 const OFFLINE_URLS = [
   '/',
   '/index.html',
-  '/css/style.css',
+  '/css/style.min.css?v=33',
+  '/fonts/gotham_book.woff2?v=1',
+  '/fonts/gotham_bold.woff2?v=1',
   '/favicon.ico',
 ];
 
@@ -27,10 +29,33 @@ self.addEventListener('fetch', e => {
   // API calls — network only, no cache
   if (url.pathname.startsWith('/api/')) return;
 
+  // Versioned static assets (?v=N) are immutable — the same URL never changes
+  // content, so cache-first lets the app boot offline instead of only
+  // falling back to the index.html shell. New deploys bump ?v=, which is a
+  // different URL and simply repopulates the cache.
+  const isVersioned = url.searchParams.has('v') &&
+    (url.pathname.startsWith('/js/') || url.pathname.startsWith('/css/') || url.pathname.startsWith('/fonts/'));
+
+  if (isVersioned) {
+    e.respondWith(
+      caches.match(e.request).then(cached => {
+        if (cached) return cached;
+        return fetch(e.request).then(res => {
+          if (res.ok) {
+            const clone = res.clone();
+            caches.open(CACHE).then(c => c.put(e.request, clone));
+          }
+          return res;
+        });
+      })
+    );
+    return;
+  }
+
   e.respondWith(
     fetch(e.request)
       .then(res => {
-        // Cache successful responses for static assets (not JS — always fresh)
+        // Cache successful responses for unversioned static assets (fonts w/o ?v=, etc.)
         if (res.ok && (url.pathname.startsWith('/css/') || url.pathname.startsWith('/fonts/'))) {
           const clone = res.clone();
           caches.open(CACHE).then(c => c.put(e.request, clone));

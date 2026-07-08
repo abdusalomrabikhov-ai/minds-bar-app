@@ -36,6 +36,19 @@ const localNowT   = () => new Date(Date.now() + TZ_OFFSET*3600000).toISOString()
 const localToday  = () => new Date(Date.now() + TZ_OFFSET*3600000).toISOString().slice(0,10);
 const localMonth  = () => new Date(Date.now() + TZ_OFFSET*3600000).toISOString().slice(0,7);
 
+// Small in-memory TTL cache for expensive read-only aggregate endpoints
+// (dashboard/reports/best-employee/workload). Short TTL keeps staleness
+// low without needing to hook into every mutation endpoint that could
+// affect these aggregates.
+const _aggCache = new Map(); // key -> { data, expires }
+function cached(key, ttlMs, compute) {
+  const hit = _aggCache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.data;
+  const data = compute();
+  _aggCache.set(key, { data, expires: Date.now() + ttlMs });
+  return data;
+}
+
 // SSE clients: Map<userId, res[]>
 const sseClients = new Map();
 
@@ -60,8 +73,16 @@ app.use(compression({
 const ALLOWED_ORIGINS = [
   'https://bar.mindstech.io',
   'https://minds-bar-app-production.up.railway.app',
+  ...(process.env.NODE_ENV !== 'production' ? [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+  ] : []),
 ];
-app.use(cors({
+// CORS only applies to /api — static assets (JS/CSS/fonts/images) are same-origin
+// resources the browser may still fetch in "cors" mode (e.g. @font-face, preload
+// crossorigin) and must never be rejected just because there's no Origin allowlist
+// entry for the current host.
+app.use('/api', cors({
   origin: (origin, cb) => {
     // No Origin header (curl, server-to-server, Electron BrowserWindow same-origin
     // navigation) — allow. Only block cross-origin browser requests from unknown sites.
@@ -156,11 +177,11 @@ const loginLimiter = rateLimit({
   message: { error: 'Слишком много попыток входа. Попробуйте через 15 минут.' },
 });
 
-app.post('/api/auth/login', loginLimiter, (req, res) => {
+app.post('/api/auth/login', loginLimiter, async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email и пароль обязательны' });
   const user = db.prepare('SELECT id, name, email, password, role, avatar_color, telegram_id, permissions FROM users WHERE email = ?').get(email.toLowerCase().trim());
-  if (!user || !bcrypt.compareSync(password, user.password)) {
+  if (!user || !(await bcrypt.compare(password, user.password))) {
     return res.status(401).json({ error: 'Неверный email или пароль' });
   }
   const token = jwt.sign({ id: user.id, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '7d' });
@@ -196,7 +217,7 @@ app.post('/api/auth/reset-request', resetLimiter, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/auth/reset-confirm', resetLimiter, (req, res) => {
+app.post('/api/auth/reset-confirm', resetLimiter, async (req, res) => {
   const { email, code, password } = req.body;
   if (!email || !code || !password) return res.status(400).json({ error: 'Все поля обязательны' });
   if (password.length < 6) return res.status(400).json({ error: 'Пароль минимум 6 символов' });
@@ -204,7 +225,7 @@ app.post('/api/auth/reset-confirm', resetLimiter, (req, res) => {
   if (!user || !user.reset_code) return res.status(400).json({ error: 'Код недействителен' });
   if (user.reset_code !== String(code).trim()) return res.status(400).json({ error: 'Неверный код' });
   if (new Date(user.reset_code_expires) < new Date()) return res.status(400).json({ error: 'Код истёк. Запросите новый.' });
-  const hashed = bcrypt.hashSync(password, 10);
+  const hashed = await bcrypt.hash(password, 10);
   db.prepare('UPDATE users SET password = ?, reset_code = NULL, reset_code_expires = NULL WHERE id = ?').run(hashed, user.id);
   res.json({ ok: true });
 });
@@ -313,9 +334,17 @@ function getContentTypeMembers(projectId, type) {
   return db.prepare('SELECT user_id FROM content_type_assignees WHERE project_id = ? AND content_type = ?').all(projectId, type);
 }
 
-function syncTasksForItem(item, projectId, createdBy) {
-  const project = db.prepare('SELECT name FROM projects WHERE id = ?').get(projectId);
-  const members = getContentTypeMembers(projectId, item.type);
+function syncTasksForItem(item, projectId, createdBy, ctx) {
+  // ctx (optional): shared cache across a batch of calls in the same request
+  // to avoid re-querying the same project/members for every content item.
+  const project = ctx?.project !== undefined ? ctx.project : db.prepare('SELECT name FROM projects WHERE id = ?').get(projectId);
+  let members;
+  if (ctx) {
+    ctx.membersCache ??= {};
+    members = ctx.membersCache[item.type] ??= getContentTypeMembers(projectId, item.type);
+  } else {
+    members = getContentTypeMembers(projectId, item.type);
+  }
   const label = cpLabel(item.type);
   const title = item.title ? `${label}: ${item.title}` : label;
   const desc = `Контент-план · ${project?.name || ''}`;
@@ -336,8 +365,10 @@ function syncTasksForItem(item, projectId, createdBy) {
   } else {
     taskId = allTasks[0].id;
     // Consolidate: delete any duplicate tasks created by old per-member logic
-    for (let i = 1; i < allTasks.length; i++) {
-      db.prepare('DELETE FROM tasks WHERE id = ?').run(allTasks[i].id);
+    if (allTasks.length > 1) {
+      const dupIds = allTasks.slice(1).map(t => t.id);
+      const ph = dupIds.map(() => '?').join(',');
+      db.prepare(`DELETE FROM tasks WHERE id IN (${ph})`).run(...dupIds);
     }
     db.prepare('UPDATE tasks SET title=?, deadline=? WHERE id=?').run(title, item.date, taskId);
   }
@@ -367,7 +398,8 @@ function syncTasksForItem(item, projectId, createdBy) {
 function syncTasksForMember(projectId, userId, createdBy) {
   // Re-sync all content items — consolidates duplicates and adds new member to each task
   const items = db.prepare('SELECT * FROM content_plan WHERE project_id = ?').all(projectId);
-  items.forEach(item => syncTasksForItem(item, projectId, createdBy));
+  const ctx = { project: db.prepare('SELECT name FROM projects WHERE id = ?').get(projectId) };
+  items.forEach(item => syncTasksForItem(item, projectId, createdBy, ctx));
 }
 
 app.get('/api/projects/:id/content', auth, (req, res) => {
@@ -428,7 +460,8 @@ app.put('/api/projects/:id/content-assignees/:type', auth, requirePerm('manage_p
     db.prepare('INSERT OR IGNORE INTO content_type_assignees (project_id, user_id, content_type) VALUES (?,?,?)').run(req.params.id, uid, type);
   });
   const items = db.prepare('SELECT * FROM content_plan WHERE project_id = ? AND type = ?').all(req.params.id, type);
-  items.forEach(item => syncTasksForItem(item, req.params.id, req.user.id));
+  const ctx = { project: db.prepare('SELECT name FROM projects WHERE id = ?').get(req.params.id) };
+  items.forEach(item => syncTasksForItem(item, req.params.id, req.user.id, ctx));
   res.json({ ok: true });
 });
 
@@ -473,16 +506,20 @@ app.post('/api/projects/:id/content/import', auth, requirePerm('manage_projects'
   const months = [...new Set(items.map(i => i.date.slice(0, 7)))];
   months.forEach(m => {
     const toDelete = db.prepare("SELECT id FROM content_plan WHERE project_id = ? AND strftime('%Y-%m', date) = ?").all(req.params.id, m);
-    toDelete.forEach(ci => db.prepare('DELETE FROM tasks WHERE source_content_id = ?').run(ci.id));
+    if (toDelete.length) {
+      const ph = toDelete.map(() => '?').join(',');
+      db.prepare(`DELETE FROM tasks WHERE source_content_id IN (${ph})`).run(...toDelete.map(ci => ci.id));
+    }
     db.prepare("DELETE FROM content_plan WHERE project_id = ? AND strftime('%Y-%m', date) = ?").run(req.params.id, m);
   });
   const stmt = db.prepare('INSERT INTO content_plan (project_id, date, type, title, quantity, description) VALUES (?, ?, ?, ?, ?, ?)');
+  const ctx = { project: db.prepare('SELECT name FROM projects WHERE id = ?').get(req.params.id) };
   let count = 0;
   items.forEach(item => {
     if (!item.date || !item.type) return;
     const r = stmt.run(req.params.id, item.date, item.type, item.title || '', item.quantity || 1, item.description || '');
     const inserted = db.prepare('SELECT * FROM content_plan WHERE id = ?').get(r.lastInsertRowid);
-    syncTasksForItem(inserted, req.params.id, req.user.id);
+    syncTasksForItem(inserted, req.params.id, req.user.id, ctx);
     count++;
   });
   res.json({ ok: true, count });
@@ -490,13 +527,17 @@ app.post('/api/projects/:id/content/import', auth, requirePerm('manage_projects'
 
 app.post('/api/projects/:id/sync-content-tasks', auth, requirePerm('manage_projects'), (req, res) => {
   const items = db.prepare('SELECT * FROM content_plan WHERE project_id = ?').all(req.params.id);
-  items.forEach(item => syncTasksForItem(item, req.params.id, req.user.id));
+  const ctx = { project: db.prepare('SELECT name FROM projects WHERE id = ?').get(req.params.id) };
+  items.forEach(item => syncTasksForItem(item, req.params.id, req.user.id, ctx));
   res.json({ ok: true });
 });
 
 app.delete('/api/projects/:id/content/month/:ym', auth, requirePerm('manage_projects'), (req, res) => {
   const toDelete = db.prepare("SELECT id FROM content_plan WHERE project_id = ? AND strftime('%Y-%m', date) = ?").all(req.params.id, req.params.ym);
-  toDelete.forEach(ci => db.prepare('DELETE FROM tasks WHERE source_content_id = ?').run(ci.id));
+  if (toDelete.length) {
+    const ph = toDelete.map(() => '?').join(',');
+    db.prepare(`DELETE FROM tasks WHERE source_content_id IN (${ph})`).run(...toDelete.map(ci => ci.id));
+  }
   db.prepare("DELETE FROM content_plan WHERE project_id = ? AND strftime('%Y-%m', date) = ?")
     .run(req.params.id, req.params.ym);
   res.json({ ok: true });
@@ -545,7 +586,7 @@ function enrichTasksWithAssignees(tasks, skipImg = true) {
   return tasks.map(t => ({ ...t, multi_assignees: byTask[t.id] || null }));
 }
 
-function getTaskQuery(extraWhere = '', params = []) {
+function getTaskQuery(extraWhere = '', params = [], hardLimit = null) {
   return db.prepare(`
     SELECT t.*,
       u.name as assignee_name, u.avatar_color as assignee_color,
@@ -560,6 +601,7 @@ function getTaskQuery(extraWhere = '', params = []) {
       CASE WHEN t.status = 'done' THEN 1 ELSE 0 END ASC,
       t.deadline ASC NULLS LAST,
       t.created_at DESC
+    ${hardLimit ? `LIMIT ${hardLimit}` : ''}
   `).all(...params);
 }
 
@@ -647,6 +689,22 @@ app.get('/api/dashboard', auth, (req, res) => {
   const uid = req.user.id;
   const monthParam = req.query.month;
 
+  // Org-wide scope (admin/manage_team/assign_tasks) sees identical data regardless
+  // of which such user asks, so it can share one cache entry. Personal scope must
+  // be keyed per-user since the SQL WHERE clause filters by that user's own tasks.
+  const scopeKey = (isAdmin || hasTeam || hasAssign) ? `org:${hasReports ? 1 : 0}` : `u${uid}`;
+  return res.json(cached(`dashboard:${scopeKey}:${monthParam || 'all'}`, 20000, () => computeDashboard(req)));
+});
+
+function computeDashboard(req) {
+  const isAdmin   = req.user.role === 'admin';
+  const userPerms = JSON.parse(req.user.permissions || '{}');
+  const hasReports = userPerms.reports;
+  const hasTeam    = userPerms.manage_team;
+  const hasAssign  = userPerms.assign_tasks;
+  const uid = req.user.id;
+  const monthParam = req.query.month;
+
   let where = '';
   const params = [];
 
@@ -706,8 +764,8 @@ app.get('/api/dashboard', auth, (req, res) => {
     WHERE 1=1 ${where.replace(/t\./g, 't.')} GROUP BY u.id ORDER BY total DESC LIMIT 20
   `).all(...params) : [];
 
-  res.json({ stats, urgentTasks, recentTasks, byProject, byEmployee });
-});
+  return { stats, urgentTasks, recentTasks, byProject, byEmployee };
+}
 
 app.get('/api/tasks', auth, (req, res) => {
   const { project_id, assignee_id, status, my_tasks } = req.query;
@@ -757,7 +815,8 @@ app.get('/api/tasks', auth, (req, res) => {
 
   if (req.query.all === '1') {
     // Legacy: return flat array for dashboard, reports, employee page, etc.
-    return res.json(enrichTasksWithAssignees(getTaskQuery(where, params)));
+    // Defensive cap so a growing task history can't return an unbounded payload.
+    return res.json(enrichTasksWithAssignees(getTaskQuery(where, params, 2000)));
   }
 
   const total = getTaskCount(where, params);
@@ -1244,7 +1303,7 @@ app.get('/api/users', auth, (req, res) => {
   res.json(users.map(u => ({ ...u, permissions: parsePerms(u.permissions) })));
 });
 
-app.post('/api/users', auth, adminOnly, (req, res) => {
+app.post('/api/users', auth, adminOnly, async (req, res) => {
   const { name, email, password, role, permissions } = req.body;
   if (!name?.trim() || !email?.trim() || !password) {
     return res.status(400).json({ error: 'Имя, email и пароль обязательны' });
@@ -1257,13 +1316,13 @@ app.post('/api/users', auth, adminOnly, (req, res) => {
   const permsJson = JSON.stringify(permissions || {});
 
   const result = db.prepare('INSERT INTO users (name, email, password, role, avatar_color, permissions) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(name.trim(), email.toLowerCase().trim(), bcrypt.hashSync(password, 10), role || 'employee', color, permsJson);
+    .run(name.trim(), email.toLowerCase().trim(), await bcrypt.hash(password, 10), role || 'employee', color, permsJson);
   const user = db.prepare('SELECT id, name, email, role, avatar_color, permissions FROM users WHERE id = ?').get(result.lastInsertRowid);
   logActivity(req.user.id, 'user_created', 'user', user.id, user.name);
   res.json({ ...user, permissions: parsePerms(user.permissions) });
 });
 
-app.put('/api/users/:id', auth, (req, res) => {
+app.put('/api/users/:id', auth, async (req, res) => {
   if (req.user.role !== 'admin' && req.user.id !== parseInt(req.params.id)) {
     return res.status(403).json({ error: 'Нет доступа' });
   }
@@ -1278,7 +1337,7 @@ app.put('/api/users/:id', auth, (req, res) => {
   db.prepare('UPDATE users SET name = ?, email = ?, password = ?, permissions = ? WHERE id = ?').run(
     name || user.name,
     email || user.email,
-    password ? bcrypt.hashSync(password, 10) : user.password,
+    password ? await bcrypt.hash(password, 10) : user.password,
     permsJson,
     req.params.id
   );
@@ -1375,7 +1434,10 @@ app.put('/api/notifications/:id/read', auth, (req, res) => {
 
 app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
   const { month } = req.query; // format: 2026-06
+  res.json(cached(`reports:${month || 'all'}`, 30000, () => computeReports(month)));
+});
 
+function computeReports(month) {
   let dateWhere = '';
   const dateParams = [];
   if (month) {
@@ -1491,8 +1553,8 @@ app.get('/api/reports', auth, requirePerm('reports'), (req, res) => {
     ${globalWhere}
   `).get(...globalParams);
 
-  res.json({ global: globalStats, employees: report });
-});
+  return { global: globalStats, employees: report };
+}
 
 // ─── Summary Report (period-based) ───────────────────────────────────────────
 
@@ -2332,30 +2394,32 @@ app.delete('/api/hr/salaries/:id', auth, requirePerm('manage_team'), (req, res) 
 // ─── Workload ─────────────────────────────────────────────────────────────────
 app.get('/api/workload', auth, (req, res) => {
   try {
-    const users = db.prepare('SELECT id, name, avatar_color FROM users ORDER BY name').all();
-    const projects = db.prepare('SELECT id, name, color FROM projects WHERE archived = 0 ORDER BY name').all();
-    const memberships = db.prepare('SELECT user_id, project_id FROM project_members').all();
-    const taskCounts = db.prepare(`
-      SELECT user_id, COALESCE(project_id, 0) as project_id,
-        COUNT(*) as total,
-        SUM(done_flag) as done,
-        SUM(active_flag) as active
-      FROM (
-        SELECT ta.user_id, t.project_id,
-          CASE WHEN t.status='done' OR ta.done=1 THEN 1 ELSE 0 END as done_flag,
-          CASE WHEN t.status='in_progress' THEN 1 ELSE 0 END as active_flag
-        FROM task_assignees ta JOIN tasks t ON t.id = ta.task_id
-        UNION ALL
-        SELECT t.assignee_id as user_id, t.project_id,
-          CASE WHEN t.status='done' THEN 1 ELSE 0 END as done_flag,
-          CASE WHEN t.status='in_progress' THEN 1 ELSE 0 END as active_flag
-        FROM tasks t
-        WHERE t.assignee_id IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM task_assignees ta2 WHERE ta2.task_id = t.id)
-      )
-      GROUP BY user_id, project_id
-    `).all();
-    res.json({ users, projects, memberships, taskCounts });
+    res.json(cached('workload', 30000, () => {
+      const users = db.prepare('SELECT id, name, avatar_color FROM users ORDER BY name').all();
+      const projects = db.prepare('SELECT id, name, color FROM projects WHERE archived = 0 ORDER BY name').all();
+      const memberships = db.prepare('SELECT user_id, project_id FROM project_members').all();
+      const taskCounts = db.prepare(`
+        SELECT user_id, COALESCE(project_id, 0) as project_id,
+          COUNT(*) as total,
+          SUM(done_flag) as done,
+          SUM(active_flag) as active
+        FROM (
+          SELECT ta.user_id, t.project_id,
+            CASE WHEN t.status='done' OR ta.done=1 THEN 1 ELSE 0 END as done_flag,
+            CASE WHEN t.status='in_progress' THEN 1 ELSE 0 END as active_flag
+          FROM task_assignees ta JOIN tasks t ON t.id = ta.task_id
+          UNION ALL
+          SELECT t.assignee_id as user_id, t.project_id,
+            CASE WHEN t.status='done' THEN 1 ELSE 0 END as done_flag,
+            CASE WHEN t.status='in_progress' THEN 1 ELSE 0 END as active_flag
+          FROM tasks t
+          WHERE t.assignee_id IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM task_assignees ta2 WHERE ta2.task_id = t.id)
+        )
+        GROUP BY user_id, project_id
+      `).all();
+      return { users, projects, memberships, taskCounts };
+    }));
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2414,6 +2478,10 @@ app.delete('/api/feedback/:id', auth, adminOnly, (req, res) => {
 // ─── Best Employee ────────────────────────────────────────────────────────────
 app.get('/api/best-employee', auth, (req, res) => {
   const month = req.query.month || localMonth();
+  res.json(cached(`best-employee:${month}`, 30000, () => computeBestEmployee(month)));
+});
+
+function computeBestEmployee(month) {
   const nowIso = localNowT();
 
   // Compute the start of the 12-month history window
@@ -2521,8 +2589,8 @@ app.get('/api/best-employee', auth, (req, res) => {
     if (ranked.length > 0) history.push({ month: m, winner: ranked[0] });
   }
 
-  res.json({ month, rankings: current, history });
-});
+  return { month, rankings: current, history };
+}
 
 // ─── Schedule ─────────────────────────────────────────────────────────────────
 app.get('/api/schedule', auth, (req, res) => {

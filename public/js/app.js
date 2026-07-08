@@ -1769,6 +1769,7 @@ function showMoreDashTasks() {
 // ─── Tasks Page ───────────────────────────────────────────────────────────────
 let tasksFilter = { status: '', priority: '', search: '', assignee_id: '', overdue: false };
 let myTasksMode = false;
+let _taskSearchTimer = null;
 let dashPeriod = 'month';
 let _dashMonth = new Date(Date.now() + 5*3600000).toISOString().slice(0,7); // 'all' = no filter
 let _dashWinOffset = 0;
@@ -1862,8 +1863,12 @@ async function renderTasksPage() {
     <div id="tasks-list-container"><div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div></div>
   `;
   document.getElementById('task-search').addEventListener('input', e => {
-    tasksFilter.search = e.target.value;
-    loadAndRenderTasks();
+    const val = e.target.value;
+    clearTimeout(_taskSearchTimer);
+    _taskSearchTimer = setTimeout(() => {
+      tasksFilter.search = val;
+      loadAndRenderTasks();
+    }, 200);
   });
   document.getElementById('employee-filter-select')?.addEventListener('change', e => {
     tasksFilter.assignee_id = e.target.value;
@@ -7260,6 +7265,61 @@ let _calEvents = [];
 let _calUsers  = [];
 let _calTab    = (() => { try { return sessionStorage.getItem('cal_tab') || 'calendar'; } catch { return 'calendar'; } })();
 
+// View-mode axis (Day/4day/Week/Month/Year/Agenda) — independent from _calTab (Календарь/Дежурства/Расписание).
+let _calViewMode = (() => { try { return sessionStorage.getItem('cal_view_mode') || 'month'; } catch { return 'month'; } })();
+let _calAnchorDate = new Date();
+_calAnchorDate.setHours(0,0,0,0);
+let _calNowLineTimer = null;
+
+function _calWeekDates(anchor) {
+  const d = new Date(anchor); d.setHours(0,0,0,0);
+  const dowMon = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - dowMon);
+  return Array.from({length:7}, (_,i) => { const x = new Date(d); x.setDate(d.getDate()+i); return x; });
+}
+function _calNDates(anchor, n) {
+  const d = new Date(anchor); d.setHours(0,0,0,0);
+  return Array.from({length:n}, (_,i) => { const x = new Date(d); x.setDate(d.getDate()+i); return x; });
+}
+function _calDateKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function _calFmtHour(h) { return `${String(h).padStart(2,'0')}:00`; }
+
+function _calRangeForView(mode, anchor, year, month) {
+  if (mode === 'month') {
+    const firstDay = new Date(year, month, 1);
+    const lastDay  = new Date(year, month + 1, 0);
+    return {
+      timeMin: new Date(year, month, 1 - firstDay.getDay()).toISOString(),
+      timeMax: new Date(year, month + 1, 7 - lastDay.getDay()).toISOString(),
+    };
+  }
+  if (mode === 'week') {
+    const dates = _calWeekDates(anchor);
+    const timeMin = dates[0];
+    const timeMax = new Date(dates[6]); timeMax.setDate(timeMax.getDate()+1);
+    return { timeMin: timeMin.toISOString(), timeMax: timeMax.toISOString() };
+  }
+  if (mode === '4day' || mode === 'day') {
+    const n = mode === 'day' ? 1 : 4;
+    const timeMin = new Date(anchor); timeMin.setHours(0,0,0,0);
+    const timeMax = new Date(timeMin); timeMax.setDate(timeMax.getDate()+n);
+    return { timeMin: timeMin.toISOString(), timeMax: timeMax.toISOString() };
+  }
+  if (mode === 'year') {
+    const y = anchor.getFullYear();
+    return { timeMin: new Date(y,0,1).toISOString(), timeMax: new Date(y+1,0,1).toISOString() };
+  }
+  if (mode === 'agenda') {
+    const timeMin = new Date(anchor); timeMin.setHours(0,0,0,0);
+    const timeMax = new Date(timeMin); timeMax.setDate(timeMax.getDate()+60);
+    return { timeMin: timeMin.toISOString(), timeMax: timeMax.toISOString() };
+  }
+  // Fallback — should not happen
+  return _calRangeForView('month', anchor, year, month);
+}
+
 async function renderCalendarPage() {
   const el = document.getElementById('page-content');
   el.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
@@ -7329,24 +7389,76 @@ function _schedContainer() {
 }
 
 async function _calLoadAndRender() {
-  const el = document.getElementById('page-content');
-  // Build timeMin/timeMax for current month view (include prev/next partial weeks)
-  const firstDay = new Date(_calYear, _calMonth, 1);
-  const lastDay  = new Date(_calYear, _calMonth + 1, 0);
-  const timeMin  = new Date(_calYear, _calMonth, 1 - firstDay.getDay()).toISOString();
-  const timeMax  = new Date(_calYear, _calMonth + 1, 7 - lastDay.getDay()).toISOString();
+  const { timeMin, timeMax } = _calRangeForView(_calViewMode, _calAnchorDate, _calYear, _calMonth);
   try {
     _calEvents = await GET(`/calendar/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`);
   } catch(e) {
     _calEvents = [];
   }
-  _calRender();
+  _calDispatchRender();
+}
+
+function _calDispatchRender() {
+  if (_calNowLineTimer) { clearInterval(_calNowLineTimer); _calNowLineTimer = null; }
+  if (_calViewMode === 'day')    return _calRenderTimeGrid(1);
+  if (_calViewMode === '4day')   return _calRenderTimeGrid(4);
+  if (_calViewMode === 'week')   return _calRenderTimeGrid(7);
+  if (_calViewMode === 'year')   return _calRenderYear();
+  if (_calViewMode === 'agenda') return _calRenderAgenda();
+  return _calRender();
+}
+
+const CAL_MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+const CAL_MONTHS_SHORT = ['янв','фев','мар','апр','мая','июн','июл','авг','сен','окт','ноя','дек'];
+const CAL_DAYS = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+
+function _calViewLabel() {
+  if (_calViewMode === 'month') return `${CAL_MONTHS[_calMonth]} ${_calYear}`;
+  if (_calViewMode === 'year')  return `${_calAnchorDate.getFullYear()}`;
+  if (_calViewMode === 'agenda') return 'Расписание';
+  if (_calViewMode === 'day') {
+    return `${_calAnchorDate.getDate()} ${CAL_MONTHS_SHORT[_calAnchorDate.getMonth()]} ${_calAnchorDate.getFullYear()}`;
+  }
+  // 4day / week — format as a range
+  const n = _calViewMode === 'week' ? 7 : 4;
+  const dates = _calViewMode === 'week' ? _calWeekDates(_calAnchorDate) : _calNDates(_calAnchorDate, n);
+  const first = dates[0], last = dates[dates.length-1];
+  if (first.getMonth() === last.getMonth()) {
+    return `${first.getDate()}–${last.getDate()} ${CAL_MONTHS_SHORT[first.getMonth()]} ${first.getFullYear()}`;
+  }
+  return `${first.getDate()} ${CAL_MONTHS_SHORT[first.getMonth()]} – ${last.getDate()} ${CAL_MONTHS_SHORT[last.getMonth()]} ${last.getFullYear()}`;
+}
+
+function _calViewSwitcherHtml() {
+  const opts = [['day','День'],['4day','4 дня'],['week','Неделя'],['month','Месяц'],['year','Год'],['agenda','Расписание']];
+  return `<select class="cal-view-select" onchange="_calSetViewMode(this.value)">
+    ${opts.map(([v,l]) => `<option value="${v}" ${v===_calViewMode?'selected':''}>${l}</option>`).join('')}
+  </select>`;
+}
+
+function _calToolbarHtml() {
+  return `
+    <div class="cal-toolbar">
+      <div class="cal-toolbar-row1" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        ${_calTabBar()}
+        <div class="cal-nav-group" style="display:flex;align-items:center;gap:6px;margin-left:auto">
+          <button class="btn btn-outline btn-sm" onclick="_calNav(-1)">‹</button>
+          <span style="font-size:15px;font-weight:700;min-width:130px;text-align:center">${_calViewLabel()}</span>
+          <button class="btn btn-outline btn-sm" onclick="_calNav(1)">›</button>
+          <button class="btn btn-outline btn-sm" onclick="_calGoToday()">Сегодня</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        ${_calViewSwitcherHtml()}
+        <button class="btn btn-blue" onclick="openNewCalEvent()">＋ Событие</button>
+      </div>
+    </div>`;
 }
 
 function _calRender() {
   const el = document.getElementById('page-content');
-  const MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
-  const DAYS   = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  const MONTHS = CAL_MONTHS;
+  const DAYS   = CAL_DAYS;
   const today  = new Date();
   const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
 
@@ -7501,20 +7613,7 @@ function _calRender() {
 
   el.innerHTML = `
     <div class="cal-page">
-      <div class="cal-toolbar">
-        <div class="cal-toolbar-row1" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          ${_calTabBar()}
-          <div class="cal-nav-group" style="display:flex;align-items:center;gap:6px;margin-left:auto">
-            <button class="btn btn-outline btn-sm" onclick="_calNav(-1)">‹</button>
-            <span style="font-size:15px;font-weight:700;min-width:130px;text-align:center">${MONTHS[_calMonth]} ${_calYear}</span>
-            <button class="btn btn-outline btn-sm" onclick="_calNav(1)">›</button>
-            <button class="btn btn-outline btn-sm" onclick="_calGoToday()">Сегодня</button>
-          </div>
-        </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-blue" onclick="openNewCalEvent()">＋ Событие</button>
-        </div>
-      </div>
+      ${_calToolbarHtml()}
       <div class="cal-grid-wrap">
         <div class="cal-head-row">
           ${DAYS.map(d=>`<div class="cal-head-cell">${d}</div>`).join('')}
@@ -7526,17 +7625,289 @@ function _calRender() {
 }
 
 async function _calNav(dir) {
-  _calMonth += dir;
-  if (_calMonth > 11) { _calMonth = 0; _calYear++; }
-  if (_calMonth < 0)  { _calMonth = 11; _calYear--; }
+  if (_calViewMode === 'month') {
+    _calMonth += dir;
+    if (_calMonth > 11) { _calMonth = 0; _calYear++; }
+    if (_calMonth < 0)  { _calMonth = 11; _calYear--; }
+  } else if (_calViewMode === 'year') {
+    _calAnchorDate = new Date(_calAnchorDate);
+    _calAnchorDate.setFullYear(_calAnchorDate.getFullYear() + dir);
+  } else {
+    const step = { day:1, '4day':4, week:7, agenda:30 }[_calViewMode] ?? 1;
+    const d = new Date(_calAnchorDate);
+    d.setDate(d.getDate() + step * dir);
+    _calAnchorDate = d;
+  }
   await _calLoadAndRender();
 }
 
 function _calGoToday() {
   const now = new Date();
+  now.setHours(0,0,0,0);
   _calYear  = now.getFullYear();
   _calMonth = now.getMonth();
+  _calAnchorDate = now;
   _calLoadAndRender();
+}
+
+async function _calSetViewMode(mode) {
+  if (mode === _calViewMode) return;
+  if (mode === 'month') {
+    _calYear  = _calAnchorDate.getFullYear();
+    _calMonth = _calAnchorDate.getMonth();
+  } else if (_calViewMode === 'month') {
+    _calAnchorDate = new Date(_calYear, _calMonth, 1);
+  }
+  _calViewMode = mode;
+  try { sessionStorage.setItem('cal_view_mode', mode); } catch {}
+  await _calLoadAndRender();
+}
+
+function _calJumpToDay(dateKey) {
+  const [y,m,d] = dateKey.split('-').map(Number);
+  _calAnchorDate = new Date(y, m-1, d);
+  _calViewMode = 'day';
+  try { sessionStorage.setItem('cal_view_mode', 'day'); } catch {}
+  _calLoadAndRender();
+}
+
+// ─── Time-grid views (Day / 4-day / Week) ──────────────────────────────────────
+const CAL_HOUR_H = 48; // px per hour row — must match --cal-hour-h in CSS
+
+function _calRenderTimeGrid(numDays) {
+  const el = document.getElementById('page-content');
+  const dates = numDays === 7 ? _calWeekDates(_calAnchorDate) : _calNDates(_calAnchorDate, numDays);
+  const today = new Date();
+  const todayKey = _calDateKey(today);
+
+  const toDay = d => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
+  const minutesOfDay = d => d.getHours()*60 + d.getMinutes();
+
+  // Split events: multi-day (>=24h span or start-day != end-day) go to the all-day banner;
+  // everything else is a timed event positioned in the hourly grid.
+  const allDayEvents = [];
+  const timedByDateKey = {}; // dateKey -> [{ev,start,end}]
+  dates.forEach(d => { timedByDateKey[_calDateKey(d)] = []; });
+
+  for (const ev of _calEvents) {
+    const s = new Date(ev.start.dateTime);
+    const e = new Date(ev.end.dateTime);
+    const spansFullDay = (e - s) >= 86400000 || toDay(s).getTime() !== toDay(e).getTime();
+    if (spansFullDay) {
+      allDayEvents.push({ ev, start: s, end: e });
+      continue;
+    }
+    const key = _calDateKey(s);
+    if (timedByDateKey[key]) timedByDateKey[key].push({ ev, start: s, end: e });
+  }
+
+  // Overlap layout per day-column: greedy sweep into overlap-groups, then first-free-column assignment.
+  const layoutForDay = (events) => {
+    const sorted = [...events].sort((a,b) => a.start - b.start || (b.end-b.start) - (a.end-a.start));
+    const groups = [];
+    let cur = [], curMaxEnd = null;
+    for (const item of sorted) {
+      if (cur.length && item.start < curMaxEnd) {
+        cur.push(item);
+        if (item.end > curMaxEnd) curMaxEnd = item.end;
+      } else {
+        if (cur.length) groups.push(cur);
+        cur = [item]; curMaxEnd = item.end;
+      }
+    }
+    if (cur.length) groups.push(cur);
+
+    const positioned = [];
+    for (const group of groups) {
+      const colEnds = []; // colEnds[i] = end time of last event placed in column i
+      const groupPositioned = [];
+      for (const item of group) {
+        let col = colEnds.findIndex(endTime => endTime <= item.start);
+        if (col === -1) { col = colEnds.length; colEnds.push(item.end); }
+        else colEnds[col] = item.end;
+        groupPositioned.push({ ...item, col });
+      }
+      const colCount = colEnds.length;
+      for (const p of groupPositioned) { p.colCount = colCount; positioned.push(p); }
+    }
+    return positioned;
+  };
+
+  // All-day banner row (only rendered if there's at least one qualifying event)
+  const alldayHtml = allDayEvents.length ? `
+    <div class="cal-timegrid-allday" style="grid-template-columns:56px repeat(${dates.length},1fr)">
+      <div class="cal-hour-gutter-spacer"></div>
+      ${dates.map(d => {
+        const dk = _calDateKey(d);
+        const evsForDay = allDayEvents.filter(({start,end}) => toDay(d) >= toDay(start) && toDay(d) <= toDay(end));
+        return `<div class="cal-day-col cal-allday-col">${evsForDay.map(({ev}) => `
+          <div class="cal-ev cal-tg-allday" style="background:#881237" title="${_escHtml(ev.summary||'')}"
+            onclick="event.stopPropagation();openCalEventDetail('${_escHtml(ev.id)}','${_escHtml(ev.start?.dateTime||'')}')">
+            ${_escHtml((ev.summary||'(без названия)').slice(0,24))}
+          </div>`).join('')}</div>`;
+      }).join('')}
+    </div>` : '';
+
+  // Hour gutter (00:00..23:00)
+  const gutterHtml = `<div class="cal-hour-gutter">${Array.from({length:24},(_,h)=>`<div class="cal-hour-label" style="height:${CAL_HOUR_H}px">${h===0?'':_calFmtHour(h)}</div>`).join('')}</div>`;
+
+  // Day columns with absolutely-positioned timed events
+  const dayColsHtml = dates.map(d => {
+    const dk = _calDateKey(d);
+    const positioned = layoutForDay(timedByDateKey[dk] || []);
+    const evsHtml = positioned.map(({ev,start,end,col,colCount}) => {
+      const top = (minutesOfDay(start)/1440) * (24*CAL_HOUR_H);
+      const rawHeight = ((end-start)/60000/1440) * (24*CAL_HOUR_H);
+      const height = Math.max(rawHeight, 20);
+      const width = 100/colCount;
+      const left = col*width;
+      const timeLabel = start.toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
+      return `<div class="cal-ev cal-tg-ev" style="background:#881237;top:${top}px;height:${height}px;left:${left}%;width:calc(${width}% - 2px)"
+        title="${_escHtml(ev.summary||'')}"
+        draggable="true"
+        ondragstart="event.stopPropagation();_calDragStart(event,'${ev.id}')"
+        ondragend="_calDragEnd(event)"
+        onclick="event.stopPropagation();openCalEventDetail('${_escHtml(ev.id)}','${_escHtml(ev.start?.dateTime||'')}')">
+        <span>${timeLabel}</span> ${_escHtml((ev.summary||'(без названия)').slice(0,20))}
+      </div>`;
+    }).join('');
+    const hourRowsHtml = Array.from({length:24},(_,h) => `<div class="cal-hour-row" style="height:${CAL_HOUR_H}px" onclick="openNewCalEvent('${dk}',${h})"></div>`).join('');
+    const isToday = dk === todayKey;
+    const nowLine = isToday ? `<div class="cal-now-line" id="cal-now-line" style="top:${(minutesOfDay(today)/1440)*(24*CAL_HOUR_H)}px"></div>` : '';
+    return `<div class="cal-day-col" data-datekey="${dk}"
+      ondragover="_calDragOver(event)" ondragleave="_calDragLeave(event)" ondrop="_calDrop(event,'${dk}')">
+      ${hourRowsHtml}${evsHtml}${nowLine}
+    </div>`;
+  }).join('');
+
+  const headerHtml = `<div class="cal-timegrid-header" style="grid-template-columns:56px repeat(${dates.length},1fr)">
+    <div class="cal-hour-gutter-spacer"></div>
+    ${dates.map(d => {
+      const dk = _calDateKey(d);
+      const isToday = dk === todayKey;
+      return `<div class="cal-tg-head-cell ${isToday?'cal-tg-head-today':''}">
+        <div class="cal-tg-head-dow">${CAL_DAYS[(d.getDay()+6)%7]}</div>
+        <div class="cal-tg-head-num ${isToday?'cal-cell-num-today':''}">${d.getDate()}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+
+  el.innerHTML = `
+    <div class="cal-page">
+      ${_calToolbarHtml()}
+      <div class="cal-grid-wrap cal-timegrid-wrap">
+        ${headerHtml}
+        ${alldayHtml}
+        <div class="cal-timegrid-body">
+          ${gutterHtml}
+          <div class="cal-timegrid-cols" style="grid-template-columns:repeat(${dates.length},1fr)">${dayColsHtml}</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  _calStartNowLineTimer();
+}
+
+function _calStartNowLineTimer() {
+  if (_calNowLineTimer) clearInterval(_calNowLineTimer);
+  _calNowLineTimer = setInterval(() => {
+    const line = document.getElementById('cal-now-line');
+    if (!line) return;
+    const now = new Date();
+    line.style.top = `${(( now.getHours()*60+now.getMinutes() )/1440) * (24*CAL_HOUR_H)}px`;
+  }, 60000);
+}
+
+// ─── Year view ──────────────────────────────────────────────────────────────
+function _calRenderYear() {
+  const el = document.getElementById('page-content');
+  const year = _calAnchorDate.getFullYear();
+  const today = new Date();
+  const todayKey = _calDateKey(today);
+  const dowMon = d => (d.getDay() + 6) % 7;
+
+  const monthsHtml = Array.from({length:12}, (_,m) => {
+    const firstDay = new Date(year, m, 1);
+    const lastDay  = new Date(year, m+1, 0);
+    const startOffset = dowMon(firstDay);
+    const cells = [];
+    for (let i = 0; i < startOffset; i++) cells.push(null);
+    for (let d = 1; d <= lastDay.getDate(); d++) cells.push(d);
+    while (cells.length % 7 !== 0) cells.push(null);
+
+    const daysHtml = cells.map(d => {
+      if (d === null) return `<div class="cal-year-day cal-year-day-empty"></div>`;
+      const dk = `${year}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const isToday = dk === todayKey;
+      return `<div class="cal-year-day ${isToday?'cal-year-day-today':''}" onclick="_calJumpToDay('${dk}')">${d}</div>`;
+    }).join('');
+
+    return `<div class="cal-year-month">
+      <div class="cal-year-month-title">${CAL_MONTHS[m]}</div>
+      <div class="cal-year-dow-row">${CAL_DAYS.map(d=>`<span>${d[0]}</span>`).join('')}</div>
+      <div class="cal-year-days">${daysHtml}</div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="cal-page">
+      ${_calToolbarHtml()}
+      <div class="cal-year-grid">${monthsHtml}</div>
+    </div>
+  `;
+}
+
+// ─── Agenda / Schedule view ─────────────────────────────────────────────────
+function _calRenderAgenda() {
+  const el = document.getElementById('page-content');
+  const today = new Date();
+  const todayKey = _calDateKey(today);
+  const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate()+1);
+  const tomorrowKey = _calDateKey(tomorrow);
+
+  const sorted = [..._calEvents].sort((a,b) => new Date(a.start.dateTime) - new Date(b.start.dateTime));
+  const groups = [];
+  let curGroup = null;
+  for (const ev of sorted) {
+    const dk = _calDateKey(new Date(ev.start.dateTime));
+    if (!curGroup || curGroup.dateKey !== dk) {
+      curGroup = { dateKey: dk, events: [] };
+      groups.push(curGroup);
+    }
+    curGroup.events.push(ev);
+  }
+
+  const dateLabel = (dk) => {
+    if (dk === todayKey) return 'Сегодня';
+    if (dk === tomorrowKey) return 'Завтра';
+    const [y,m,d] = dk.split('-').map(Number);
+    const date = new Date(y, m-1, d);
+    return `${d} ${CAL_MONTHS[m-1]}, ${CAL_DAYS[(date.getDay()+6)%7]}`;
+  };
+
+  const listHtml = groups.length ? groups.map(g => `
+    <div class="cal-agenda-day-group">
+      <div class="cal-agenda-date-header">${dateLabel(g.dateKey)}</div>
+      ${g.events.map(ev => {
+        const s = new Date(ev.start.dateTime), e = new Date(ev.end.dateTime);
+        const timeLabel = `${s.toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'})} – ${e.toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'})}`;
+        return `<div class="cal-agenda-row" onclick="openCalEventDetail('${_escHtml(ev.id)}','${_escHtml(ev.start?.dateTime||'')}')">
+          <div class="cal-agenda-row-time">${timeLabel}</div>
+          <div class="cal-agenda-row-body">
+            <div class="cal-agenda-row-title">${_escHtml(ev.summary||'(без названия)')}</div>
+            ${ev.location ? `<div class="cal-agenda-row-loc">${_escHtml(ev.location)}</div>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`).join('') : `<div style="padding:40px;text-align:center;color:#9ca3af">Нет предстоящих событий</div>`;
+
+  el.innerHTML = `
+    <div class="cal-page">
+      ${_calToolbarHtml()}
+      <div class="cal-grid-wrap cal-agenda-list">${listHtml}</div>
+    </div>
+  `;
 }
 
 let _calDragId = null;
@@ -7776,11 +8147,12 @@ function _calBindChips(wrapId) {
   });
 }
 
-function openNewCalEvent(dateStr) {
+function openNewCalEvent(dateStr, hour) {
   const now = new Date();
   const defDate = dateStr || `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
-  const defStart = defDate + 'T10:00';
-  const defEnd   = defDate + 'T11:00';
+  const h = (hour !== undefined && hour !== null) ? hour : 10;
+  const defStart = defDate + 'T' + String(h).padStart(2,'0') + ':00';
+  const defEnd   = h === 23 ? defDate + 'T23:59' : defDate + 'T' + String(h+1).padStart(2,'0') + ':00';
   openModal(`<div class="modal cal-event-modal">
     <div class="modal-header">
       <span class="modal-title">Новое событие</span>

@@ -228,6 +228,7 @@ function initDB() {
     new_value TEXT,
     created_at TEXT DEFAULT (datetime('now'))
   )`); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_finance_history_finance ON finance_history(finance_id)'); } catch {}
   try { db.exec(`CREATE TABLE IF NOT EXISTS ideahast_projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
@@ -253,6 +254,7 @@ function initDB() {
     amount REAL DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now'))
   )`); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_finance_activity_log_created ON finance_activity_log(created_at)'); } catch {}
 
   // Generic course tables — used by both B2C and Kids via `section` param
   try { db.exec(`CREATE TABLE IF NOT EXISTS kids_courses (
@@ -468,6 +470,8 @@ function initDB() {
   )`); } catch {}
   try { db.exec(`ALTER TABLE timesheet_employees ADD COLUMN bonus INTEGER DEFAULT 0`); } catch {}
   try { db.exec(`ALTER TABLE timesheet_employees ADD COLUMN advance INTEGER DEFAULT 0`); } catch {}
+  // Prevents syncTimesheetEmployees() from creating duplicate rows for the same user on every page load.
+  try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_timesheet_employees_user_unique ON timesheet_employees(user_id) WHERE user_id IS NOT NULL`); } catch {}
 
   try { db.exec(`CREATE TABLE IF NOT EXISTS timesheet_records (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -520,6 +524,7 @@ function initDB() {
     auth       TEXT NOT NULL,
     created_at TEXT DEFAULT (datetime('now'))
   )`); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)'); } catch {}
 
   const admin = db.prepare("SELECT id FROM users WHERE role = 'admin'").get();
   if (!admin) {
