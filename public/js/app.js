@@ -8198,7 +8198,7 @@ function openNewCalEvent(dateStr, hour) {
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
-      <button class="btn btn-blue" onclick="saveCalEvent()">Сохранить</button>
+      <button class="btn btn-blue" id="cal-ev-save-btn" onclick="saveCalEvent()">Сохранить</button>
     </div>
   </div>`);
   document.getElementById('cal-ev-title').focus();
@@ -8217,6 +8217,8 @@ async function saveCalEvent() {
   if (!startRaw || !endRaw) return toast('Укажите дату и время', 'error');
   const start = new Date(startRaw), end = new Date(endRaw);
   if (end <= start) return toast('Конец должен быть позже начала', 'error');
+  const btn = document.getElementById('cal-ev-save-btn');
+  if (btn) { if (btn.disabled) return; btn.disabled = true; }
   try {
     await api('POST', '/calendar/events', {
       summary: title, description: desc, location, recurrence,
@@ -8227,7 +8229,10 @@ async function saveCalEvent() {
     closeModal();
     toast('Событие создано');
     _calLoadAndRender();
-  } catch(e) { toast('Ошибка: ' + e.message, 'error'); }
+  } catch(e) {
+    toast('Ошибка: ' + e.message, 'error');
+    if (btn) btn.disabled = false;
+  }
 }
 
 function openCalEventDetail(eventId, occurrenceStart) {
@@ -8326,7 +8331,7 @@ function openEditCalEvent(eventId) {
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
-      <button class="btn btn-blue" onclick="saveEditCalEvent(${eventId})">Сохранить</button>
+      <button class="btn btn-blue" id="cal-edit-save-btn" onclick="saveEditCalEvent(${eventId})">Сохранить</button>
     </div>
   </div>`);
   document.getElementById('cal-edit-title').focus();
@@ -8345,6 +8350,8 @@ async function saveEditCalEvent(eventId) {
   const start = startRaw ? new Date(startRaw) : null;
   const end   = endRaw   ? new Date(endRaw)   : null;
   if (start && end && end <= start) return toast('Конец должен быть позже начала', 'error');
+  const btn = document.getElementById('cal-edit-save-btn');
+  if (btn) { if (btn.disabled) return; btn.disabled = true; }
   try {
     await api('PATCH', `/calendar/events/${eventId}`, {
       summary: title, description: desc, location, recurrence,
@@ -8355,7 +8362,10 @@ async function saveEditCalEvent(eventId) {
     closeModal();
     toast('Событие обновлено');
     _calLoadAndRender();
-  } catch(e) { toast('Ошибка: ' + e.message, 'error'); }
+  } catch(e) {
+    toast('Ошибка: ' + e.message, 'error');
+    if (btn) btn.disabled = false;
+  }
 }
 
 function deleteCalEvent(eventId, occurrenceStart) {
