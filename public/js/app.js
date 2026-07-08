@@ -3106,7 +3106,7 @@ async function openTaskDetail(taskId) {
 
           ${canEdit ? `
             <div style="display:flex;gap:10px;margin-bottom:20px">
-              ${!isMultiAssignee && t.assignee_id === state.user.id && t.status !== 'pending_review' ? `
+              ${!isMultiAssignee && (isAdmin || t.assignee_id === state.user.id) && t.status !== 'pending_review' ? `
                 <button class="btn ${t.status==='done' ? 'btn-outline' : 'btn-primary'} btn-sm" onclick="toggleTaskDone(${t.id},${t.status!=='done'},this)" style="display:inline-flex;align-items:center;gap:5px">${svgI('<polyline points="20 6 9 17 4 12"/>',13)} ${t.status==='done' ? 'Отменить выполнение' : 'Готово'}</button>
               ` : ''}
               <button class="btn btn-outline btn-sm" onclick="closeModal();openTaskModal(${t.id})" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.edit)} Редактировать</button>
