@@ -470,6 +470,34 @@ function initDB() {
   )`); } catch {}
   try { db.exec(`ALTER TABLE timesheet_employees ADD COLUMN bonus INTEGER DEFAULT 0`); } catch {}
   try { db.exec(`ALTER TABLE timesheet_employees ADD COLUMN advance INTEGER DEFAULT 0`); } catch {}
+  // One-time cleanup: a prior bug (syncTimesheetEmployees ran without a UNIQUE constraint)
+  // let duplicate rows pile up per user_id on every page load, in production too — the
+  // UNIQUE INDEX below would otherwise silently fail to create (caught and swallowed) on
+  // any database that already has those duplicates. For each user_id, keep only the row
+  // with the most timesheet_records attached (the one actually holding real data), delete
+  // the rest. Runs every boot but is a no-op once no duplicates remain.
+  try {
+    const dupUserIds = db.prepare(`
+      SELECT user_id FROM timesheet_employees
+      WHERE user_id IS NOT NULL GROUP BY user_id HAVING COUNT(*) > 1
+    `).all();
+    for (const { user_id } of dupUserIds) {
+      const rows = db.prepare(`
+        SELECT te.id, COUNT(tr.id) as record_count
+        FROM timesheet_employees te
+        LEFT JOIN timesheet_records tr ON tr.employee_id = te.id
+        WHERE te.user_id = ?
+        GROUP BY te.id
+        ORDER BY record_count DESC, te.id ASC
+      `).all(user_id);
+      const keepId = rows[0].id;
+      const dropIds = rows.slice(1).map(r => r.id);
+      if (dropIds.length) {
+        const ph = dropIds.map(() => '?').join(',');
+        db.prepare(`DELETE FROM timesheet_employees WHERE id IN (${ph})`).run(...dropIds);
+      }
+    }
+  } catch {}
   // Prevents syncTimesheetEmployees() from creating duplicate rows for the same user on every page load.
   try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_timesheet_employees_user_unique ON timesheet_employees(user_id) WHERE user_id IS NOT NULL`); } catch {}
 
