@@ -179,6 +179,23 @@ function initDB() {
     done_at TEXT,
     UNIQUE(task_id, user_id)
   )`); } catch {}
+  // One-time cleanup: task_assignees rows are only meant to exist for 2+ assignee
+  // tasks (see setTaskAssignees/server.js) — single-assignee tasks use tasks.status
+  // directly. Tasks created before this split, or edited down from multi- to
+  // single-assignee, can be left with exactly one orphaned task_assignees row,
+  // which makes the frontend render the multi-assignee UI (checklist-style toggle
+  // next to the assignee) instead of the single-assignee UI (Done button next to
+  // Edit/Delete) for what is actually a single-assignee task — confusing since two
+  // visually different UIs appear for the same kind of task. tasks.status already
+  // is the source of truth for these, so it's safe to just drop the stray row.
+  try {
+    db.exec(`
+      DELETE FROM task_assignees
+      WHERE task_id IN (
+        SELECT task_id FROM task_assignees GROUP BY task_id HAVING COUNT(*) = 1
+      )
+    `);
+  } catch {}
   try { db.exec(`CREATE TABLE IF NOT EXISTS schedule (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     day INTEGER NOT NULL,
