@@ -372,7 +372,8 @@ input, textarea, select { font: inherit; }
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--glass-border);
-  padding: 0 24px; min-height: 64px;
+  padding: env(safe-area-inset-top, 0px) 24px 0 24px;
+  min-height: calc(64px + env(safe-area-inset-top, 0px));
   display: flex; align-items: center; gap: 16px;
   position: sticky; top: 0; z-index: 20;
 }
@@ -2049,7 +2050,8 @@ input, textarea, select { font: inherit; }
 
   /* topbar */
   .topbar {
-    padding: 8px 12px; min-height: 52px; gap: 8px;
+    padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px 12px;
+    min-height: calc(52px + env(safe-area-inset-top, 0px)); gap: 8px;
   }
   .topbar-title { font-size: 14px; }
   .topbar-subtitle { display: none; }
