@@ -373,17 +373,31 @@ function syncTasksForItem(item, projectId, createdBy, ctx) {
     db.prepare('UPDATE tasks SET title=?, deadline=? WHERE id=?').run(title, item.date, taskId);
   }
 
-  // Sync task_assignees to match current project members; track who is newly added
+  // Sync assignees to match current project members; track who is newly added.
+  // Single member: use tasks.assignee_id directly (no task_assignees row), same
+  // convention as setTaskAssignees() — a stray task_assignees row for a single
+  // assignee makes the frontend render the multi-assignee checklist UI instead
+  // of the normal single-assignee UI for what should look like an ordinary task.
   const existingAssignees = db.prepare('SELECT user_id FROM task_assignees WHERE task_id = ?').all(taskId).map(r => r.user_id);
-  members.forEach(m => {
-    db.prepare('INSERT OR IGNORE INTO task_assignees (task_id, user_id) VALUES (?, ?)').run(taskId, m.user_id);
-  });
-  const memberIds = members.map(m => m.user_id);
-  const ph = memberIds.map(() => '?').join(',');
-  db.prepare(`DELETE FROM task_assignees WHERE task_id = ? AND user_id NOT IN (${ph})`).run(taskId, ...memberIds);
+  const existingSingle = existingAssignees.length === 0 ? [allTasks.length ? (db.prepare('SELECT assignee_id FROM tasks WHERE id = ?').get(taskId)?.assignee_id) : null].filter(Boolean) : [];
+  if (members.length > 1) {
+    members.forEach(m => {
+      db.prepare('INSERT OR IGNORE INTO task_assignees (task_id, user_id) VALUES (?, ?)').run(taskId, m.user_id);
+    });
+    const memberIds = members.map(m => m.user_id);
+    const ph = memberIds.map(() => '?').join(',');
+    db.prepare(`DELETE FROM task_assignees WHERE task_id = ? AND user_id NOT IN (${ph})`).run(taskId, ...memberIds);
+  } else {
+    // Exactly one member: clear any task_assignees rows and keep assignee_id in sync.
+    db.prepare('DELETE FROM task_assignees WHERE task_id = ?').run(taskId);
+    db.prepare('UPDATE tasks SET assignee_id = ? WHERE id = ?').run(members[0].user_id, taskId);
+  }
 
-  // Send Telegram only to newly added assignees
-  const newMembers = members.filter(m => !existingAssignees.includes(m.user_id));
+  // Send Telegram only to newly added assignees (compare against whichever
+  // representation — task_assignees rows or the prior single assignee_id — was
+  // actually in effect before this sync).
+  const previousMemberIds = existingAssignees.length ? existingAssignees : existingSingle;
+  const newMembers = members.filter(m => !previousMemberIds.includes(m.user_id));
   if (newMembers.length > 0) {
     const fullTask = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [taskId]))[0];
     if (fullTask) {
