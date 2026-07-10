@@ -17,6 +17,7 @@ colors:
   warning: "#D9822B"
   danger: "#E5484D"
   accent: "#3B82F6"
+  indigo: "#6366F1"
   dark-bg: "#0B0B0F"
   dark-surface: "#15151B"
   dark-surface-2: "#1E1E27"
@@ -121,12 +122,17 @@ A restrained neutral palette with one committed brand color and a fixed semantic
 - **Overdue Red** (#E5484D light / #E24B67 dark): overdue deadlines, destructive actions, high-priority badges.
 - **Info Blue** (#3B82F6): "new" status only.
 
+### Category (fixed identity colors, not status)
+- **Category Indigo** (#6366F1): two fixed roles, neither of them status. (1) Default avatar background when a user/project has no chosen color (`avatar_color`/`project.color` fallback, ~40 call sites) — the "no color assigned yet" neutral default. (2) The permanent identity color for the B2C section across finance/activity views (`FL_SECTION_COLOR.b2c`, `FIN_DIRECTION_COLOR.b2c`) — B2C is always indigo wherever it appears, the same way a project keeps its own chosen color. Also present as one swatch in the two category-color picker palettes (`COLORS`, `IH_COLORS`) users can assign to projects/content items — legitimate there since it's simply one option among many, not reserved.
+
 ### Named Rules
 **The One Hero Exception Rule.** Burgundy appears as decorative gradient fill in exactly one place system-wide: the dashboard's "Выполнено" stat card (`.dash-stat-card--done`). Every other surface follows the One Accent Rule below. Do not extend the gradient-fill treatment to any other card, tile, or component — its rarity is what makes it a hero, not a template.
 
 **The One Accent Rule (everywhere else).** Outside the one named exception, burgundy appears only at decision points: primary buttons, active nav/tab/filter state, focus rings, links. It never appears as decorative background or emphasis-by-tint on body text elsewhere.
 
 **The Semantic-Only Blue Rule.** Accent blue (#3B82F6) is reserved exclusively for the "new" task status.
+
+**The Category-Not-Status Rule.** Indigo (#6366F1) is a fixed identity/category color (avatar default, B2C section), never a status or urgency signal. If a future status needs a color, do not reach for indigo — it already means something else everywhere it appears.
 
 ## 3. Typography
 
@@ -201,7 +207,7 @@ A 3–4px solid `border-left`, colored dynamically from data, is an established 
 - **Do** treat the Done stat card's gradient-plus-blur-orb treatment as a one-off hero component — never copy it onto another card or tile.
 - **Do** use colorless ambient shadows (`rgba(17,17,26,...)`) for elevation everywhere except the Done card's burgundy-tinted shadow.
 - **Do** build hierarchy through Gotham's weight range, not through switching typefaces.
-- **Do** keep status color semantics fixed: green = done/positive, amber = pending/soon, red = overdue/destructive, blue = new-status only, violet = pending_review.
+- **Do** keep status color semantics fixed: green = done/positive, amber = pending/soon, red = overdue/destructive, blue = new-status only, violet = pending_review, indigo = category identity (avatar default / B2C), never status.
 - **Do** respect `prefers-reduced-motion` on every transition and animation (WCAG AA per PRODUCT.md).
 - **Do** maintain full light/dark theme parity — every new token needs both a light and `[data-theme="dark"]` value.
 

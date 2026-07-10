@@ -11,6 +11,7 @@
       "success": { "role": "neutral", "displayName": "Confirmed Green", "canonical": "#16A34A", "tonalRamp": ["#052E16", "#14532D", "#166534", "#15803D", "#16A34A", "#22C55E", "#86EFAC", "#ECFDF5"] },
       "warning": { "role": "neutral", "displayName": "Pending Amber", "canonical": "#D9822B", "tonalRamp": ["#451A03", "#78350F", "#92400E", "#B45309", "#D9822B", "#F59E0B", "#FCD34D", "rgba(217,130,43,.12)"] },
       "danger": { "role": "neutral", "displayName": "Overdue Red", "canonical": "#E5484D", "tonalRamp": ["#450A0A", "#7F1D1D", "#991B1B", "#B91C1C", "#E5484D", "#EF4444", "#FCA5A5", "#FEF2F2"] },
+      "indigo": { "role": "tertiary", "displayName": "Category Indigo", "canonical": "#6366F1", "tonalRamp": ["#1E1B4B", "#312E81", "#3730A3", "#4338CA", "#4F46E5", "#6366F1", "#818CF8", "#A5B4FC"] },
       "dark-primary-accent": { "role": "primary", "displayName": "Dark Primary Accent", "canonical": "#E24B67", "tonalRamp": ["#6B1020", "#8E1B3B", "#B4234C", "#D14D72", "#E24B67", "#EC7A93", "#F3A8B9", "rgba(226,75,103,.15)"] }
     },
     "typographyMeta": {
@@ -109,14 +110,15 @@
       { "name": "The Semantic-Only Blue Rule", "body": "Accent blue (#3B82F6) is reserved exclusively for the 'new' task status.", "section": "colors" },
       { "name": "The Weight-Not-Style Rule", "body": "Hierarchy is built by weight and size shifts within one family, never by switching fonts or adding italics.", "section": "typography" },
       { "name": "The Neutral-Shadow Rule", "body": "Shadows are colorless (tinted toward ink, not toward brand) everywhere except the one named hero exception.", "section": "elevation" },
-      { "name": "The Data-Bound Border Rule", "body": "A colored border-left is legitimate exactly when its color is computed from data (urgency, category, project, task type) and communicates that one fact at a glance. Confirmed uses: task-card urgency, content-plan chips, workload project-picker buttons, finance summary cards. Illegitimate when static/decorative and unrelated to data.", "section": "components" }
+      { "name": "The Data-Bound Border Rule", "body": "A colored border-left is legitimate exactly when its color is computed from data (urgency, category, project, task type) and communicates that one fact at a glance. Confirmed uses: task-card urgency, content-plan chips, workload project-picker buttons, finance summary cards. Illegitimate when static/decorative and unrelated to data.", "section": "components" },
+      { "name": "The Category-Not-Status Rule", "body": "Indigo (#6366F1) is a fixed identity/category color: default avatar background when no color is chosen, and the permanent B2C section identity across finance/activity views. It is never a status or urgency signal. If a future status needs a color, do not reach for indigo.", "section": "colors" }
     ],
     "dos": [
       "Do keep burgundy (#8E1B3B) as the accent for actions and active states everywhere except the two named exceptions (Done stat card, primary CTA button).",
       "Do treat the Done stat card's gradient-plus-blur-orb treatment as a one-off hero component — never copy it onto another card or tile.",
       "Do use colorless ambient shadows for elevation everywhere except the Done card's burgundy-tinted shadow.",
       "Do build hierarchy through Gotham's weight range, not through switching typefaces.",
-      "Do keep status color semantics fixed: green = done/positive, amber = pending/soon, red = overdue/destructive, blue = new-status only, violet = pending_review.",
+      "Do keep status color semantics fixed: green = done/positive, amber = pending/soon, red = overdue/destructive, blue = new-status only, violet = pending_review, indigo = category identity (avatar default / B2C), never status.",
       "Do respect prefers-reduced-motion on every transition and animation (WCAG AA per PRODUCT.md).",
       "Do maintain full light/dark theme parity — every new token needs both a light and [data-theme=\"dark\"] value."
     ],
@@ -126,7 +128,8 @@
       "Don't extend decorative gradient fills beyond the two named exceptions (Done stat card, .btn-blue primary CTA).",
       "Don't add bounce, elastic, or overshoot easing to any transition.",
       "Don't introduce a second accent color competing with burgundy; map new semantic needs to the existing green/amber/red/blue/violet set first.",
-      "Don't let body or placeholder text drop below 4.5:1 contrast in either theme — verify dark-theme contrast separately."
+      "Don't let body or placeholder text drop below 4.5:1 contrast in either theme — verify dark-theme contrast separately.",
+      "Don't reuse indigo (#6366F1) for a new status/urgency meaning — it's reserved as category identity (avatar default, B2C)."
     ]
   }
 }

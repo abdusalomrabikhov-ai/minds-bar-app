@@ -221,7 +221,7 @@ function deadlineClass(dt, status) {
 
 function priorityBadge(p) {
   const map = {
-    high:   [colorDot('#DC2626'), 'Высокий', 'badge-priority-high'],
+    high:   [colorDot('var(--danger)'), 'Высокий', 'badge-priority-high'],
     medium: [colorDot('#D97706'), 'Средний',  'badge-priority-medium'],
     low:    [colorDot('#059669'), 'Низкий',   'badge-priority-low'],
   };
@@ -1069,7 +1069,7 @@ function renderMyTasksSummary({ stats, byProject, upcoming }) {
   const nw    = stats?.new_count   || 0;
   const ov    = stats?.overdue     || 0;
   const pct   = total > 0 ? Math.round(done / total * 100) : 0;
-  const effColor = pct >= 80 ? '#059669' : pct >= 50 ? '#D97706' : pct > 0 ? '#DC2626' : '#94A3B8';
+  const effColor = pct >= 80 ? '#059669' : pct >= 50 ? '#D97706' : pct > 0 ? 'var(--danger)' : '#94A3B8';
 
   const donutSlices = [
     { key: 'new',         label: 'Новые',    v: nw,  c: '#3B82F6' },
@@ -1608,7 +1608,7 @@ async function renderEmployeeDashboard() {
             ${svgI(SVG_PATHS.warning,15)} Требуют внимания
           </div>
         </div>
-        ${overdueMe.length ? `<div style="font-size:12px;font-weight:700;color:#dc2626;margin:8px 0 4px;padding:0 24px">Просрочены</div>
+        ${overdueMe.length ? `<div style="font-size:12px;font-weight:700;color:var(--danger);margin:8px 0 4px;padding:0 24px">Просрочены</div>
           <div class="tasks-list" style="padding:0 24px">${overdueMe.map(t=>taskCard(t,'overdue')).join('')}</div>` : ''}
         ${todayMe.length ? `<div style="font-size:12px;font-weight:700;color:#d97706;margin:8px 0 4px;padding:0 24px">На сегодня</div>
           <div class="tasks-list" style="padding:0 24px">${todayMe.map(t=>taskCard(t,'today')).join('')}</div>` : ''}
@@ -1851,7 +1851,7 @@ async function renderTasksPage() {
       <button class="filter-btn ${tasksFilter.status==='in_progress' ? 'active' : ''}" onclick="setTaskFilter('status','in_progress')" style="display:inline-flex;align-items:center;gap:5px">${colorDot('#D97706')} В работе</button>
       <button class="filter-btn ${tasksFilter.status==='done' ? 'active' : ''}" onclick="setTaskFilter('status','done')" style="display:inline-flex;align-items:center;gap:5px">${colorDot('#059669')} Готово</button>
       <button class="filter-btn ${tasksFilter.overdue ? 'active' : ''}" onclick="setTaskFilter('overdue',true)" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.warning)} Просрочено</button>
-      <button class="filter-btn ${tasksFilter.priority==='high' ? 'active' : ''}" onclick="setTaskFilter('priority','high')" style="display:inline-flex;align-items:center;gap:5px">${colorDot('#DC2626')} Срочные</button>
+      <button class="filter-btn ${tasksFilter.priority==='high' ? 'active' : ''}" onclick="setTaskFilter('priority','high')" style="display:inline-flex;align-items:center;gap:5px">${colorDot('var(--danger)')} Срочные</button>
       ${showEmployeeFilter ? `
         <div class="employee-filter">
           <select id="employee-filter-select">
@@ -2905,7 +2905,7 @@ function taskCard(t, urgencyLevel = null) {
     }
   }
 
-  const urgentBorder = { overdue: '#DC2626', today: '#EA580C', tomorrow: '#D97706' }[urgencyLevel] || '';
+  const urgentBorder = { overdue: 'var(--danger)', today: '#EA580C', tomorrow: '#D97706' }[urgencyLevel] || '';
   return `
     <div class="task-card ${t.status === 'done' ? 'done' : ''}" data-task-id="${t.id}"${urgentBorder ? ` style="border-left:3px solid ${urgentBorder};border-radius:0 10px 10px 0"` : ''}>
       <div class="task-card-left">
@@ -3812,7 +3812,7 @@ async function reviewReject(taskId) {
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
-        <button class="btn btn-primary" style="background:#dc2626;border-color:#dc2626" onclick="reviewRejectConfirm(${taskId})">
+        <button class="btn btn-primary" style="background:var(--danger);border-color:var(--danger)" onclick="reviewRejectConfirm(${taskId})">
           Вернуть на доработку
         </button>
       </div>
@@ -4309,13 +4309,13 @@ function renderActivityLog(logs) {
   };
   const ACTION_COLOR = {
     login:'#6366f1',            logout:'#94a3b8',
-    task_created:'#3B82F6',     task_status:'#059669',     task_updated:'#D97706',   task_deleted:'#DC2626',
+    task_created:'#3B82F6',     task_status:'#059669',     task_updated:'#D97706',   task_deleted:'var(--danger)',
     comment:'#8B5CF6',
-    project_created:'#f97316',  project_updated:'#f59e0b', project_deleted:'#DC2626',
+    project_created:'#f97316',  project_updated:'#f59e0b', project_deleted:'var(--danger)',
     project_archived:'#9B9BA8', project_unarchived:'#22c55e',
-    content_created:'#ec4899',  content_updated:'#a78bfa', content_deleted:'#DC2626',
-    user_created:'#22c55e',     user_updated:'#14b8a6',    user_deleted:'#DC2626',
-    schedule_created:'#8b5cf6', schedule_updated:'#d97706',schedule_deleted:'#DC2626',
+    content_created:'#ec4899',  content_updated:'#a78bfa', content_deleted:'var(--danger)',
+    user_created:'#22c55e',     user_updated:'#14b8a6',    user_deleted:'var(--danger)',
+    schedule_created:'#8b5cf6', schedule_updated:'#d97706',schedule_deleted:'var(--danger)',
   };
   const ACTION_TEXT = {
     login: 'вошёл в систему',              logout: 'вышел из системы',
@@ -4710,7 +4710,7 @@ async function loadSummaryReport(days) {
         <div class="rpt-bar-nums">
           <span class="rpt-bar-total">${s.assigned}</span>
           <span class="rpt-bar-sub" style="color:#16a34a">${s.done}✓</span>
-          ${s.overdue > 0 ? `<span class="rpt-bar-sub" style="color:#dc2626">${s.overdue}⚠</span>` : ''}
+          ${s.overdue > 0 ? `<span class="rpt-bar-sub" style="color:var(--danger)">${s.overdue}⚠</span>` : ''}
           <span class="rpt-bar-pct" style="color:${color}">${pct}%</span>
         </div>
       </div>`;
@@ -4719,8 +4719,8 @@ async function loadSummaryReport(days) {
     // Table rows
     const rows = employees.map(e => {
       const s = e.stats;
-      const pDColor = s.pctDone === null ? '#9B9BA8' : s.pctDone >= 80 ? '#16a34a' : s.pctDone >= 50 ? '#d97706' : '#dc2626';
-      const pTColor = s.pctOnTime === null ? '#9B9BA8' : s.pctOnTime >= 80 ? '#16a34a' : s.pctOnTime >= 50 ? '#d97706' : '#dc2626';
+      const pDColor = s.pctDone === null ? '#9B9BA8' : s.pctDone >= 80 ? '#16a34a' : s.pctDone >= 50 ? '#d97706' : 'var(--danger)';
+      const pTColor = s.pctOnTime === null ? '#9B9BA8' : s.pctOnTime >= 80 ? '#16a34a' : s.pctOnTime >= 50 ? '#d97706' : 'var(--danger)';
       const ini = e.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
       return `<tr>
         <td style="display:flex;align-items:center;gap:8px;padding:10px 12px">
@@ -4731,7 +4731,7 @@ async function loadSummaryReport(days) {
         </td>
         <td class="sr-td-num">${s.assigned}</td>
         <td class="sr-td-num" style="color:#16a34a;font-weight:600">${s.done}</td>
-        <td class="sr-td-num" style="color:${s.overdue>0?'#dc2626':'#6b7280'};font-weight:${s.overdue>0?'600':'400'}">${s.overdue}</td>
+        <td class="sr-td-num" style="color:${s.overdue>0?'var(--danger)':'#6b7280'};font-weight:${s.overdue>0?'600':'400'}">${s.overdue}</td>
         <td class="sr-td-num" style="color:${pDColor};font-weight:600">${s.pctDone !== null ? s.pctDone+'%' : '—'}</td>
         <td class="sr-td-num" style="color:${pTColor};font-weight:600">${s.pctOnTime !== null ? s.pctOnTime+'%' : '—'}</td>
       </tr>`;
@@ -4784,7 +4784,7 @@ async function loadSummaryReport(days) {
             <div class="rpt-chart-title">Нагрузка по сотрудникам — ${periodLabel}</div>
             <div class="rpt-chart-legend">
               <span class="rpt-leg"><span class="rpt-leg-dot" style="background:#16a34a"></span>Выполнено</span>
-              <span class="rpt-leg"><span class="rpt-leg-dot" style="background:#dc2626"></span>Просрочено</span>
+              <span class="rpt-leg"><span class="rpt-leg-dot" style="background:var(--danger)"></span>Просрочено</span>
             </div>
           </div>
           <div class="rpt-chart-bars">${bars}</div>
@@ -5029,7 +5029,7 @@ async function loadAnalyticsReport(days) {
           <div><div class="stat-value">${totalDone}</div><div class="stat-label">Выполнено за период</div></div>
         </div>
         <div class="stat-card">
-          <div><div class="stat-value" style="color:${trendEff>=80?'#16a34a':trendEff>=50?'#d97706':'#dc2626'}">${trendEff}%</div><div class="stat-label">Эффективность периода</div></div>
+          <div><div class="stat-value" style="color:${trendEff>=80?'#16a34a':trendEff>=50?'#d97706':'var(--danger)'}">${trendEff}%</div><div class="stat-label">Эффективность периода</div></div>
         </div>
       </div>
 
@@ -5103,7 +5103,7 @@ async function loadReport() {
           <div><div class="stat-value">${doneAll}</div><div class="stat-label">Выполнено</div></div>
         </div>
         <div class="stat-card">
-          <div class="stat-icon" style="border-color:#DC2626"></div>
+          <div class="stat-icon" style="border-color:var(--danger)"></div>
           <div><div class="stat-value">${overdueAll}</div><div class="stat-label">Просрочено</div></div>
         </div>
         <div class="stat-card">
@@ -5144,8 +5144,8 @@ async function loadReport() {
             <div class="rpt-bar-nums">
               <span class="rpt-bar-total">${tot}</span>
               <span class="rpt-bar-sub" style="color:#16a34a">${don}✓</span>
-              ${ov > 0 ? `<span class="rpt-bar-sub" style="color:#dc2626">${ov}⚠</span>` : ''}
-              <span class="rpt-bar-pct" style="color:${pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626'}">${pct}%</span>
+              ${ov > 0 ? `<span class="rpt-bar-sub" style="color:var(--danger)">${ov}⚠</span>` : ''}
+              <span class="rpt-bar-pct" style="color:${pct>=80?'#16a34a':pct>=50?'#d97706':'var(--danger)'}">${pct}%</span>
             </div>
           </div>`;
         }).join('');
@@ -5156,7 +5156,7 @@ async function loadReport() {
             <div class="rpt-chart-legend">
               <span class="rpt-leg"><span class="rpt-leg-dot" style="background:#16a34a"></span>Выполнено</span>
               <span class="rpt-leg"><span class="rpt-leg-dot" style="background:#d97706"></span>В работе</span>
-              <span class="rpt-leg"><span class="rpt-leg-dot" style="background:#dc2626"></span>Просрочено</span>
+              <span class="rpt-leg"><span class="rpt-leg-dot" style="background:var(--danger)"></span>Просрочено</span>
               <span class="rpt-leg"><span class="rpt-leg-dot" style="background:#e2e8f0"></span>Новые</span>
             </div>
           </div>
@@ -5318,7 +5318,7 @@ async function renderEmployeeProfile(userId, month) {
     const doneOnTime = beUser?.doneOnTime ?? 0;
     const doneLate   = beUser?.doneLate   ?? 0;
     const pct        = beUser?.score      ?? 0;
-    const effColor   = pct >= 80 ? '#059669' : pct >= 50 ? '#D97706' : pct > 0 ? '#DC2626' : '#94A3B8';
+    const effColor   = pct >= 80 ? '#059669' : pct >= 50 ? '#D97706' : pct > 0 ? 'var(--danger)' : '#94A3B8';
 
     const allTasks = tasks; // already filtered by server
     // Task is done for this user if:
@@ -5430,7 +5430,7 @@ async function renderEmployeeProfile(userId, month) {
           <div><div class="stat-value"><span data-count="${inProg}">0</span></div><div class="stat-label">В работе</div></div>
         </div>
         <div class="stat-card">
-          <div class="stat-icon" style="border-color:#DC2626"></div>
+          <div class="stat-icon" style="border-color:var(--danger)"></div>
           <div><div class="stat-value"><span data-count="${overdue}">0</span></div><div class="stat-label">Просрочено</div></div>
         </div>
       </div>
@@ -6117,7 +6117,7 @@ async function exportWorkloadPDF() {
         : assignedIds.length === 1 ? '1 проект'
         : assignedIds.length <= 4 ? `${assignedIds.length} проекта`
         : `${assignedIds.length} проектов`;
-      const pctColor = pct >= 80 ? '#16a34a' : pct >= 50 ? '#ca8a04' : pct > 0 ? '#dc2626' : '#9B9BA8';
+      const pctColor = pct >= 80 ? '#16a34a' : pct >= 50 ? '#ca8a04' : pct > 0 ? 'var(--danger)' : '#9B9BA8';
       return `<tr>
         <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:600;white-space:nowrap">${u.name}</td>
         <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0">${projList}</td>
@@ -7059,7 +7059,7 @@ function _renderBestEmployee(data) {
 
   const scoreBar = (score) => {
     const pct = score ?? 0;
-    const col = pct >= 80 ? '#16a34a' : pct >= 50 ? '#d97706' : '#dc2626';
+    const col = pct >= 80 ? '#16a34a' : pct >= 50 ? '#d97706' : 'var(--danger)';
     return `<div class="be-score-bar-bg"><div class="be-score-bar-fill" style="width:${pct}%;background:${col}"></div></div>`;
   };
   const MEDAL_SVG = [
@@ -7068,7 +7068,7 @@ function _renderBestEmployee(data) {
     `<svg viewBox="0 0 26 26" width="26" height="26"><circle cx="13" cy="13" r="12" fill="#c2410c" stroke="#9a3412" stroke-width="1.5"/><circle cx="13" cy="13" r="9" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1"/><text x="13" y="17.5" text-anchor="middle" font-size="11" font-weight="900" fill="white" font-family="system-ui">3</text></svg>`,
   ];
   const medal = (i) => MEDAL_SVG[i] || `<span class="be-rank-num">${i+1}</span>`;
-  const scoreColor = s => s >= 80 ? '#16a34a' : s >= 50 ? '#d97706' : '#dc2626';
+  const scoreColor = s => s >= 80 ? '#16a34a' : s >= 50 ? '#d97706' : 'var(--danger)';
 
   // Sliding window: 1 past + current + 4 future = 6, with arrows
   const nowD = new Date();
@@ -7117,7 +7117,7 @@ function _renderBestEmployee(data) {
           <svg viewBox="0 0 80 52" width="68" height="46">
             <path d="M6 44 L16 13 L30 31 L40 4 L50 31 L64 13 L74 44 Z" fill="#fbbf24" stroke="#d97706" stroke-width="2" stroke-linejoin="round"/>
             <rect x="6" y="42" width="68" height="8" rx="3" fill="#d97706"/>
-            <circle cx="40" cy="6" r="5.5" fill="#dc2626" stroke="#991b1b" stroke-width="1"/>
+            <circle cx="40" cy="6" r="5.5" fill="#E5484D" stroke="#991b1b" stroke-width="1"/>
             <circle cx="14" cy="14" r="4" fill="#60a5fa" stroke="#2563eb" stroke-width="1"/>
             <circle cx="66" cy="14" r="4" fill="#60a5fa" stroke="#2563eb" stroke-width="1"/>
             <circle cx="38.5" cy="4.5" r="1.8" fill="rgba(255,255,255,0.7)"/>
@@ -7130,7 +7130,7 @@ function _renderBestEmployee(data) {
         <div class="be-champ-stats">
           <div class="be-champ-stat"><span class="be-champ-stat-val" style="color:#16a34a">${champion.doneOnTime}</span><span class="be-champ-stat-lbl">в срок</span></div>
           <div class="be-champ-stat"><span class="be-champ-stat-val" style="color:#d97706">${champion.doneLate}</span><span class="be-champ-stat-lbl">с опозданием</span></div>
-          <div class="be-champ-stat"><span class="be-champ-stat-val" style="color:#dc2626">${champion.overdue}</span><span class="be-champ-stat-lbl">просрочено</span></div>
+          <div class="be-champ-stat"><span class="be-champ-stat-val" style="color:var(--danger)">${champion.overdue}</span><span class="be-champ-stat-lbl">просрочено</span></div>
           <div class="be-champ-stat"><span class="be-champ-stat-val" style="color:white">${champion.total}</span><span class="be-champ-stat-lbl">всего задач</span></div>
         </div>
         <div class="be-champ-badge">Лучший сотрудник · ${fmtMonth(month)}</div>
@@ -7223,7 +7223,7 @@ function _renderBestEmployee(data) {
                 <th title="Всего завершено" style="color:#059669">Завершено</th>
                 <th title="Выполнено в срок" style="color:#16a34a">В срок</th>
                 <th title="Выполнено с опозданием" style="color:#d97706">С опозд.</th>
-                <th title="Просрочено / не выполнено" style="color:#dc2626">Просроч.</th>
+                <th title="Просрочено / не выполнено" style="color:var(--danger)">Просроч.</th>
                 <th>Эффективность</th>
               </tr>
             </thead>
@@ -8435,7 +8435,7 @@ const EXP_CATEGORY_COLORS = {
 };
 
 const FIN_STATUS       = { paid: 'Оплачено', unpaid: 'Не оплачено', partial: 'Частично' };
-const FIN_STATUS_COLOR = { paid: '#16a34a', unpaid: '#dc2626', partial: '#d97706' };
+const FIN_STATUS_COLOR = { paid: '#16a34a', unpaid: '#E5484D', partial: '#d97706' };
 const FIN_TYPE         = { cash: 'Наличными', bank: 'Банк', alif: 'Alif', dushanbecity: 'DC' };
 const FIN_TYPE_COLOR   = { cash: '#ea580c', bank: '#0891b2', alif: '#16a34a', dushanbecity: '#1d4ed8' };
 const FIN_DIRECTION       = { marketing: 'Маркетинг', b2b: 'В2В', b2c: 'В2С', kids: 'Kids' };
@@ -8485,9 +8485,9 @@ async function renderFinancePage() {
           <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px">
             <div><div style="font-size:16px;font-weight:800">${fmtMoney(d.svc)}</div><div style="font-size:10px;color:var(--text-muted)">Сумма</div></div>
             <div><div style="font-size:16px;font-weight:800;color:#16a34a">${fmtMoney(d.paid)}</div><div style="font-size:10px;color:var(--text-muted)">Оплачено</div></div>
-            <div><div style="font-size:16px;font-weight:800;color:${debt>0?'#dc2626':'#16a34a'}">${fmtMoney(debt)}</div><div style="font-size:10px;color:var(--text-muted)">Долг</div></div>
+            <div><div style="font-size:16px;font-weight:800;color:${debt>0?'var(--danger)':'#16a34a'}">${fmtMoney(debt)}</div><div style="font-size:10px;color:var(--text-muted)">Долг</div></div>
           </div>
-          <div class="fin-progress-bar-bg"><div class="fin-progress-bar-fill" style="width:${pct}%;background:${pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626'}"></div></div>
+          <div class="fin-progress-bar-bg"><div class="fin-progress-bar-fill" style="width:${pct}%;background:${pct>=80?'#16a34a':pct>=50?'#d97706':'var(--danger)'}"></div></div>
           <div style="font-size:10px;color:var(--text-muted);margin-top:4px;text-align:right">${pct}% собрано</div>
         </div>`;
       };
@@ -8568,7 +8568,7 @@ function _renderFinance(rows) {
         ${fmtMoney(r.paid_amount)}
         ${pmts.length>0?`<span class="fin-pmts-badge" onclick="openPaymentsModal(${r.id})" title="Платежей: ${pmts.length}">${pmts.length}п</span>`:''}
       </td>
-      <td class="fin-td fin-money" style="color:${debt>0?'#dc2626':'#16a34a'}">${fmtMoney(debt)}</td>
+      <td class="fin-td fin-money" style="color:${debt>0?'var(--danger)':'#16a34a'}">${fmtMoney(debt)}</td>
       <td class="fin-td"><span class="fin-status-badge" style="background:${FIN_STATUS_COLOR[r.status]}22;color:${FIN_STATUS_COLOR[r.status]}">${FIN_STATUS[r.status]||r.status}</span></td>
       <td class="fin-td"><span class="fin-type-badge" style="background:${FIN_TYPE_COLOR[r.payment_type]||'#64748b'}22;color:${FIN_TYPE_COLOR[r.payment_type]||'#64748b'}">${FIN_TYPE[r.payment_type]||r.payment_type}</span></td>
       <td class="fin-td">${r.direction?`<span class="fin-type-badge" style="background:${FIN_DIRECTION_COLOR[r.direction]||'#64748b'}22;color:${FIN_DIRECTION_COLOR[r.direction]||'#64748b'}">${FIN_DIRECTION[r.direction]||r.direction}</span>`:'—'}</td>
@@ -8625,7 +8625,7 @@ function _renderFinance(rows) {
         </div>
         <div class="fin-sum-card fin-sum-red">
           <div class="fin-sum-lbl">Остаток (задолженность)</div>
-          <div class="fin-sum-val" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</div>
+          <div class="fin-sum-val" style="color:${totalDebt>0?'var(--danger)':'#16a34a'}">${fmtMoney(totalDebt)}</div>
           <div class="fin-sum-sub">${unpaidCount} не оплачено</div>
         </div>
         <div class="fin-sum-card">
@@ -8652,7 +8652,7 @@ function _renderFinance(rows) {
                   <td colspan="2" class="fin-td fin-total-lbl">ИТОГО</td>
                   <td class="fin-td fin-money fin-total">${fmtMoney(totalService)}</td>
                   <td class="fin-td fin-money fin-total" style="color:#16a34a">${fmtMoney(totalPaid)}</td>
-                  <td class="fin-td fin-money fin-total" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</td>
+                  <td class="fin-td fin-money fin-total" style="color:${totalDebt>0?'var(--danger)':'#16a34a'}">${fmtMoney(totalDebt)}</td>
                   <td colspan="4"></td>
                 </tr>
               </tfoot>
@@ -8779,7 +8779,7 @@ async function _renderFinanceChecklist() {
     const checkedCount = items.filter(i => i.checked).length;
     const total = items.length;
     const pct = total > 0 ? Math.round(checkedCount / total * 100) : 0;
-    const pctColor = pct === 100 ? '#059669' : pct >= 50 ? '#D97706' : '#DC2626';
+    const pctColor = pct === 100 ? '#059669' : pct >= 50 ? '#D97706' : 'var(--danger)';
 
     const listHtml = items.length === 0
       ? `<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13.5px">Список пуст — добавьте платежи</div>`
@@ -8979,7 +8979,7 @@ async function _renderExpensesPage() {
     <tr class="fin-row">
       <td class="fin-td fin-num">${i+1}</td>
       <td class="fin-td fin-project" style="${e.color?`color:${e.color}`:''}">${_escHtml(e.title)}</td>
-      <td class="fin-td fin-money" style="color:#dc2626">${fmtMoney(e.amount)}</td>
+      <td class="fin-td fin-money" style="color:var(--danger)">${fmtMoney(e.amount)}</td>
       <td class="fin-td">
         <span class="fin-type-badge" style="background:${EXP_CATEGORY_COLORS[e.category]||'#94a3b8'}22;color:${EXP_CATEGORY_COLORS[e.category]||'#94a3b8'}">${EXP_CATEGORIES[e.category]||e.category}</span>
       </td>
@@ -9023,12 +9023,12 @@ async function _renderExpensesPage() {
       </div>
       <div class="fin-sum-card">
         <div class="fin-sum-lbl">Расходы</div>
-        <div class="fin-sum-val" style="color:#dc2626">${fmtMoney(totalExp)}</div>
+        <div class="fin-sum-val" style="color:var(--danger)">${fmtMoney(totalExp)}</div>
         <div class="fin-sum-sub">${expenses.length} позиций</div>
       </div>
       <div class="fin-sum-card" style="border-color:${balance>=0?'#bbf7d0':'#fecaca'}">
         <div class="fin-sum-lbl">Баланс (Сумма услуг − Расходы)</div>
-        <div class="fin-sum-val" style="color:${balance>=0?'#16a34a':'#dc2626'}">${balance>=0?'+':''}${fmtMoney(balance)}</div>
+        <div class="fin-sum-val" style="color:${balance>=0?'#16a34a':'var(--danger)'}">${balance>=0?'+':''}${fmtMoney(balance)}</div>
         <div class="fin-sum-sub">${balance>=0?'Прибыль':'Убыток'}</div>
       </div>
     </div>
@@ -9042,7 +9042,7 @@ async function _renderExpensesPage() {
             <tbody>${rows}</tbody>
             <tfoot><tr class="fin-total-row">
               <td colspan="2" class="fin-td fin-total-lbl">ИТОГО</td>
-              <td class="fin-td fin-money fin-total" style="color:#dc2626">${fmtMoney(totalExp)}</td>
+              <td class="fin-td fin-money fin-total" style="color:var(--danger)">${fmtMoney(totalExp)}</td>
               <td colspan="3"></td>
             </tr></tfoot>
           </table>
@@ -9176,11 +9176,11 @@ async function _renderFinanceProjects() {
               <td class="fin-td" style="text-align:center">${r.count}</td>
               <td class="fin-td fin-money">${fmtMoney(r.total_service)}</td>
               <td class="fin-td fin-money" style="color:#16a34a">${fmtMoney(r.total_paid)}</td>
-              <td class="fin-td fin-money" style="color:${debt>0?'#dc2626':'#16a34a'}">${fmtMoney(debt)}</td>
+              <td class="fin-td fin-money" style="color:${debt>0?'var(--danger)':'#16a34a'}">${fmtMoney(debt)}</td>
               <td class="fin-td" style="min-width:100px">
                 <div style="display:flex;align-items:center;gap:6px">
-                  <div style="flex:1;height:6px;background:var(--bg);border-radius:99px;overflow:hidden;border:1px solid var(--border)"><div style="height:100%;width:${pct}%;background:${pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626'};border-radius:99px"></div></div>
-                  <span style="font-size:11px;font-weight:700;color:${pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626'}">${pct}%</span>
+                  <div style="flex:1;height:6px;background:var(--bg);border-radius:99px;overflow:hidden;border:1px solid var(--border)"><div style="height:100%;width:${pct}%;background:${pct>=80?'#16a34a':pct>=50?'#d97706':'var(--danger)'};border-radius:99px"></div></div>
+                  <span style="font-size:11px;font-weight:700;color:${pct>=80?'#16a34a':pct>=50?'#d97706':'var(--danger)'}">${pct}%</span>
                 </div>
               </td>
             </tr>`;
@@ -9190,7 +9190,7 @@ async function _renderFinanceProjects() {
           <td colspan="3" class="fin-td fin-total-lbl">ИТОГО</td>
           <td class="fin-td fin-money fin-total">${fmtMoney(total)}</td>
           <td class="fin-td fin-money fin-total" style="color:#16a34a">${fmtMoney(paid)}</td>
-          <td class="fin-td fin-money fin-total" style="color:${(total-paid)>0?'#dc2626':'#16a34a'}">${fmtMoney(total-paid)}</td>
+          <td class="fin-td fin-money fin-total" style="color:${(total-paid)>0?'var(--danger)':'#16a34a'}">${fmtMoney(total-paid)}</td>
           <td></td>
         </tr></tfoot>
       </table>
@@ -9218,7 +9218,7 @@ function _renderFinanceChartBars(months) {
          onmouseenter="_finChartTooltip(event,this)" onmouseleave="_finChartTooltipHide()">
         <rect x="0" y="0" width="${barW*2+gap}" height="${BAR_H}" fill="transparent"/>
         <rect x="0" y="${BAR_H - ih}" width="${barW}" height="${ih}" fill="#16a34a" rx="3" opacity="0.85" ${dataAttrs}/>
-        <rect x="${barW+gap}" y="${BAR_H - eh}" width="${barW}" height="${eh}" fill="#dc2626" rx="3" opacity="0.8" ${dataAttrs}/>
+        <rect x="${barW+gap}" y="${BAR_H - eh}" width="${barW}" height="${eh}" fill="#E5484D" rx="3" opacity="0.8" ${dataAttrs}/>
         <text x="${barW + gap/2}" y="${BAR_H + 15}" text-anchor="middle" font-size="9" fill="#6b7280">${lbl}</text>
         <rect x="0" y="0" width="${barW*2+gap}" height="${BAR_H}" fill="transparent" ${dataAttrs}/>
       </g>`;
@@ -9238,10 +9238,10 @@ function _finChartTooltip(e, g) {
     tip.style.cssText = 'position:fixed;z-index:9999;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px 16px;box-shadow:0 4px 20px rgba(0,0,0,0.12);pointer-events:none;min-width:160px;font-size:13px';
     document.body.appendChild(tip);
   }
-  const pc = profit >= 0 ? '#2563eb' : '#dc2626';
+  const pc = profit >= 0 ? '#2563eb' : 'var(--danger)';
   tip.innerHTML = `<div style="font-weight:700;margin-bottom:8px;color:var(--text)">${month}</div>
     <div style="display:flex;justify-content:space-between;gap:16px;margin-bottom:4px"><span style="color:#6b7280">Доход</span><span style="color:#16a34a;font-weight:600">${fmtMoney(income)}</span></div>
-    <div style="display:flex;justify-content:space-between;gap:16px;margin-bottom:4px"><span style="color:#6b7280">Расход</span><span style="color:#dc2626;font-weight:600">${fmtMoney(exp)}</span></div>
+    <div style="display:flex;justify-content:space-between;gap:16px;margin-bottom:4px"><span style="color:#6b7280">Расход</span><span style="color:var(--danger);font-weight:600">${fmtMoney(exp)}</span></div>
     <div style="display:flex;justify-content:space-between;gap:16px;border-top:1px solid #f3f4f6;padding-top:6px;margin-top:4px"><span style="color:#6b7280">Прибыль</span><span style="color:${pc};font-weight:700">${profit>=0?'+':''}${fmtMoney(profit)}</span></div>`;
   tip.style.left = (e.clientX + 14) + 'px';
   tip.style.top  = (e.clientY - 20) + 'px';
@@ -9282,14 +9282,14 @@ async function _renderFinanceChart(filterMonths) {
       <div style="display:flex;gap:6px;margin-bottom:16px">${periodBtns}</div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px">
         <div class="stat-card"><div><div class="stat-value" style="color:#16a34a">${fmtMoney(totalIncome)}</div><div class="stat-label">Доходы</div></div></div>
-        <div class="stat-card"><div><div class="stat-value" style="color:#dc2626">${fmtMoney(totalExpenses)}</div><div class="stat-label">Расходы</div></div></div>
-        <div class="stat-card"><div><div class="stat-value" style="color:${profit>=0?'#2563eb':'#dc2626'}">${profit>=0?'+':''}${fmtMoney(profit)}</div><div class="stat-label">Прибыль</div></div></div>
+        <div class="stat-card"><div><div class="stat-value" style="color:var(--danger)">${fmtMoney(totalExpenses)}</div><div class="stat-label">Расходы</div></div></div>
+        <div class="stat-card"><div><div class="stat-value" style="color:${profit>=0?'#2563eb':'var(--danger)'}">${profit>=0?'+':''}${fmtMoney(profit)}</div><div class="stat-label">Прибыль</div></div></div>
       </div>
       <div class="card" style="padding:24px;overflow-x:auto">
         <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
           <span style="font-size:14px;font-weight:700">Доходы и расходы по месяцам</span>
           <span style="display:flex;align-items:center;gap:4px;font-size:12px;color:#6b7280"><span style="display:inline-block;width:12px;height:12px;background:#16a34a;border-radius:2px"></span>Доходы</span>
-          <span style="display:flex;align-items:center;gap:4px;font-size:12px;color:#6b7280"><span style="display:inline-block;width:12px;height:12px;background:#dc2626;border-radius:2px"></span>Расходы</span>
+          <span style="display:flex;align-items:center;gap:4px;font-size:12px;color:#6b7280"><span style="display:inline-block;width:12px;height:12px;background:var(--danger);border-radius:2px"></span>Расходы</span>
         </div>
         ${_renderFinanceChartBars(months)}
       </div>
@@ -9308,8 +9308,8 @@ async function _renderFinanceChart(filterMonths) {
               return `<tr style="border-top:1px solid var(--border)">
                 <td style="padding:10px;font-size:13px;font-weight:500">${lbl}</td>
                 <td style="padding:10px;text-align:right;font-size:13px;color:#16a34a;font-weight:600">${fmtMoney(mo.income)}</td>
-                <td style="padding:10px;text-align:right;font-size:13px;color:#dc2626;font-weight:600">${fmtMoney(mo.expenses)}</td>
-                <td style="padding:10px;text-align:right;font-size:13px;font-weight:700;color:${p>=0?'#2563eb':'#dc2626'}">${p>=0?'+':''}${fmtMoney(p)}</td>
+                <td style="padding:10px;text-align:right;font-size:13px;color:var(--danger);font-weight:600">${fmtMoney(mo.expenses)}</td>
+                <td style="padding:10px;text-align:right;font-size:13px;font-weight:700;color:${p>=0?'#2563eb':'var(--danger)'}">${p>=0?'+':''}${fmtMoney(p)}</td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -9358,7 +9358,7 @@ async function _renderFinanceAnnual() {
       <div class="fin-summary" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px">
         <div class="fin-sum-card"><div class="fin-sum-lbl">Сумма услуг за год</div><div class="fin-sum-val">${fmtMoney(totSvc)}</div></div>
         <div class="fin-sum-card"><div class="fin-sum-lbl">Оплачено за год</div><div class="fin-sum-val" style="color:#16a34a">${fmtMoney(totPaid)}</div></div>
-        <div class="fin-sum-card"><div class="fin-sum-lbl">Задолженность</div><div class="fin-sum-val" style="color:${(totSvc-totPaid)>0?'#dc2626':'#16a34a'}">${fmtMoney(totSvc-totPaid)}</div></div>
+        <div class="fin-sum-card"><div class="fin-sum-lbl">Задолженность</div><div class="fin-sum-val" style="color:${(totSvc-totPaid)>0?'var(--danger)':'#16a34a'}">${fmtMoney(totSvc-totPaid)}</div></div>
       </div>
       <div class="chart-panel" style="margin-bottom:20px">
         <div class="chart-title">Динамика по месяцам (все разделы)</div>
@@ -9384,8 +9384,8 @@ async function _renderFinanceAnnual() {
                 <td class="fin-td fin-money" style="font-size:12px;color:#16a34a">${r.kids_svc>0?fmtMoney(r.kids_svc):'—'}</td>
                 <td class="fin-td fin-money">${fmtMoney(r.total_svc)}</td>
                 <td class="fin-td fin-money" style="color:#16a34a">${fmtMoney(r.total_paid)}</td>
-                <td class="fin-td fin-money" style="color:${debt>0?'#dc2626':'#16a34a'}">${fmtMoney(debt)}</td>
-                <td class="fin-td"><span style="font-weight:700;color:${pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626'}">${pct}%</span></td>
+                <td class="fin-td fin-money" style="color:${debt>0?'var(--danger)':'#16a34a'}">${fmtMoney(debt)}</td>
+                <td class="fin-td"><span style="font-weight:700;color:${pct>=80?'#16a34a':pct>=50?'#d97706':'var(--danger)'}">${pct}%</span></td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -9786,7 +9786,7 @@ async function exportFinancePDF() {
         th{background:#f1f5f9;padding:9px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;color:#64748b;border:1px solid #e2e8f0}
         td{padding:9px 10px;border:1px solid #e2e8f0;vertical-align:middle}
         .num{text-align:right;font-weight:700;white-space:nowrap}
-        .green{color:#16a34a}.red{color:#dc2626}
+        .green{color:#16a34a}.red{color:var(--danger)}
         .badge{padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700;display:inline-block}
         .comment{color:#64748b;max-width:150px}
         .total-row td{background:#f1f5f9;font-weight:800;border-top:2px solid #94a3b8}
@@ -9872,7 +9872,7 @@ async function renderFinanceLogPage() {
       <td class="fin-td"><span class="fin-status-badge" style="background:${FL_SECTION_COLOR[l.section]||'#94a3b8'}18;color:${FL_SECTION_COLOR[l.section]||'#94a3b8'}">${FL_SECTIONS[l.section]||l.section}</span></td>
       <td class="fin-td" style="font-size:12.5px">${FL_ACTIONS[l.action]||l.action}</td>
       <td class="fin-td fin-project" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_escHtml(l.entity_title||'—')}</td>
-      <td class="fin-td fin-money" style="color:${l.action.includes('expense')?'#dc2626':l.amount>0?'#16a34a':'var(--text-muted)'}">
+      <td class="fin-td fin-money" style="color:${l.action.includes('expense')?'var(--danger)':l.amount>0?'#16a34a':'var(--text-muted)'}">
         ${l.amount!=null?`${l.action.includes('expense')?'-':''}${fmtMoney(l.amount)}`:'—'}
       </td>
       <td class="fin-td fin-comment" style="max-width:200px">${_escHtml(l.detail||'—')}</td>
@@ -9901,7 +9901,7 @@ async function renderFinanceLogPage() {
           </div>
           <div class="fin-sum-card" style="border-color:#fecaca">
             <div class="fin-sum-lbl">Расходы (внесено)</div>
-            <div class="fin-sum-val" style="color:#dc2626">-${fmtMoney(totalExpense)}</div>
+            <div class="fin-sum-val" style="color:var(--danger)">-${fmtMoney(totalExpense)}</div>
           </div>
         </div>
 
@@ -10145,7 +10145,7 @@ async function deleteIhProject(id) {
 
 // ─── B2C Finance Page ─────────────────────────────────────────────────────────
 const B2C_STATUS = { paid:'Оплатил', hybrid:'Гибрид', unpaid:'Не оплатил', partial:'Частично' };
-const B2C_STATUS_COLOR = { paid:'#16a34a', hybrid:'#d97706', unpaid:'#dc2626', partial:'#9333ea' };
+const B2C_STATUS_COLOR = { paid:'#16a34a', hybrid:'#d97706', unpaid:'#E5484D', partial:'#9333ea' };
 const B2C_METHOD = { cash:'Наличка', alif:'Alif', dc:'DC' };
 const B2C_METHOD_COLOR = { cash:'#d97706', alif:'#3b82f6', dc:'#6d28d9' };
 
@@ -10232,10 +10232,10 @@ async function _renderGenericCoursePage(sec) {
               <div style="display:flex;justify-content:space-between;align-items:baseline">
                 <div><div class="b2c-dash-val">${fmtMoney(totalCollected)}</div><div class="b2c-dash-lbl">Сумма курсов</div></div>
                 <div style="text-align:right"><div class="b2c-dash-val" style="color:#16a34a">${fmtMoney(totalPaid)}</div><div class="b2c-dash-lbl">Оплачено</div></div>
-                <div style="text-align:right"><div class="b2c-dash-val" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</div><div class="b2c-dash-lbl">Долг</div></div>
-                <div style="text-align:right"><div class="b2c-dash-val" style="color:${paidPct>=80?'#16a34a':paidPct>=50?'#d97706':'#dc2626'}">${paidPct}%</div><div class="b2c-dash-lbl">Собрано</div></div>
+                <div style="text-align:right"><div class="b2c-dash-val" style="color:${totalDebt>0?'var(--danger)':'#16a34a'}">${fmtMoney(totalDebt)}</div><div class="b2c-dash-lbl">Долг</div></div>
+                <div style="text-align:right"><div class="b2c-dash-val" style="color:${paidPct>=80?'#16a34a':paidPct>=50?'#d97706':'var(--danger)'}">${paidPct}%</div><div class="b2c-dash-lbl">Собрано</div></div>
               </div>
-              <div class="fin-progress-bar-bg" style="margin-top:10px"><div class="fin-progress-bar-fill" style="width:${paidPct}%;background:${paidPct>=80?'#16a34a':paidPct>=50?'#d97706':'#dc2626'}"></div></div>
+              <div class="fin-progress-bar-bg" style="margin-top:10px"><div class="fin-progress-bar-fill" style="width:${paidPct}%;background:${paidPct>=80?'#16a34a':paidPct>=50?'#d97706':'var(--danger)'}"></div></div>
             </div>
           </div>
         </div>
@@ -10260,7 +10260,7 @@ async function _renderGenericCoursePage(sec) {
               const paid      = +c.total_paid||0;
               const debt      = Math.max(0, collected - paid);
               const pct       = collected > 0 ? Math.round(paid/collected*100) : 0;
-              const pctColor  = pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626';
+              const pctColor  = pct>=80?'#16a34a':pct>=50?'#d97706':'var(--danger)';
               const nowD      = new Date();
               const isActive  = !c.end_date || new Date(c.end_date) >= nowD;
               const sc        = +c.student_count||0;
@@ -10307,7 +10307,7 @@ async function _renderGenericCoursePage(sec) {
                   <div class="b2c-card-v2-fin-divider"></div>
                   <div class="b2c-card-v2-fin-item">
                     <span class="b2c-card-v2-fin-lbl">Долг</span>
-                    <span class="b2c-card-v2-fin-val" style="color:${debt>0?'#dc2626':'#16a34a'}">${fmtMoney(debt)}</span>
+                    <span class="b2c-card-v2-fin-val" style="color:${debt>0?'var(--danger)':'#16a34a'}">${fmtMoney(debt)}</span>
                   </div>
                 </div>
                 <div class="b2c-card-v2-progress-wrap" style="${collected>0?'':'visibility:hidden'}">
@@ -10348,7 +10348,7 @@ async function renderSectionCourse(sec, courseId) {
       <td class="b2c-td b2c-phone">${_escHtml(p.phone||'—')}</td>
       <td class="b2c-td b2c-amount">${fmtMoney(p.course_amount||0)}</td>
       <td class="b2c-td b2c-amount" style="color:#16a34a">${fmtMoney(p.amount)}</td>
-      <td class="b2c-td b2c-amount" style="color:${(+p.course_amount-(+p.amount))>0?'#dc2626':'#16a34a'}">${fmtMoney(Math.max(0,(+p.course_amount||0)-(+p.amount||0)))}</td>
+      <td class="b2c-td b2c-amount" style="color:${(+p.course_amount-(+p.amount))>0?'var(--danger)':'#16a34a'}">${fmtMoney(Math.max(0,(+p.course_amount||0)-(+p.amount||0)))}</td>
       <td class="b2c-td"><span class="fin-type-badge" style="background:${B2C_METHOD_COLOR[p.payment_method]||'#94a3b8'}22;color:${B2C_METHOD_COLOR[p.payment_method]||'#94a3b8'}">${B2C_METHOD[p.payment_method]||p.payment_method}</span></td>
       <td class="b2c-td" style="font-size:12.5px;font-weight:600">${p.received_by?p.received_by.split(' ')[0]:'—'}</td>
       <td class="b2c-td b2c-date">${p.payment_date||'—'}</td>
@@ -10374,10 +10374,10 @@ async function renderSectionCourse(sec, courseId) {
       <div class="b2c-stats" style="grid-template-columns:repeat(6,1fr)">
         <div class="b2c-stat"><div class="b2c-stat-val">${payments.length}</div><div class="b2c-stat-lbl">Студентов</div></div>
         <div class="b2c-stat"><div class="b2c-stat-val" style="color:#16a34a">${paidCount}</div><div class="b2c-stat-lbl">Оплатили</div></div>
-        <div class="b2c-stat"><div class="b2c-stat-val" style="color:#dc2626">${unpaidCount}</div><div class="b2c-stat-lbl">Не оплатили</div></div>
+        <div class="b2c-stat"><div class="b2c-stat-val" style="color:var(--danger)">${unpaidCount}</div><div class="b2c-stat-lbl">Не оплатили</div></div>
         <div class="b2c-stat"><div class="b2c-stat-val">${fmtMoney(totalSvc)}</div><div class="b2c-stat-lbl">Сумма курсов</div></div>
         <div class="b2c-stat"><div class="b2c-stat-val" style="color:#16a34a">${fmtMoney(totalPaid)}</div><div class="b2c-stat-lbl">Итого оплачено</div></div>
-        <div class="b2c-stat" style="border-color:${totalDebt>0?'#fecaca':'#bbf7d0'}"><div class="b2c-stat-val" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</div><div class="b2c-stat-lbl">Долг</div></div>
+        <div class="b2c-stat" style="border-color:${totalDebt>0?'#fecaca':'#bbf7d0'}"><div class="b2c-stat-val" style="color:${totalDebt>0?'var(--danger)':'#16a34a'}">${fmtMoney(totalDebt)}</div><div class="b2c-stat-lbl">Долг</div></div>
       </div>
       <div class="b2c-table-wrap"><table class="b2c-table">
         <thead><tr><th>№</th><th>ФИО</th><th>Статус</th><th>Контакты</th><th>Сумма курса</th><th>Оплачено</th><th>Остаток</th><th>Способ оплаты</th><th>Принимал</th><th>Дата</th><th>Комментарий</th><th></th></tr></thead>
@@ -10386,7 +10386,7 @@ async function renderSectionCourse(sec, courseId) {
           <td colspan="4" class="fin-td fin-total-lbl">ИТОГО</td>
           <td class="fin-td fin-money fin-total">${fmtMoney(totalSvc)}</td>
           <td class="fin-td fin-money fin-total" style="color:#16a34a">${fmtMoney(totalPaid)}</td>
-          <td class="fin-td fin-money fin-total" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</td>
+          <td class="fin-td fin-money fin-total" style="color:${totalDebt>0?'var(--danger)':'#16a34a'}">${fmtMoney(totalDebt)}</td>
           <td colspan="4"></td></tr></tfoot>`:''}
       </table>${payments.length===0?`<div style="text-align:center;padding:32px;color:var(--text-light)">Добавьте первого студента</div>`:''}</div>
     </div>`;
@@ -10555,11 +10555,11 @@ async function renderB2CPage() {
                 <div style="display:flex;justify-content:space-between;align-items:baseline">
                   <div><div class="b2c-dash-val">${fmtMoney(totalCollected)}</div><div class="b2c-dash-lbl">Сумма курсов</div></div>
                   <div style="text-align:right"><div class="b2c-dash-val" style="color:#16a34a">${fmtMoney(totalPaid)}</div><div class="b2c-dash-lbl">Оплачено</div></div>
-                  <div style="text-align:right"><div class="b2c-dash-val" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</div><div class="b2c-dash-lbl">Долг</div></div>
-                  <div style="text-align:right"><div class="b2c-dash-val" style="color:${paidPct>=80?'#16a34a':paidPct>=50?'#d97706':'#dc2626'}">${paidPct}%</div><div class="b2c-dash-lbl">Собрано</div></div>
+                  <div style="text-align:right"><div class="b2c-dash-val" style="color:${totalDebt>0?'var(--danger)':'#16a34a'}">${fmtMoney(totalDebt)}</div><div class="b2c-dash-lbl">Долг</div></div>
+                  <div style="text-align:right"><div class="b2c-dash-val" style="color:${paidPct>=80?'#16a34a':paidPct>=50?'#d97706':'var(--danger)'}">${paidPct}%</div><div class="b2c-dash-lbl">Собрано</div></div>
                 </div>
                 <div class="fin-progress-bar-bg" style="margin-top:10px">
-                  <div class="fin-progress-bar-fill" style="width:${paidPct}%;background:${paidPct>=80?'#16a34a':paidPct>=50?'#d97706':'#dc2626'}"></div>
+                  <div class="fin-progress-bar-fill" style="width:${paidPct}%;background:${paidPct>=80?'#16a34a':paidPct>=50?'#d97706':'var(--danger)'}"></div>
                 </div>
               </div>
             </div>
@@ -10628,7 +10628,7 @@ async function renderB2CPage() {
                       ? `${fmtD(c.start_date)} — ${fmtD(c.end_date)}`
                       : fmtD(c.start_date||c.end_date))
                   : '';
-                const pctColor = pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626';
+                const pctColor = pct>=80?'#16a34a':pct>=50?'#d97706':'var(--danger)';
                 return `
                 <div class="b2c-course-card b2c-card-v2" onclick="b2cOpenCourse(${c.id})">
                   <div class="b2c-card-v2-head">
@@ -10666,7 +10666,7 @@ async function renderB2CPage() {
                     <div class="b2c-card-v2-fin-divider"></div>
                     <div class="b2c-card-v2-fin-item">
                       <span class="b2c-card-v2-fin-lbl">Долг</span>
-                      <span class="b2c-card-v2-fin-val" style="color:${debt>0?'#dc2626':'#16a34a'}">${fmtMoney(debt)}</span>
+                      <span class="b2c-card-v2-fin-val" style="color:${debt>0?'var(--danger)':'#16a34a'}">${fmtMoney(debt)}</span>
                     </div>
                   </div>
 
@@ -10710,7 +10710,7 @@ async function renderB2CCourse(courseId) {
         <td class="b2c-td b2c-phone">${_escHtml(p.phone||'—')}</td>
         <td class="b2c-td b2c-amount">${fmtMoney(p.course_amount||0)}</td>
         <td class="b2c-td b2c-amount" style="color:#16a34a">${fmtMoney(p.amount)}</td>
-        <td class="b2c-td b2c-amount" style="color:${(+p.course_amount-(+p.amount))>0?'#dc2626':'#16a34a'}">${fmtMoney(Math.max(0,(+p.course_amount||0)-(+p.amount||0)))}</td>
+        <td class="b2c-td b2c-amount" style="color:${(+p.course_amount-(+p.amount))>0?'var(--danger)':'#16a34a'}">${fmtMoney(Math.max(0,(+p.course_amount||0)-(+p.amount||0)))}</td>
         <td class="b2c-td">
           <span class="fin-type-badge" style="background:${B2C_METHOD_COLOR[p.payment_method]||'#94a3b8'}22;color:${B2C_METHOD_COLOR[p.payment_method]||'#94a3b8'}">${B2C_METHOD[p.payment_method]||p.payment_method}</span>
         </td>
@@ -10750,10 +10750,10 @@ async function renderB2CCourse(courseId) {
         <div class="b2c-stats" style="grid-template-columns:repeat(6,1fr)">
           <div class="b2c-stat"><div class="b2c-stat-val">${payments.length}</div><div class="b2c-stat-lbl">Студентов</div></div>
           <div class="b2c-stat"><div class="b2c-stat-val" style="color:#16a34a">${paidCount}</div><div class="b2c-stat-lbl">Оплатили</div></div>
-          <div class="b2c-stat"><div class="b2c-stat-val" style="color:#dc2626">${unpaidCount}</div><div class="b2c-stat-lbl">Не оплатили</div></div>
+          <div class="b2c-stat"><div class="b2c-stat-val" style="color:var(--danger)">${unpaidCount}</div><div class="b2c-stat-lbl">Не оплатили</div></div>
           <div class="b2c-stat"><div class="b2c-stat-val">${fmtMoney(totalSvc)}</div><div class="b2c-stat-lbl">Сумма курсов</div></div>
           <div class="b2c-stat"><div class="b2c-stat-val" style="color:#16a34a">${fmtMoney(totalPaid)}</div><div class="b2c-stat-lbl">Итого оплачено</div></div>
-          <div class="b2c-stat" style="border-color:${totalDebt>0?'#fecaca':'#bbf7d0'}"><div class="b2c-stat-val" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</div><div class="b2c-stat-lbl">Долг</div></div>
+          <div class="b2c-stat" style="border-color:${totalDebt>0?'#fecaca':'#bbf7d0'}"><div class="b2c-stat-val" style="color:${totalDebt>0?'var(--danger)':'#16a34a'}">${fmtMoney(totalDebt)}</div><div class="b2c-stat-lbl">Долг</div></div>
         </div>
 
         <!-- Table -->
@@ -10772,7 +10772,7 @@ async function renderB2CCourse(courseId) {
               <td colspan="4" class="fin-td fin-total-lbl">ИТОГО</td>
               <td class="fin-td fin-money fin-total">${fmtMoney(totalSvc)}</td>
               <td class="fin-td fin-money fin-total" style="color:#16a34a">${fmtMoney(totalPaid)}</td>
-              <td class="fin-td fin-money fin-total" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</td>
+              <td class="fin-td fin-money fin-total" style="color:${totalDebt>0?'var(--danger)':'#16a34a'}">${fmtMoney(totalDebt)}</td>
               <td colspan="4"></td>
             </tr></tfoot>`:''}
           </table>
@@ -10951,7 +10951,7 @@ function openB2CPaymentModal(courseId, paymentId=null) {
               </select>
             </div>
             <div class="field"><label>Скриншот чека <span style="font-size:11px;color:var(--text-muted)">(макс. 1 МБ)</span></label>
-              ${p?.receipt_img ? `<div style="margin-bottom:8px"><img src="${p.receipt_img}" style="max-width:100%;max-height:120px;border-radius:8px;border:1.5px solid var(--border)"><button class="btn btn-outline btn-sm" style="margin-top:4px;color:#dc2626" onclick="document.getElementById('b2c-receipt-preview').src='';window._b2cReceipt=''">Удалить</button></div>` : ''}
+              ${p?.receipt_img ? `<div style="margin-bottom:8px"><img src="${p.receipt_img}" style="max-width:100%;max-height:120px;border-radius:8px;border:1.5px solid var(--border)"><button class="btn btn-outline btn-sm" style="margin-top:4px;color:var(--danger)" onclick="document.getElementById('b2c-receipt-preview').src='';window._b2cReceipt=''">Удалить</button></div>` : ''}
               <input type="file" id="b2c-receipt" accept="image/*" style="display:none" onchange="b2cLoadReceipt(this)">
               <label for="b2c-receipt" class="btn btn-outline btn-sm" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
@@ -11484,7 +11484,7 @@ async function openFeedbackArchive() {
   try {
     const rows = await GET('/feedback?archived=1');
     const body = document.getElementById('fb-archive-body');
-    const scoreColor = v => v >= 4 ? '#16a34a' : v >= 3 ? '#d97706' : '#dc2626';
+    const scoreColor = v => v >= 4 ? '#16a34a' : v >= 3 ? '#d97706' : 'var(--danger)';
     const rowAvg = r => { const v=[1,2,3,4,5,6,7,8,9,10].map(i=>r[`q${i}`]).filter(x=>x!=null); return v.length?v.reduce((a,b)=>a+b,0)/v.length:0; };
     if (!rows.length) {
       body.innerHTML = '<div class="empty-state" style="padding:30px 0"><h3>Архив пуст</h3><p>Архивированные ответы появятся здесь</p></div>';
@@ -11557,7 +11557,7 @@ async function openFeedbackAdmin() {
     return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
   }
 
-  function scoreColor(v) { return v >= 4 ? '#16a34a' : v >= 3 ? '#d97706' : '#dc2626'; }
+  function scoreColor(v) { return v >= 4 ? '#16a34a' : v >= 3 ? '#d97706' : 'var(--danger)'; }
 
   // Per-question line chart: X = Q1..Q10, Y = 0..5, one line per response
   function buildQuestionsChart(rows) {
@@ -11764,7 +11764,7 @@ function openFeedbackDetail(rowId) {
     return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
   });
 
-  const sc = v => v>=4?'#16a34a':v>=3?'#d97706':'#dc2626';
+  const sc = v => v>=4?'#16a34a':v>=3?'#d97706':'var(--danger)';
 
   // Mini SVG chart: this response vs average
   const W=400, H=150, pL=22, pB=18, pT=8, pR=8;
@@ -12020,7 +12020,7 @@ function openBroadcastModal() {
                 </div>
                 <div class="broadcast-info">
                   <div class="broadcast-name">${_escHtml(u.name)}</div>
-                  <div class="broadcast-tg">${hasTg(u) ? '<span style="color:#16a34a">✓ Telegram подключён</span>' : '<span style="color:#dc2626">✗ Telegram не подключён</span>'}</div>
+                  <div class="broadcast-tg">${hasTg(u) ? '<span style="color:#16a34a">✓ Telegram подключён</span>' : '<span style="color:var(--danger)">✗ Telegram не подключён</span>'}</div>
                 </div>
               </label>`).join('')}
           </div>
