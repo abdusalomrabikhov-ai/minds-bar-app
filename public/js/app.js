@@ -694,7 +694,7 @@ async function openArchivedProjects() {
       <div class="modal-header"><div class="modal-title">Архив проектов</div>
         <button class="modal-close" onclick="closeModal()">✕</button></div>
       <div class="modal-body" id="archive-modal-body">
-        <div style="text-align:center;color:#9ca3af;padding:20px">Загрузка...</div>
+        <div style="text-align:center;color:var(--text-light);padding:20px">Загрузка...</div>
       </div>
     </div></div>`;
   try {
@@ -844,7 +844,7 @@ function navigateTo(page, projectId = null, pushHistory = true) {
   if (mainContent) mainContent.scrollTop = 0;
 
   const content = document.getElementById('page-content');
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
 
   switch (page) {
     case 'dashboard': renderDashboard(); break;
@@ -1078,7 +1078,7 @@ function renderMyTasksSummary({ stats, byProject, upcoming }) {
   ];
 
   const projs = (byProject || []).map(s => ({
-    id: s.id, name: s.name, color: s.color || '#881337',
+    id: s.id, name: s.name, color: s.color || '#8E1B3B',
     total: s.total, done: s.done, inp: s.inp, nw: s.nw, ov: s.ov,
     nextDeadline: s.next_deadline || null,
   }));
@@ -1279,7 +1279,7 @@ function renderMyTasksSummary({ stats, byProject, upcoming }) {
               <div class="upc-card" onclick="openTaskDetail(${t.id})">
                 <div class="upc-card-top">
                   <span class="upc-card-title">${_escHtml(t.title)}</span>
-                  ${initials ? `<div class="upc-card-avatar" style="background:${t.assignee_color || '#881337'}" title="${t.assignee_name}">${initials}</div>` : ''}
+                  ${initials ? `<div class="upc-card-avatar" style="background:${t.assignee_color || '#8E1B3B'}" title="${t.assignee_name}">${initials}</div>` : ''}
                 </div>
                 <div class="upc-card-meta">
                   <span class="upc-card-deadline ${urgCls}">
@@ -1287,7 +1287,7 @@ function renderMyTasksSummary({ stats, byProject, upcoming }) {
                     ${label}
                   </span>
                   <span class="upc-card-proj">
-                    <span style="width:6px;height:6px;border-radius:50%;background:${t.project_color||'#881337'};display:inline-block;flex-shrink:0"></span>
+                    <span style="width:6px;height:6px;border-radius:50%;background:${t.project_color||'#8E1B3B'};display:inline-block;flex-shrink:0"></span>
                     ${t.project_name || '—'}
                   </span>
                 </div>
@@ -1409,8 +1409,8 @@ function renderDashboardCharts({ stats, byProject, byEmployee }) {
     { key: 'done', label: 'Готово', v: done, c: '#059669' },
   ];
 
-  const projs = (byProject || []).map(p => [p.name, { total: p.total, done: p.done, color: p.color || '#881337', id: p.id }]);
-  const emps  = (byEmployee || []).map(e => [e.name, { total: e.total, done: e.done, color: e.color || '#881337', id: e.id, img: e.img || '' }]);
+  const projs = (byProject || []).map(p => [p.name, { total: p.total, done: p.done, color: p.color || '#8E1B3B', id: p.id }]);
+  const emps  = (byEmployee || []).map(e => [e.name, { total: e.total, done: e.done, color: e.color || '#8E1B3B', id: e.id, img: e.img || '' }]);
   emps.forEach(([, s]) => {
     if (!s.img) { const u = state.users?.find(u => u.id === s.id); if (u?.avatar_img) s.img = u.avatar_img; }
   });
@@ -1860,7 +1860,7 @@ async function renderTasksPage() {
         </div>
       ` : ''}
     </div>
-    <div id="tasks-list-container"><div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div></div>
+    <div id="tasks-list-container"><div style="text-align:center;padding:40px;color:var(--text-light)">Загрузка...</div></div>
   `;
   document.getElementById('task-search').addEventListener('input', e => {
     const val = e.target.value;
@@ -1893,7 +1893,7 @@ function goTasksPage(p) {
 
 async function loadAndRenderTasks() {
   const container = document.getElementById('tasks-list-container');
-  if (container) container.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div>';
+  if (container) container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-light)">Загрузка...</div>';
   try {
     if (myTasksMode) {
       const myStats = await GET('/my-stats');
@@ -2029,7 +2029,7 @@ async function renderProjectPage(projectId) {
             </div>`;
           }).join('')}
           ${canEdit ? `<button class="proj-member-add-btn" onclick="cpOpenMemberAdd(${projectId},this)" title="Добавить участника">+</button>` : ''}
-          ${members.length === 0 && !canEdit ? `<span style="font-size:12px;color:#9ca3af">Нет участников</span>` : ''}
+          ${members.length === 0 && !canEdit ? `<span style="font-size:12px;color:var(--text-light)">Нет участников</span>` : ''}
         </div>
       </div>`;
 
@@ -2043,7 +2043,7 @@ async function renderProjectPage(projectId) {
           </div>
           ${isAdmin ? `
             <button class="btn btn-outline btn-sm" onclick="openProjectModal(${projectId})" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.edit,13)} Изменить</button>
-            <button class="btn btn-outline btn-sm" onclick="archiveProject(${projectId})" style="display:inline-flex;align-items:center;gap:5px;color:#9ca3af">
+            <button class="btn btn-outline btn-sm" onclick="archiveProject(${projectId})" style="display:inline-flex;align-items:center;gap:5px;color:var(--text-light)">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/></svg> Архивировать
             </button>` : ''}
         </div>
@@ -2076,7 +2076,7 @@ async function renderProjectPage(projectId) {
     }
 
   } catch (err) {
-    document.getElementById('page-content').innerHTML = `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.warning,44)}</div><h3>Проект не найден</h3><p>${err.message}</p><p style="margin-top:12px;color:#9ca3af;font-size:13px">Переход на главную через 3 секунды...</p></div>`;
+    document.getElementById('page-content').innerHTML = `<div class="empty-state"><div class="empty-icon">${svgI(SVG_PATHS.warning,44)}</div><h3>Проект не найден</h3><p>${err.message}</p><p style="margin-top:12px;color:var(--text-light);font-size:13px">Переход на главную через 3 секунды...</p></div>`;
     setTimeout(() => navigateTo('dashboard'), 3000);
   }
 }
@@ -2131,7 +2131,7 @@ async function renderProjectContentTab(projectId) {
   if (!panel) return;
   const isAdmin  = state.user.role === 'admin' || can('manage_projects');
   const canEdit  = isAdmin;
-  panel.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div>';
+  panel.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-light)">Загрузка...</div>';
   try {
     cpRestoreNav();
     const items = await GET('/projects/' + projectId + '/content');
@@ -2344,7 +2344,7 @@ function cpOpenAdd(btn, dateStr, projectId) {
           <input id="cp-add-qty" type="number" min="1" max="50" class="form-control" value="1" style="max-width:120px">
         </div>
         <div class="field" style="margin-top:14px">
-          <label class="field-label">Заголовок <span style="color:#9ca3af;font-weight:400">(необязательно)</span></label>
+          <label class="field-label">Заголовок <span style="color:var(--text-light);font-weight:400">(необязательно)</span></label>
           <input id="cp-add-title" class="form-control" placeholder="Например: Пост про новый продукт">
         </div>
         <div class="field">
@@ -2423,7 +2423,7 @@ function cpOpenEdit(e, chip, projectId) {
           <input id="cp-edit-qty" type="number" min="1" max="50" class="form-control" value="${qty}" style="max-width:120px">
         </div>
         <div class="field" style="margin-top:14px">
-          <label class="field-label">Заголовок <span style="color:#9ca3af;font-weight:400">(необязательно)</span></label>
+          <label class="field-label">Заголовок <span style="color:var(--text-light);font-weight:400">(необязательно)</span></label>
           <input id="cp-edit-title" class="form-control" placeholder="Заголовок публикации" value="${title.replace(/"/g,'&quot;')}">
         </div>
         <div class="field">
@@ -2496,7 +2496,7 @@ function cpViewItem(e, chip) {
       <div class="modal-body">
         ${desc
           ? `<div class="cp-pub-desc-view">${desc.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>`
-          : `<div style="color:#9ca3af;font-size:14px;padding:12px 0">Описание не добавлено</div>`}
+          : `<div style="color:var(--text-light);font-size:14px;padding:12px 0">Описание не добавлено</div>`}
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline" onclick="closeModal()">Закрыть</button>
@@ -2528,7 +2528,7 @@ function cpOpenMemberAdd(projectId, btn) {
         ${avatar(u.name, u.avatar_color, 'avatar-sm', u.avatar_img || '')}
         <div>
           <div style="font-size:13px;font-weight:600">${u.name}</div>
-          <div style="font-size:11px;color:#9ca3af">${u.role === 'admin' ? 'Администратор' : u.role === 'manager' ? 'Менеджер' : 'Сотрудник'}</div>
+          <div style="font-size:11px;color:var(--text-light)">${u.role === 'admin' ? 'Администратор' : u.role === 'manager' ? 'Менеджер' : 'Сотрудник'}</div>
         </div>
       </div>`).join('')}
   `;
@@ -3118,7 +3118,7 @@ async function openTaskDetail(taskId) {
             <div class="comments-title" style="display:flex;align-items:center;gap:6px">${svgI(SVG_PATHS.comment)} Комментарии (${comments.length})</div>
             <div class="comment-list">
               ${comments.length === 0
-                ? '<div style="font-size:13px;color:#9ca3af;padding:8px 0">Комментариев нет</div>'
+                ? '<div style="font-size:13px;color:var(--text-light);padding:8px 0">Комментариев нет</div>'
                 : comments.map(c => {
                     const _cu = state.users.find(u => u.id === c.user_id);
                     const _cImg = c.avatar_img || _cu?.avatar_img || '';
@@ -3261,7 +3261,7 @@ function initMentionAutocomplete(input) {
   if (!users.length) { dd.style.display = 'none'; return; }
   dd.innerHTML = users.slice(0, 6).map((u, i) => `
     <div class="mention-item${i === 0 ? ' active' : ''}" data-name="${_escHtml(u.name)}">
-      <span class="mention-avatar" style="background:${u.avatar_color || '#881337'}">${initials(u.name)}</span>
+      <span class="mention-avatar" style="background:${u.avatar_color || '#8E1B3B'}">${initials(u.name)}</span>
       <span>${_escHtml(u.name)}</span>
     </div>`).join('');
   dd.style.display = 'block';
@@ -3527,7 +3527,7 @@ async function openTaskModal(taskId = null, defaultProjectId = null) {
           </div>
         </div>
         <div class="field">
-          <label>Исполнители <span style="font-size:11px;color:#9ca3af;font-weight:400">(можно выбрать несколько)</span></label>
+          <label>Исполнители <span style="font-size:11px;color:var(--text-light);font-weight:400">(можно выбрать несколько)</span></label>
           <input id="assignee-search" class="input" placeholder="Поиск по имени..." style="margin-bottom:8px;padding:7px 12px;font-size:13px"
             oninput="filterAssigneeChips(this.value)">
           <div class="assignee-picker" id="f-assignees">
@@ -3714,7 +3714,7 @@ async function updateReviewBadge() {
 
 async function renderReviewPage() {
   const content = document.getElementById('page-content');
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
   try {
     const tasks = await GET('/tasks/pending-review');
     updateReviewBadge();
@@ -3806,7 +3806,7 @@ async function reviewReject(taskId) {
       </div>
       <div class="modal-body">
         <div class="field">
-          <label class="field-label">Комментарий сотруднику <span style="color:#9ca3af;font-weight:400">(необязательно)</span></label>
+          <label class="field-label">Комментарий сотруднику <span style="color:var(--text-light);font-weight:400">(необязательно)</span></label>
           <textarea id="reject-comment" class="form-control" rows="3" placeholder="Что нужно исправить или доделать..." style="resize:vertical"></textarea>
         </div>
       </div>
@@ -4312,7 +4312,7 @@ function renderActivityLog(logs) {
     task_created:'#3B82F6',     task_status:'#059669',     task_updated:'#D97706',   task_deleted:'#DC2626',
     comment:'#8B5CF6',
     project_created:'#f97316',  project_updated:'#f59e0b', project_deleted:'#DC2626',
-    project_archived:'#9ca3af', project_unarchived:'#22c55e',
+    project_archived:'#9B9BA8', project_unarchived:'#22c55e',
     content_created:'#ec4899',  content_updated:'#a78bfa', content_deleted:'#DC2626',
     user_created:'#22c55e',     user_updated:'#14b8a6',    user_deleted:'#DC2626',
     schedule_created:'#8b5cf6', schedule_updated:'#d97706',schedule_deleted:'#DC2626',
@@ -4616,7 +4616,7 @@ async function renderReportsPage() {
         </div>
       ` : ''}
     </div>
-    <div id="report-content"><div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div></div>
+    <div id="report-content"><div style="text-align:center;padding:40px;color:var(--text-light)">Загрузка...</div></div>
   `;
   if (_reportTab === 'monthly') loadReport();
   else if (_reportTab === 'analytics') loadAnalyticsReport(30);
@@ -4666,7 +4666,7 @@ async function loadSummaryReport(days) {
   _summaryPeriod = days;
   const container = document.getElementById('report-content');
   if (!container) return;
-  container.innerHTML = `<div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div>`;
+  container.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-light)">Загрузка...</div>`;
 
   try {
     let sumUrl = `/reports/summary?period=${days||7}`;
@@ -4719,8 +4719,8 @@ async function loadSummaryReport(days) {
     // Table rows
     const rows = employees.map(e => {
       const s = e.stats;
-      const pDColor = s.pctDone === null ? '#9ca3af' : s.pctDone >= 80 ? '#16a34a' : s.pctDone >= 50 ? '#d97706' : '#dc2626';
-      const pTColor = s.pctOnTime === null ? '#9ca3af' : s.pctOnTime >= 80 ? '#16a34a' : s.pctOnTime >= 50 ? '#d97706' : '#dc2626';
+      const pDColor = s.pctDone === null ? '#9B9BA8' : s.pctDone >= 80 ? '#16a34a' : s.pctDone >= 50 ? '#d97706' : '#dc2626';
+      const pTColor = s.pctOnTime === null ? '#9B9BA8' : s.pctOnTime >= 80 ? '#16a34a' : s.pctOnTime >= 50 ? '#d97706' : '#dc2626';
       const ini = e.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
       return `<tr>
         <td style="display:flex;align-items:center;gap:8px;padding:10px 12px">
@@ -4819,7 +4819,7 @@ let _analyticsPeriod = 30;
 let _analyticsFrom = null;
 let _analyticsTo   = null;
 
-function _svgLineChart(points, width, height, color = '#881337', fill = '#fdf2f8') {
+function _svgLineChart(points, width, height, color = '#8E1B3B', fill = '#fdf2f8') {
   if (!points.length) return '';
   const maxV = Math.max(...points.map(p => p.v), 1);
   const minV = Math.min(...points.map(p => p.v), 0);
@@ -4943,7 +4943,7 @@ async function loadAnalyticsReport(days) {
   _analyticsPeriod = days;
   const container = document.getElementById('report-content');
   if (!container) return;
-  container.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">Загрузка...</div>';
+  container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-light)">Загрузка...</div>';
 
   try {
     let anUrl = `/reports/analytics?period=${days||30}`;
@@ -4970,7 +4970,7 @@ async function loadAnalyticsReport(days) {
 
     const burndownSvg = _svgLineChart(
       d.burndown.map(b => ({ label: b.label, v: b.open, tooltip: `${b.label}: ${b.open} открытых задач` })),
-      560, 160, '#881337', '#fdf2f8'
+      560, 160, '#8E1B3B', '#fdf2f8'
     );
     const trendSvg = _svgBarGroup(d.weeks, 560, 160);
 
@@ -4980,7 +4980,7 @@ async function loadAnalyticsReport(days) {
     const statusRows = d.statusBreak.map(s =>
       `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:8px">
-          <div style="width:10px;height:10px;border-radius:3px;background:${statusColors[s.status]||'#9ca3af'}"></div>
+          <div style="width:10px;height:10px;border-radius:3px;background:${statusColors[s.status]||'#9B9BA8'}"></div>
           <span style="font-size:13px">${statusMap[s.status]||s.status}</span>
         </div>
         <span style="font-size:13px;font-weight:700">${s.cnt}</span>
@@ -4992,7 +4992,7 @@ async function loadAnalyticsReport(days) {
     const priorityRows = d.priorityBreak.map(p =>
       `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:8px">
-          <div style="width:10px;height:10px;border-radius:3px;background:${priorityColors[p.priority]||'#9ca3af'}"></div>
+          <div style="width:10px;height:10px;border-radius:3px;background:${priorityColors[p.priority]||'#9B9BA8'}"></div>
           <span style="font-size:13px">${priorityNames[p.priority]||p.priority}</span>
         </div>
         <span style="font-size:13px;font-weight:700">${p.cnt}</span>
@@ -5107,7 +5107,7 @@ async function loadReport() {
           <div><div class="stat-value">${overdueAll}</div><div class="stat-label">Просрочено</div></div>
         </div>
         <div class="stat-card">
-          <div class="stat-icon" style="border-color:#881337"></div>
+          <div class="stat-icon" style="border-color:#8E1B3B"></div>
           <div><div class="stat-value">${effAll}%</div><div class="stat-label">Общая эффективность</div></div>
         </div>
       </div>
@@ -5212,7 +5212,7 @@ async function loadReport() {
                 </div>
 
                 ${u.byProject.length > 0 ? `
-                  <div style="font-size:11px;font-weight:600;color:#9ca3af;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px">По проектам</div>
+                  <div style="font-size:11px;font-weight:600;color:var(--text-light);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px">По проектам</div>
                   <div class="report-projects">
                     ${u.byProject.map(p => `
                       <div class="report-project-row">
@@ -5222,7 +5222,7 @@ async function loadReport() {
                       </div>
                     `).join('')}
                   </div>
-                ` : '<div style="font-size:12px;color:#9ca3af">Нет задач в этом периоде</div>'}
+                ` : '<div style="font-size:12px;color:var(--text-light)">Нет задач в этом периоде</div>'}
               </div>
             </div>
           `;
@@ -5284,7 +5284,7 @@ function svgMonthlyBars(months) {
       return `
         <rect class="anim-bar" x="${x}" y="${baseY - totalH}" width="${bw}" height="${totalH || 0}" fill="#E2E8F0" rx="4"
           style="transform-origin:${cx}px ${baseY}px;transform:scaleY(0);transition:transform 0.7s cubic-bezier(0.22,1,0.36,1) ${delay}ms"/>
-        <rect class="anim-bar" x="${x}" y="${baseY - doneH}" width="${bw}" height="${doneH || 0}" fill="#881337" rx="4"
+        <rect class="anim-bar" x="${x}" y="${baseY - doneH}" width="${bw}" height="${doneH || 0}" fill="#8E1B3B" rx="4"
           style="transform-origin:${cx}px ${baseY}px;transform:scaleY(0);transition:transform 0.7s cubic-bezier(0.22,1,0.36,1) ${delay + 80}ms"/>
         <text x="${cx}" y="${H - 6}" text-anchor="middle" font-size="11" fill="#94A3B8" font-family="sans-serif">${d.label}</text>
         ${d.total > 0 ? `<text x="${cx}" y="${baseY - totalH - 5}" text-anchor="middle" font-size="11" fill="#475569" font-weight="600" font-family="sans-serif">${d.total}</text>` : ''}
@@ -5445,7 +5445,7 @@ async function renderEmployeeProfile(userId, month) {
               <div style="width:10px;height:10px;background:#E2E8F0;border-radius:2px;flex-shrink:0"></div>Всего
             </div>
             <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted)">
-              <div style="width:10px;height:10px;background:#881337;border-radius:2px;flex-shrink:0"></div>Выполнено
+              <div style="width:10px;height:10px;background:#8E1B3B;border-radius:2px;flex-shrink:0"></div>Выполнено
             </div>
           </div>
         </div>
@@ -5568,7 +5568,7 @@ async function renderTeamPage() {
         ${isAdmin ? `<button class="btn btn-blue btn-sm" onclick="openUserModal()">＋ Добавить сотрудника</button>` : ''}
       </div>
       <div class="team-search-wrap">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#9ca3af;flex-shrink:0"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-light);flex-shrink:0"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <input id="team-search" class="team-search-input" placeholder="Поиск по имени или email..." oninput="filterTeamCards(this.value)">
       </div>
       <div class="team-grid" id="team-grid">
@@ -5603,8 +5603,8 @@ async function renderTeamPage() {
                 </div>
                 <div style="font-size:11px;color:${effColor};font-weight:600;margin-top:2px">${pct}% выполнено</div>
               </div>
-            ` : '<div style="font-size:11.5px;color:#9ca3af">Нет задач</div>'}
-            ${isAdmin && u.telegram_id ? `<div class="member-tg" style="display:flex;align-items:center;gap:4px">${svgI(SVG_PATHS.send,12,'stroke="#059669"')} Telegram подключён</div>` : isAdmin && !u.telegram_id ? '<div style="font-size:11.5px;color:#9ca3af">Telegram не подключён</div>' : ''}
+            ` : '<div style="font-size:11.5px;color:var(--text-light)">Нет задач</div>'}
+            ${isAdmin && u.telegram_id ? `<div class="member-tg" style="display:flex;align-items:center;gap:4px">${svgI(SVG_PATHS.send,12,'stroke="#059669"')} Telegram подключён</div>` : isAdmin && !u.telegram_id ? '<div style="font-size:11.5px;color:var(--text-light)">Telegram не подключён</div>' : ''}
             ${isAdmin && u.role !== 'admin' ? `
               <div class="member-actions" onclick="event.stopPropagation()">
                 <button class="btn btn-outline btn-sm" onclick="openUserModal(${u.id})" style="display:inline-flex;align-items:center;gap:4px">${svgI(SVG_PATHS.edit,13)} Права</button>
@@ -5624,7 +5624,7 @@ async function _renderArchivedUsersPage() {
   const isAdmin = state.user.role === 'admin';
   const canManageHr = isAdmin || (state.user.permissions?.manage_team);
   const content = document.getElementById('page-content');
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
   try {
     const users = await GET('/users?archived=1');
     content.innerHTML = `
@@ -5670,7 +5670,7 @@ async function _renderArchivedUsersPage() {
 async function _renderHrPage() {
   const content = document.getElementById('page-content');
   const isAdmin = state.user.role === 'admin' || state.user.permissions?.manage_team;
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
   try {
     const employees = await GET('/hr/employees');
     const byName = (a, b) => a.full_name.localeCompare(b.full_name, 'ru');
@@ -5685,7 +5685,7 @@ async function _renderHrPage() {
 
     const row = (e, idx) => `
       <tr class="hr-tr" onclick="openHrEmployeeView(${e.id})">
-        <td class="hr-td" style="color:#9ca3af;font-size:12px;width:32px;text-align:right;padding-right:8px">${idx}</td>
+        <td class="hr-td" style="color:var(--text-light);font-size:12px;width:32px;text-align:right;padding-right:8px">${idx}</td>
         <td class="hr-td"><div class="hr-name">${_escHtml(e.full_name)}</div></td>
         <td class="hr-td">${_escHtml(e.position||'—')}</td>
         <td class="hr-td">${fmtDate(e.hire_date)}</td>
@@ -5913,7 +5913,7 @@ async function _renderWorkloadPage() {
       ${isAdmin ? `<button class="fin-tab ${_teamTab==='archived'?'active':''}" onclick="teamSetTab('archived')">Архив</button>` : ''}
     </div>`;
 
-  content.innerHTML = tabsBar + '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  content.innerHTML = tabsBar + '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
 
   try {
     const { users, projects, memberships, taskCounts } = await _getWorkload();
@@ -6008,7 +6008,7 @@ async function _renderWorkloadPage() {
         : count === 1 ? `<span class="wl-sum-badge">1 проект</span>`
         : count >= 2 && count <= 4 ? `<span class="wl-sum-badge">${count} проекта</span>`
         : `<span class="wl-sum-badge">${count} проектов</span>`;
-      const rankColor = i === 0 ? '#f59e0b' : i === 1 ? '#9ca3af' : i === 2 ? '#b45309' : 'var(--text-muted)';
+      const rankColor = i === 0 ? '#f59e0b' : i === 1 ? '#9B9BA8' : i === 2 ? '#b45309' : 'var(--text-muted)';
       return `
         <div class="wl-sum-row">
           <span class="wl-sum-rank" style="color:${rankColor}">${i + 1}</span>
@@ -6112,12 +6112,12 @@ async function exportWorkloadPDF() {
             return `<span style="display:inline-flex;align-items:center;gap:4px;margin:2px 4px 2px 0;padding:2px 7px;border-radius:12px;border:1px solid ${p.color}40;background:${p.color}15;font-size:11px">
               <span style="width:7px;height:7px;border-radius:50%;background:${p.color};display:inline-block"></span>${_escHtml(p.name)} <span style="color:#6b7280">${tc.done}/${tc.total}</span></span>`;
           }).join('')
-        : '<span style="color:#9ca3af;font-size:11px">—</span>';
+        : '<span style="color:var(--text-light);font-size:11px">—</span>';
       const countText = assignedIds.length === 0 ? '—'
         : assignedIds.length === 1 ? '1 проект'
         : assignedIds.length <= 4 ? `${assignedIds.length} проекта`
         : `${assignedIds.length} проектов`;
-      const pctColor = pct >= 80 ? '#16a34a' : pct >= 50 ? '#ca8a04' : pct > 0 ? '#dc2626' : '#9ca3af';
+      const pctColor = pct >= 80 ? '#16a34a' : pct >= 50 ? '#ca8a04' : pct > 0 ? '#dc2626' : '#9B9BA8';
       return `<tr>
         <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:600;white-space:nowrap">${u.name}</td>
         <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0">${projList}</td>
@@ -6259,7 +6259,7 @@ async function _renderDutyContent() {
           const isPast = ws < thisWeekStr;
           const badge = isCurrent
             ? `<span style="background:#dcfce7;color:#16a34a;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;margin-left:8px">Текущая</span>`
-            : isPast ? `<span style="background:#f1f5f9;color:#9ca3af;font-size:10px;padding:2px 8px;border-radius:20px;margin-left:8px">Прошла</span>` : '';
+            : isPast ? `<span style="background:#f1f5f9;color:var(--text-light);font-size:10px;padding:2px 8px;border-radius:20px;margin-left:8px">Прошла</span>` : '';
 
           const cards = entries.map(e => {
             const u = e.user_id ? userMap[e.user_id] : null;
@@ -6798,8 +6798,8 @@ async function renderSettingsPage() {
               <div>
                 <div style="font-size:16px;font-weight:700">${me.name}</div>
                 <div style="font-size:13px;color:#6b7280">${me.email}</div>
-                <div style="font-size:12px;color:#9ca3af;margin-top:2px;display:flex;align-items:center;gap:4px">${me.role === 'admin' ? svgI(SVG_PATHS.crown,12)+' Администратор' : svgI(SVG_PATHS.user,12)+' Сотрудник'}</div>
-                <div style="font-size:11px;color:#9ca3af;margin-top:3px">Нажмите на фото для замены (макс. 2 МБ)</div>
+                <div style="font-size:12px;color:var(--text-light);margin-top:2px;display:flex;align-items:center;gap:4px">${me.role === 'admin' ? svgI(SVG_PATHS.crown,12)+' Администратор' : svgI(SVG_PATHS.user,12)+' Сотрудник'}</div>
+                <div style="font-size:11px;color:var(--text-light);margin-top:3px">Нажмите на фото для замены (макс. 2 МБ)</div>
               </div>
             </div>
             <div class="form-row">
@@ -7029,7 +7029,7 @@ let _beWinOffset   = 0; // sliding window offset in months
 
 async function renderBestEmployeePage() {
   const content = document.getElementById('page-content');
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
   try {
     const data = await GET('/best-employee?month=' + _beMonth);
     _renderBestEmployee(data);
@@ -7104,7 +7104,7 @@ function _renderBestEmployee(data) {
 
   let podiumHtml = '';
   if (!champion) {
-    podiumHtml = `<div class="be-empty"><div style="font-size:48px">📋</div><div>В этом месяце нет данных</div><div style="font-size:13px;color:#9ca3af;margin-top:6px">Задачи с дедлайном в этом месяце ещё не назначены</div></div>`;
+    podiumHtml = `<div class="be-empty"><div style="font-size:48px">📋</div><div>В этом месяце нет данных</div><div style="font-size:13px;color:var(--text-light);margin-top:6px">Задачи с дедлайном в этом месяце ещё не назначены</div></div>`;
   } else {
     // Champion card
     const av = champion.avatar_img
@@ -7322,7 +7322,7 @@ function _calRangeForView(mode, anchor, year, month) {
 
 async function renderCalendarPage() {
   const el = document.getElementById('page-content');
-  el.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
   try {
     const [usersData] = await Promise.all([GET('/users')]);
     _calUsers = usersData.users || usersData || [];
@@ -7482,7 +7482,7 @@ function _calRender() {
     cells.push({ date: next, cur: false });
   }
 
-  const colors = ['#881237','#881237','#881237','#881237','#881237','#881237','#881237'];
+  const colors = ['#B4234C','#B4234C','#B4234C','#B4234C','#B4234C','#B4234C','#B4234C'];
 
   // Precompute multi-day placement: assign each event a "row" so they don't overlap
   const gridStart = cells[0].date;
@@ -7741,7 +7741,7 @@ function _calRenderTimeGrid(numDays) {
         const dk = _calDateKey(d);
         const evsForDay = allDayEvents.filter(({start,end}) => toDay(d) >= toDay(start) && toDay(d) <= toDay(end));
         return `<div class="cal-day-col cal-allday-col">${evsForDay.map(({ev}) => `
-          <div class="cal-ev cal-tg-allday" style="background:#881237" title="${_escHtml(ev.summary||'')}"
+          <div class="cal-ev cal-tg-allday" style="background:#B4234C" title="${_escHtml(ev.summary||'')}"
             onclick="event.stopPropagation();openCalEventDetail('${_escHtml(ev.id)}','${_escHtml(ev.start?.dateTime||'')}')">
             ${_escHtml((ev.summary||'(без названия)').slice(0,24))}
           </div>`).join('')}</div>`;
@@ -7762,7 +7762,7 @@ function _calRenderTimeGrid(numDays) {
       const width = 100/colCount;
       const left = col*width;
       const timeLabel = start.toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
-      return `<div class="cal-ev cal-tg-ev" style="background:#881237;top:${top}px;height:${height}px;left:${left}%;width:calc(${width}% - 2px)"
+      return `<div class="cal-ev cal-tg-ev" style="background:#B4234C;top:${top}px;height:${height}px;left:${left}%;width:calc(${width}% - 2px)"
         title="${_escHtml(ev.summary||'')}"
         draggable="true"
         ondragstart="event.stopPropagation();_calDragStart(event,'${ev.id}')"
@@ -7900,7 +7900,7 @@ function _calRenderAgenda() {
           </div>
         </div>`;
       }).join('')}
-    </div>`).join('') : `<div style="padding:40px;text-align:center;color:#9ca3af">Нет предстоящих событий</div>`;
+    </div>`).join('') : `<div style="padding:40px;text-align:center;color:var(--text-light)">Нет предстоящих событий</div>`;
 
   el.innerHTML = `
     <div class="cal-page">
@@ -8454,7 +8454,7 @@ const fmtMoney = v => {
 
 async function renderFinancePage() {
   const content = document.getElementById('page-content');
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
   try {
     if (_finTab === 'annual')    { await _renderFinanceAnnual(); return; }
     if (_finTab === 'projects')  { await _renderFinanceProjects(); return; }
@@ -8495,7 +8495,7 @@ async function renderFinancePage() {
       el.innerHTML = hasData ? `
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:10px">Сводка по направлениям · ${_finMonth}</div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
-          ${block('Финансы (Проекты)', s.finance, '#881337', 'finance')}
+          ${block('Финансы (Проекты)', s.finance, '#8E1B3B', 'finance')}
           ${block('Финансы В2С', s.b2c, '#6366f1', 'b2c')}
           ${block('Финансы Kids', s.kids, '#16a34a', 'kids')}
         </div>` : '';
@@ -8661,7 +8661,7 @@ function _renderFinance(rows) {
 
       <!-- Section summary blocks (replaces chart) -->
       <div id="fin-section-summary" style="margin-top:20px">
-        <div style="color:#9ca3af;font-size:12px;padding:10px 0;text-align:center">Загрузка сводки...</div>
+        <div style="color:var(--text-light);font-size:12px;padding:10px 0;text-align:center">Загрузка сводки...</div>
       </div>
     </div>`;
 }
@@ -8695,7 +8695,7 @@ function _buildFinLineChart(annualData, currentMonth) {
     const r = p.isCurrent ? 5 : 3.5;
     return `<circle cx="${p.x}" cy="${yv(p[key])}" r="${r}" fill="${color}" stroke="white" stroke-width="${p.isCurrent?2:1.5}"/>`;
   }).join('');
-  const labels = pts.map(p => `<text x="${p.x}" y="${H-6}" text-anchor="middle" font-size="9" fill="${p.isCurrent?'#881337':'#94a3b8'}" font-weight="${p.isCurrent?'700':'400'}">${MONTHS[+p.mo-1]}</text>`).join('');
+  const labels = pts.map(p => `<text x="${p.x}" y="${H-6}" text-anchor="middle" font-size="9" fill="${p.isCurrent?'#8E1B3B':'#94a3b8'}" font-weight="${p.isCurrent?'700':'400'}">${MONTHS[+p.mo-1]}</text>`).join('');
 
   // Invisible hover zones for each month column
   const colW = iW / 11;
@@ -8703,7 +8703,7 @@ function _buildFinLineChart(annualData, currentMonth) {
     onmouseenter="showFinChartTooltip(event,${p.idx})" onmousemove="moveFinChartTooltip(event)" onmouseleave="hideFinChartTooltip()"/>`).join('');
 
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block" id="fin-line-chart-svg">
-    ${grid}${polyline('svc','#881337')}${polyline('paid','#16a34a')}${dots('svc','#881337')}${dots('paid','#16a34a')}${labels}${hoverZones}
+    ${grid}${polyline('svc','#8E1B3B')}${polyline('paid','#16a34a')}${dots('svc','#8E1B3B')}${dots('paid','#16a34a')}${labels}${hoverZones}
   </svg>`;
 }
 
@@ -9256,7 +9256,7 @@ function _finChartTooltipHide() {
 async function _renderFinanceChart(filterMonths) {
   if (filterMonths !== undefined) _finChartMonths = filterMonths;
   const content = document.getElementById('page-content');
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
   try {
     const data = await GET('/finance/chart?months=' + _finChartMonths);
     const { months } = data;
@@ -9366,7 +9366,7 @@ async function _renderFinanceAnnual() {
           <span><svg width="20" height="4"><line x1="0" y1="2" x2="20" y2="2" stroke="#0f172a" stroke-width="2"/></svg> Общая сумма</span>
           <span><svg width="20" height="4"><line x1="0" y1="2" x2="20" y2="2" stroke="#16a34a" stroke-width="2"/></svg> Оплачено</span>
         </div>
-        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px">${grid}${polyline('svc','#881337')}${polyline('paid','#16a34a')}${dots2('svc','#881337')}${dots2('paid','#16a34a')}${labels}</svg>
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px">${grid}${polyline('svc','#8E1B3B')}${polyline('paid','#16a34a')}${dots2('svc','#8E1B3B')}${dots2('paid','#16a34a')}${labels}</svg>
       </div>
       <div class="fin-table-wrap" style="margin-top:0">
         <table class="fin-table">
@@ -9822,7 +9822,7 @@ const FL_ACTIONS  = {
   add_student:'Добавил студента', update_student:'Изменил студента', delete_student:'Удалил студента',
   delete_course:'Удалил курс',
 };
-const FL_SECTION_COLOR = { finance:'#881337', b2c:'#6366f1', kids:'#16a34a' };
+const FL_SECTION_COLOR = { finance:'#8E1B3B', b2c:'#6366f1', kids:'#16a34a' };
 let _flSection = '', _flDays = 30;
 
 let _flShowAll = false;
@@ -9838,7 +9838,7 @@ async function deleteFinanceLog(id) {
 
 async function renderFinanceLogPage() {
   const content = document.getElementById('page-content');
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
   try {
     const params = new URLSearchParams({ days: _flDays, limit: 500 });
     if (_flSection) params.set('section', _flSection);
@@ -9929,11 +9929,11 @@ async function renderFinanceLogPage() {
 // ─── Ideahast Page ────────────────────────────────────────────────────────────
 const IH_STATUS = { active:'Действующий', pause:'На паузе', done:'Завершён' };
 const IH_STATUS_COLOR = { active:'#16a34a', pause:'#d97706', done:'#6366f1' };
-const IH_COLORS = ['#6366f1','#8b5cf6','#ec4899','#f43f5e','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#06b6d4','#881337'];
+const IH_COLORS = ['#6366f1','#8b5cf6','#ec4899','#f43f5e','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#06b6d4','#8E1B3B'];
 
 async function renderIdeahastPage() {
   const content = document.getElementById('page-content');
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
   try {
     const projects = await GET('/ideahast');
 
@@ -10185,7 +10185,7 @@ let _currentSec = 'b2c';
 async function _renderGenericCoursePage(sec) {
   const s = _secState[sec];
   const content = document.getElementById('page-content');
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
   try {
     const courses = await GET(`/${s.api}/courses`);
     const now = new Date();
@@ -10388,7 +10388,7 @@ async function renderSectionCourse(sec, courseId) {
           <td class="fin-td fin-money fin-total" style="color:#16a34a">${fmtMoney(totalPaid)}</td>
           <td class="fin-td fin-money fin-total" style="color:${totalDebt>0?'#dc2626':'#16a34a'}">${fmtMoney(totalDebt)}</td>
           <td colspan="4"></td></tr></tfoot>`:''}
-      </table>${payments.length===0?`<div style="text-align:center;padding:32px;color:#9ca3af">Добавьте первого студента</div>`:''}</div>
+      </table>${payments.length===0?`<div style="text-align:center;padding:32px;color:var(--text-light)">Добавьте первого студента</div>`:''}</div>
     </div>`;
   } catch(err){ content.innerHTML=`<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`; }
 }
@@ -10506,7 +10506,7 @@ async function exportSecExcel(sec,courseId){
 
 async function renderB2CPage() {
   const content = document.getElementById('page-content');
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
   if (_b2cCourseId) { await renderB2CCourse(_b2cCourseId); return; }
   try {
     const courses = await GET('/b2c/courses');
@@ -10776,7 +10776,7 @@ async function renderB2CCourse(courseId) {
               <td colspan="4"></td>
             </tr></tfoot>`:''}
           </table>
-          ${payments.length===0?`<div style="text-align:center;padding:32px;color:#9ca3af">Добавьте первого студента</div>`:''}
+          ${payments.length===0?`<div style="text-align:center;padding:32px;color:var(--text-light)">Добавьте первого студента</div>`:''}
         </div>
       </div>`;
   } catch (err) { content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`; }
@@ -11059,13 +11059,13 @@ async function renderSchedulePage() {
     return _renderScheduleContent();
   }
   const content = document.getElementById('page-content');
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
   return _renderScheduleContent();
 }
 
 async function _renderScheduleContent() {
   const content = _schedContainer();
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
 
   try { _schedCache = await GET('/schedule'); } catch { _schedCache = []; }
 
@@ -11478,7 +11478,7 @@ async function openFeedbackArchive() {
         <button class="modal-close" onclick="closeModal()">✕</button>
       </div>
       <div class="modal-body" id="fb-archive-body">
-        <div style="text-align:center;padding:20px;color:#9ca3af">Загрузка...</div>
+        <div style="text-align:center;padding:20px;color:var(--text-light)">Загрузка...</div>
       </div>
     </div></div>`;
   try {
@@ -11495,7 +11495,7 @@ async function openFeedbackArchive() {
         const overall = rowAvg(r);
         return `<div class="fb-response-card">
           <div class="fb-response-header">
-            <span class="fb-response-num" style="color:#9ca3af">Архив</span>
+            <span class="fb-response-num" style="color:var(--text-light)">Архив</span>
             <span class="fb-response-date">${fmtDate(r.created_at)}</span>
             <span class="fb-response-overall" style="color:${scoreColor(overall)}">Балл: ${overall.toFixed(1)}</span>
             <button class="btn btn-outline btn-sm" style="margin-left:auto" onclick="restoreFeedback(${r.id})">Восстановить</button>
@@ -11528,7 +11528,7 @@ async function openFeedbackAdmin() {
       </button>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
-    <div class="modal-body fb-body"><div style="text-align:center;color:#9ca3af;padding:30px">Загрузка...</div>
+    <div class="modal-body fb-body"><div style="text-align:center;color:var(--text-light);padding:30px">Загрузка...</div>
     </div></div></div>`;
 
   let allRows = [];
@@ -11561,12 +11561,12 @@ async function openFeedbackAdmin() {
 
   // Per-question line chart: X = Q1..Q10, Y = 0..5, one line per response
   function buildQuestionsChart(rows) {
-    if (!rows.length) return '<div style="font-size:12px;color:#9ca3af;padding:20px 0">Нет данных</div>';
+    if (!rows.length) return '<div style="font-size:12px;color:var(--text-light);padding:20px 0">Нет данных</div>';
     const W = 280, H = 200, padL = 22, padB = 20, padT = 10, padR = 10;
     const innerW = W - padL - padR, innerH = H - padB - padT;
     const xs = Array.from({length:10}, (_,i) => padL + i / 9 * innerW);
     const y  = v => padT + (1 - v/5) * innerH;
-    const COLORS = ['#881337','#1d4ed8','#16a34a','#d97706','#7c3aed','#0891b2','#db2777','#ea580c'];
+    const COLORS = ['#8E1B3B','#1d4ed8','#16a34a','#d97706','#7c3aed','#0891b2','#db2777','#ea580c'];
     const recent = [...rows].reverse().slice(0,6); // last 6 responses
 
     // Average line
@@ -11577,9 +11577,9 @@ async function openFeedbackAdmin() {
 
     const grid = [0,1,2,3,4,5].map(v => `
       <line x1="${padL}" y1="${y(v)}" x2="${W-padR}" y2="${y(v)}" stroke="#e5e7eb" stroke-width="0.5"/>
-      <text x="${padL-3}" y="${y(v)+3.5}" text-anchor="end" font-size="8.5" fill="#9ca3af">${v}</text>`).join('');
+      <text x="${padL-3}" y="${y(v)+3.5}" text-anchor="end" font-size="8.5" fill="#9B9BA8">${v}</text>`).join('');
 
-    const xLabels = xs.map((x,i) => `<text x="${x}" y="${H-4}" text-anchor="middle" font-size="8.5" fill="#9ca3af">В${i+1}</text>`).join('');
+    const xLabels = xs.map((x,i) => `<text x="${x}" y="${H-4}" text-anchor="middle" font-size="8.5" fill="#9B9BA8">В${i+1}</text>`).join('');
 
     const responseLines = recent.map((r, ri) => {
       const pts = xs.map((x,i) => `${x},${y(r[`q${i+1}`]??0)}`).join(' ');
@@ -11624,21 +11624,21 @@ async function openFeedbackAdmin() {
     const monthNames = ['Янв','Фев','Мар','Апр','Май','Июнь','Июль','Авг','Сен','Окт','Ноя','Дек'];
     const labels = pts.map(p => {
       const [yr, mo] = p.m.split('-');
-      return `<text x="${p.x}" y="${H-2}" text-anchor="middle" font-size="9" fill="#9ca3af">${monthNames[+mo-1]}</text>`;
+      return `<text x="${p.x}" y="${H-2}" text-anchor="middle" font-size="9" fill="#9B9BA8">${monthNames[+mo-1]}</text>`;
     }).join('');
     const dots = pts.map(p =>
       `<circle cx="${p.x}" cy="${p.y}" r="4" fill="${scoreColor(p.avg)}" stroke="white" stroke-width="1.5"/>`
     ).join('');
     const yLabels = [0,1,2,3,4,5].map(v => {
       const y = padY + (1 - v/5)*innerH;
-      return `<text x="${padX-4}" y="${y+3}" text-anchor="end" font-size="9" fill="#9ca3af">${v}</text>
+      return `<text x="${padX-4}" y="${y+3}" text-anchor="end" font-size="9" fill="#9B9BA8">${v}</text>
               <line x1="${padX}" y1="${y}" x2="${W-padX}" y2="${y}" stroke="#e5e7eb" stroke-width="0.5"/>`;
     }).join('');
     return `<div class="fb-trend-wrap">
       <div class="fb-trend-title">Тенденция по месяцам</div>
       <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px">
         ${yLabels}
-        <polyline points="${polyline}" fill="none" stroke="#881337" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <polyline points="${polyline}" fill="none" stroke="#8E1B3B" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
         ${dots}
         ${labels}
       </svg>
@@ -11700,7 +11700,7 @@ async function openFeedbackAdmin() {
           <div class="fb-admin-section-title" style="margin-top:4px">
             Отдельные ответы (${rows.length})
           </div>
-          ${rows.length === 0 ? `<div style="font-size:13px;color:#9ca3af;padding:8px 0">Нет ответов за этот период</div>` : ''}
+          ${rows.length === 0 ? `<div style="font-size:13px;color:var(--text-light);padding:8px 0">Нет ответов за этот период</div>` : ''}
           <div class="fb-responses-list">
             ${[...rows].reverse().map((r, idx) => {
               const overall = rowAvg(r);
@@ -11721,7 +11721,7 @@ async function openFeedbackAdmin() {
                     onclick="event.stopPropagation(); deleteFeedback(${r.id})">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
                   </button>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9B9BA8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
                 </div>
                 <div class="fb-response-scores">
                   ${[1,2,3,4,5,6,7,8,9,10].map(qi => {
@@ -11772,11 +11772,11 @@ function openFeedbackDetail(rowId) {
   const xs = Array.from({length:10},(_,i)=>pL+i/9*iW);
   const yv = v=>pT+(1-v/5)*iH;
   const grid=[0,1,2,3,4,5].map(v=>`<line x1="${pL}" y1="${yv(v)}" x2="${W-pR}" y2="${yv(v)}" stroke="#e5e7eb" stroke-width="0.5"/>
-    <text x="${pL-3}" y="${yv(v)+3}" text-anchor="end" font-size="8" fill="#9ca3af">${v}</text>`).join('');
-  const xLbls=xs.map((x,i)=>`<text x="${x}" y="${H-2}" text-anchor="middle" font-size="8" fill="#9ca3af">В${i+1}</text>`).join('');
-  const thisLine=`<polyline points="${xs.map((x,i)=>`${x},${yv(scores[i])}`).join(' ')}" fill="none" stroke="#881337" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
-  const thisDots=xs.map((x,i)=>`<circle cx="${x}" cy="${yv(scores[i])}" r="3" fill="#881337" stroke="white" stroke-width="1.5"/>`).join('');
-  const avgLine=`<polyline points="${xs.map((x,i)=>`${x},${yv(avgScores[i])}`).join(' ')}" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="5,3" stroke-linejoin="round"/>`;
+    <text x="${pL-3}" y="${yv(v)+3}" text-anchor="end" font-size="8" fill="#9B9BA8">${v}</text>`).join('');
+  const xLbls=xs.map((x,i)=>`<text x="${x}" y="${H-2}" text-anchor="middle" font-size="8" fill="#9B9BA8">В${i+1}</text>`).join('');
+  const thisLine=`<polyline points="${xs.map((x,i)=>`${x},${yv(scores[i])}`).join(' ')}" fill="none" stroke="#8E1B3B" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  const thisDots=xs.map((x,i)=>`<circle cx="${x}" cy="${yv(scores[i])}" r="3" fill="#8E1B3B" stroke="white" stroke-width="1.5"/>`).join('');
+  const avgLine=`<polyline points="${xs.map((x,i)=>`${x},${yv(avgScores[i])}`).join(' ')}" fill="none" stroke="#9B9BA8" stroke-width="1.5" stroke-dasharray="5,3" stroke-linejoin="round"/>`;
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -11787,7 +11787,7 @@ function openFeedbackDetail(rowId) {
       <div class="modal-header">
         <div>
           <div class="modal-title">Детальный просмотр ответа</div>
-          <div style="font-size:12px;color:#9ca3af;margin-top:2px">${fmtDate(r.created_at)} · Общий балл:
+          <div style="font-size:12px;color:var(--text-light);margin-top:2px">${fmtDate(r.created_at)} · Общий балл:
             <span style="font-weight:700;color:${sc(overall)}">${overall.toFixed(1)}</span>
           </div>
         </div>
@@ -11796,15 +11796,15 @@ function openFeedbackDetail(rowId) {
       <div class="modal-body" style="padding-bottom:20px">
         <!-- Mini chart -->
         <div class="fb-detail-chart-wrap">
-          <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">
             Визуал ответа
           </div>
           <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block">
             ${grid}${xLbls}${avgLine}${thisLine}${thisDots}
           </svg>
           <div style="display:flex;gap:14px;margin-top:4px">
-            <span class="fb-chart-legend-item"><svg width="16" height="4"><line x1="0" y1="2" x2="16" y2="2" stroke="#881337" stroke-width="2.5"/></svg>Этот ответ</span>
-            <span class="fb-chart-legend-item"><svg width="16" height="4"><line x1="0" y1="2" x2="16" y2="2" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="4,2"/></svg>Среднее</span>
+            <span class="fb-chart-legend-item"><svg width="16" height="4"><line x1="0" y1="2" x2="16" y2="2" stroke="#8E1B3B" stroke-width="2.5"/></svg>Этот ответ</span>
+            <span class="fb-chart-legend-item"><svg width="16" height="4"><line x1="0" y1="2" x2="16" y2="2" stroke="#9B9BA8" stroke-width="1.5" stroke-dasharray="4,2"/></svg>Среднее</span>
           </div>
         </div>
 
@@ -12154,7 +12154,7 @@ const _TS_DOWNAMES = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
 
 async function renderTimesheetPage() {
   const content = document.getElementById('page-content');
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af">Загрузка...</div>';
+  content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
   try {
     _tsData = await GET('/timesheet/month?month=' + _tsMonth);
     _renderTimesheet();
@@ -12277,9 +12277,9 @@ function _renderTimesheet() {
       <td class="ts-total-col">${workingDaysInMonth}</td>
       <td class="ts-total-col">${workedHours}</td>
       <td class="ts-total-col">${workedDays}</td>
-      <td class="ts-total-col ts-salary" onclick="editTimesheetEmployee(${emp.id})" style="cursor:pointer;${!emp.salary?'color:#9ca3af;font-style:italic;font-size:11px':''}">${emp.salary ? String(emp.salary) : 'задать'}</td>
-      <td class="ts-total-col ts-bonus" onclick="editTimesheetEmployee(${emp.id})" style="cursor:pointer;${!emp.bonus?'color:#9ca3af;font-style:italic;font-size:11px':''}">${emp.bonus ? String(emp.bonus) : '—'}</td>
-      <td class="ts-total-col ts-advance" onclick="editTimesheetEmployee(${emp.id})" style="cursor:pointer;${!emp.advance?'color:#9ca3af;font-style:italic;font-size:11px':''}">${emp.advance ? String(emp.advance) : '—'}</td>
+      <td class="ts-total-col ts-salary" onclick="editTimesheetEmployee(${emp.id})" style="cursor:pointer;${!emp.salary?'color:var(--text-light);font-style:italic;font-size:11px':''}">${emp.salary ? String(emp.salary) : 'задать'}</td>
+      <td class="ts-total-col ts-bonus" onclick="editTimesheetEmployee(${emp.id})" style="cursor:pointer;${!emp.bonus?'color:var(--text-light);font-style:italic;font-size:11px':''}">${emp.bonus ? String(emp.bonus) : '—'}</td>
+      <td class="ts-total-col ts-advance" onclick="editTimesheetEmployee(${emp.id})" style="cursor:pointer;${!emp.advance?'color:var(--text-light);font-style:italic;font-size:11px':''}">${emp.advance ? String(emp.advance) : '—'}</td>
       <td class="ts-total-col ts-earned" style="color:${earnedSalary>0?'#059669':'var(--text-muted)'}"><strong>${earnedSalary > 0 ? String(earnedSalary) : '—'}</strong></td>
     </tr>`;
   });
