@@ -3698,6 +3698,21 @@ const ACTIVITY_PERIODS = [
 
 // ─── Review Page ──────────────────────────────────────────────────────────────
 
+let _reviewTab = (() => { try { return sessionStorage.getItem('review_tab') || 'pending'; } catch { return 'pending'; } })();
+let _reviewAssignedStatus = (() => { try { return sessionStorage.getItem('review_assigned_status') || ''; } catch { return ''; } })();
+
+function reviewSetTab(t) {
+  _reviewTab = t;
+  try { sessionStorage.setItem('review_tab', t); } catch {}
+  renderReviewPage();
+}
+
+function reviewSetAssignedStatus(s) {
+  _reviewAssignedStatus = s;
+  try { sessionStorage.setItem('review_assigned_status', s); } catch {}
+  renderReviewPage();
+}
+
 async function updateReviewBadge() {
   try {
     const tasks = await GET('/tasks/pending-review');
@@ -3712,9 +3727,23 @@ async function updateReviewBadge() {
   } catch {}
 }
 
+function _reviewTabsBar() {
+  return `
+    <div class="team-tabs-bar" style="margin-bottom:16px">
+      <button class="fin-tab ${_reviewTab==='pending'?'active':''}" onclick="reviewSetTab('pending')">Мне на проверку</button>
+      <button class="fin-tab ${_reviewTab==='assigned'?'active':''}" onclick="reviewSetTab('assigned')">Поручил</button>
+    </div>
+  `;
+}
+
 async function renderReviewPage() {
+  if (_reviewTab === 'assigned') { await _renderReviewAssigned(); return; }
+  await _renderReviewPending();
+}
+
+async function _renderReviewPending() {
   const content = document.getElementById('page-content');
-  content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
+  content.innerHTML = _reviewTabsBar() + '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
   try {
     const tasks = await GET('/tasks/pending-review');
     updateReviewBadge();
@@ -3732,6 +3761,8 @@ async function renderReviewPage() {
         </div>
       </div>
 
+      ${_reviewTabsBar()}
+
       ${tasks.length === 0
         ? `<div class="empty-state">
             <div class="empty-icon">${svgI('<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',44)}</div>
@@ -3745,7 +3776,60 @@ async function renderReviewPage() {
     `;
     attachTaskCardListeners();
   } catch(err) {
-    content.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
+    content.innerHTML = _reviewTabsBar() + `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
+  }
+}
+
+async function _renderReviewAssigned() {
+  const content = document.getElementById('page-content');
+  content.innerHTML = _reviewTabsBar() + '<div style="padding:40px;text-align:center;color:var(--text-light)">Загрузка...</div>';
+  try {
+    const params = new URLSearchParams();
+    if (_reviewAssignedStatus) params.set('status', _reviewAssignedStatus);
+    const allTasks = await GET('/tasks/assigned-by-me' + (params.toString() ? '?' + params.toString() : ''));
+    const tasks = _reviewAssignedStatus ? allTasks : allTasks.filter(t => t.status !== 'done');
+
+    const statusFilters = [
+      { key: '', label: 'Все, кроме готовых' },
+      { key: 'new', label: 'Новые' },
+      { key: 'in_progress', label: 'В работе' },
+      { key: 'pending_review', label: 'На проверке' },
+      { key: 'done', label: 'Готово' },
+    ];
+
+    content.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px">
+        <div>
+          <h2 style="font-size:20px;font-weight:800;color:var(--text);margin:0">Задачи для проверки</h2>
+          <p style="font-size:13px;color:#6b7280;margin:4px 0 0">Все задачи, которые вы поручили сотрудникам</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="background:#f3f0ff;color:#7c3aed;padding:6px 14px;border-radius:99px;font-size:13px;font-weight:700">
+            ${tasks.length} ${tasks.length===1?'задача':tasks.length>=2&&tasks.length<=4?'задачи':'задач'}
+          </span>
+        </div>
+      </div>
+
+      ${_reviewTabsBar()}
+
+      <div class="filters">
+        ${statusFilters.map(f => `<button class="filter-btn ${_reviewAssignedStatus===f.key?'active':''}" onclick="reviewSetAssignedStatus('${f.key}')">${f.label}</button>`).join('')}
+      </div>
+
+      ${tasks.length === 0
+        ? `<div class="empty-state">
+            <div class="empty-icon">${svgI(SVG_PATHS.user,44)}</div>
+            <h3>Вы ещё никому не поручали задачи</h3>
+            <p>Задачи, которые вы создаёте через «Новая задача» и назначаете сотрудникам, появятся здесь</p>
+          </div>`
+        : `<div class="tasks-list">
+            ${tasks.map(t => taskCard(t)).join('')}
+           </div>`
+      }
+    `;
+    attachTaskCardListeners();
+  } catch(err) {
+    content.innerHTML = _reviewTabsBar() + `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
   }
 }
 

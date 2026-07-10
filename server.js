@@ -848,6 +848,23 @@ app.get('/api/tasks/pending-review', auth, (req, res) => {
   res.json(tasks);
 });
 
+app.get('/api/tasks/assigned-by-me', auth, (req, res) => {
+  const canReview = req.user.role === 'admin' || can(req, 'review_tasks');
+  if (!canReview) return res.status(403).json({ error: 'Нет доступа' });
+
+  let where = " AND t.created_by = ? AND (t.assignee_id IS NOT NULL OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id))";
+  const params = [req.user.id];
+
+  const validStatuses = ['new', 'in_progress', 'pending_review', 'done'];
+  if (req.query.status && validStatuses.includes(req.query.status)) {
+    where += ' AND t.status = ?';
+    params.push(req.query.status);
+  }
+
+  const tasks = enrichTasksWithAssignees(getTaskQuery(where, params, 300));
+  res.json(tasks);
+});
+
 app.get('/api/tasks/:id', auth, (req, res) => {
   const taskId = parseInt(req.params.id);
   if (!taskId) return res.status(400).json({ error: 'Invalid id' });
