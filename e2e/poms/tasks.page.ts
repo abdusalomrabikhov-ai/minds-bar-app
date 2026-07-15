@@ -112,6 +112,13 @@ export class TasksPage extends BasePage {
       return c !== null && c.innerHTML.trim().length > 0;
     }, { timeout: 10000 });
     await tasksNavBtn.click();
+    // Wait for tasks page to fully render (search input injected by renderTasksPage)
+    // If nav was already on tasks, click again to force re-render
+    await this.page.waitForFunction(() => !!document.getElementById('task-search'), { timeout: 5000 }).catch(async () => {
+      // Retry: click nav again in case it was already active and didn't re-render
+      await this.page.locator('button.nav-item[data-page="tasks"]').click();
+      await this.page.waitForFunction(() => !!document.getElementById('task-search'), { timeout: 10000 });
+    });
     await expect(this.searchInput).toBeVisible({ timeout: 10000 });
   }
 
