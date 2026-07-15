@@ -1476,6 +1476,24 @@ input, textarea, select { font: inherit; }
 .ma-det-status { font-size: 12px; color: var(--text-light); }
 .ma-det-status.done { color: #16a34a; font-weight: 600; }
 
+/* ─── Subtasks ───────────────────────────────────────────────────────────── */
+.subtask-checkbox {
+  width: 20px; height: 20px; border-radius: 6px; flex-shrink: 0;
+  border: 1.5px solid #d1d5db; background: var(--surface); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: white; transition: all .15s;
+}
+.subtask-checkbox:hover { border-color: var(--primary); }
+.subtask-checkbox.checked { border-color: #22c55e; background: #22c55e; }
+.icon-btn {
+  width: 26px; height: 26px; border-radius: 6px; border: none;
+  background: transparent; color: var(--text-light); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; transition: all .15s;
+}
+.icon-btn:hover { background: var(--surface-2); color: var(--danger); }
+.icon-btn--danger { color: var(--danger); }
+
 /* ─── Project Members ───────────────────────────────────────────────────── */
 .proj-members-row {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;

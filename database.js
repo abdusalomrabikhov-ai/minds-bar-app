@@ -571,6 +571,18 @@ function initDB() {
   )`); } catch {}
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)'); } catch {}
 
+  // Subtasks (optional checklist per task; task can't be marked done until all are done)
+  try { db.exec(`CREATE TABLE IF NOT EXISTS subtasks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    text       TEXT NOT NULL,
+    done       INTEGER DEFAULT 0,
+    done_at    TEXT,
+    order_idx  INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id)'); } catch {}
+
   const admin = db.prepare("SELECT id FROM users WHERE role = 'admin'").get();
   if (!admin) {
     db.prepare(`

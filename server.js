@@ -581,6 +581,52 @@ function recomputeTaskStatus(taskId) {
     .run(allDone ? 'done' : anyDone ? 'in_progress' : 'new', localNow(), taskId);
 }
 
+// Subtasks are an optional checklist per task. Unlike task_assignees (which
+// rolls up into tasks.status), subtasks only ever BLOCK the task from
+// reaching 'done' — they never auto-complete it.
+function getSubtasks(taskId) {
+  return db.prepare('SELECT * FROM subtasks WHERE task_id = ? ORDER BY order_idx, id').all(taskId);
+}
+
+function enrichTasksWithSubtasks(tasks) {
+  if (!tasks.length) return tasks;
+  const ids = tasks.map(t => t.id);
+  const ph = ids.map(() => '?').join(',');
+  const rows = db.prepare(`
+    SELECT task_id, COUNT(*) as total, SUM(CASE WHEN done=1 THEN 1 ELSE 0 END) as done_count
+    FROM subtasks WHERE task_id IN (${ph}) GROUP BY task_id
+  `).all(...ids);
+  const byTask = {};
+  rows.forEach(r => { byTask[r.task_id] = { total: r.total, done_count: r.done_count }; });
+  return tasks.map(t => ({ ...t, subtasks_total: byTask[t.id]?.total || 0, subtasks_done: byTask[t.id]?.done_count || 0 }));
+}
+
+function attachSubtasks(task) {
+  if (!task) return task;
+  return { ...task, subtasks: getSubtasks(task.id) };
+}
+
+function hasIncompleteSubtasks(taskId) {
+  const row = db.prepare('SELECT COUNT(*) as total, SUM(CASE WHEN done=1 THEN 1 ELSE 0 END) as done_count FROM subtasks WHERE task_id = ?').get(taskId);
+  return row.total > 0 && row.done_count < row.total;
+}
+
+// Blocks a task from reaching 'done'/'pending_review' while it has
+// incomplete subtasks. Writes a 400 response and returns true if blocked.
+function blockIfIncompleteSubtasks(taskId, res) {
+  if (hasIncompleteSubtasks(taskId)) {
+    const row = db.prepare('SELECT COUNT(*) as total, SUM(CASE WHEN done=1 THEN 1 ELSE 0 END) as done_count FROM subtasks WHERE task_id = ?').get(taskId);
+    res.status(400).json({
+      error: `Сначала выполните все подзадачи (${row.done_count}/${row.total})`,
+      code: 'SUBTASKS_INCOMPLETE',
+      subtasks_done: row.done_count,
+      subtasks_total: row.total,
+    });
+    return true;
+  }
+  return false;
+}
+
 function enrichTasksWithAssignees(tasks, skipImg = true) {
   if (!tasks.length) return tasks;
   const ids = tasks.map(t => t.id);
@@ -678,7 +724,7 @@ app.get('/api/my-stats', auth, (req, res) => {
     GROUP BY p.id ORDER BY (total - done) DESC
   `).all(now.slice(0, 16).replace('T', ' '), today, ...params);
 
-  const upcoming = enrichTasksWithAssignees(db.prepare(`
+  const upcoming = enrichTasksWithSubtasks(enrichTasksWithAssignees(db.prepare(`
     SELECT t.*, u.name as assignee_name, u.avatar_color as assignee_color,
       p.name as project_name, p.color as project_color, creator.name as creator_name
     FROM tasks t
@@ -689,7 +735,7 @@ app.get('/api/my-stats', auth, (req, res) => {
       AND substr(t.deadline,1,10) >= ? AND substr(t.deadline,1,10) <= date(?, '+30 days')
       ${where}
     ORDER BY t.deadline ASC LIMIT 20
-  `).all(today, today, ...params));
+  `).all(today, today, ...params)));
 
   res.json({ stats, byProject, upcoming });
 });
@@ -750,18 +796,18 @@ function computeDashboard(req) {
   `).get(...[nowDt, nowDate, tomorrow, ...params]);
 
   const urgentWhere = where + ` AND status != 'done' AND deadline IS NOT NULL AND deadline != '' AND substr(deadline,1,10) <= ?`;
-  const urgentTasks = enrichTasksWithAssignees(
+  const urgentTasks = enrichTasksWithSubtasks(enrichTasksWithAssignees(
     db.prepare(`SELECT t.*, u.name as assignee_name, u.avatar_color as assignee_color, NULL as assignee_img, p.name as project_name, p.color as project_color, creator.name as creator_name
       FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id LEFT JOIN projects p ON p.id = t.project_id LEFT JOIN users creator ON creator.id = t.created_by
       WHERE 1=1 ${urgentWhere} ORDER BY t.deadline ASC LIMIT 50`).all(...params, tomorrow), true
-  );
+  ));
 
   const recentWhere = where + ` AND status != 'done'`;
-  const recentTasks = enrichTasksWithAssignees(
+  const recentTasks = enrichTasksWithSubtasks(enrichTasksWithAssignees(
     db.prepare(`SELECT t.*, u.name as assignee_name, u.avatar_color as assignee_color, NULL as assignee_img, p.name as project_name, p.color as project_color, creator.name as creator_name
       FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id LEFT JOIN projects p ON p.id = t.project_id LEFT JOIN users creator ON creator.id = t.created_by
       WHERE 1=1 ${recentWhere} ORDER BY t.deadline ASC NULLS LAST, t.created_at DESC LIMIT 30`).all(...params), true
-  );
+  ));
 
   const byProject = isAdmin || hasReports || hasTeam ? db.prepare(`
     SELECT p.id, p.name, p.color, COUNT(*) as total, SUM(CASE WHEN t.status='done' THEN 1 ELSE 0 END) as done
@@ -830,11 +876,11 @@ app.get('/api/tasks', auth, (req, res) => {
   if (req.query.all === '1') {
     // Legacy: return flat array for dashboard, reports, employee page, etc.
     // Defensive cap so a growing task history can't return an unbounded payload.
-    return res.json(enrichTasksWithAssignees(getTaskQuery(where, params, 2000)));
+    return res.json(enrichTasksWithSubtasks(enrichTasksWithAssignees(getTaskQuery(where, params, 2000))));
   }
 
   const total = getTaskCount(where, params);
-  const tasks = enrichTasksWithAssignees(getTaskQueryPaged(where, params, limit, offset));
+  const tasks = enrichTasksWithSubtasks(enrichTasksWithAssignees(getTaskQueryPaged(where, params, limit, offset)));
   res.json({ tasks, total, page, pages: Math.ceil(total / limit) || 1 });
 });
 
@@ -842,9 +888,9 @@ app.get('/api/tasks', auth, (req, res) => {
 app.get('/api/tasks/pending-review', auth, (req, res) => {
   const canReview = req.user.role === 'admin' || can(req, 'review_tasks');
   if (!canReview) return res.status(403).json({ error: 'Нет доступа' });
-  const tasks = enrichTasksWithAssignees(
+  const tasks = enrichTasksWithSubtasks(enrichTasksWithAssignees(
     getTaskQuery(" AND t.status = 'pending_review' AND t.created_by = ?", [req.user.id])
-  );
+  ));
   res.json(tasks);
 });
 
@@ -861,7 +907,7 @@ app.get('/api/tasks/assigned-by-me', auth, (req, res) => {
     params.push(req.query.status);
   }
 
-  const tasks = enrichTasksWithAssignees(getTaskQuery(where, params, 300));
+  const tasks = enrichTasksWithSubtasks(enrichTasksWithAssignees(getTaskQuery(where, params, 300)));
   res.json(tasks);
 });
 
@@ -871,7 +917,7 @@ app.get('/api/tasks/:id', auth, (req, res) => {
   if (!canAccessTask(req, taskId)) return res.status(403).json({ error: 'Нет доступа' });
   const rows = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [taskId]));
   if (!rows.length) return res.status(404).json({ error: 'Задача не найдена' });
-  res.json(rows[0]);
+  res.json(attachSubtasks(rows[0]));
 });
 
 app.get('/api/search', auth, (req, res) => {
@@ -889,7 +935,7 @@ app.get('/api/search', auth, (req, res) => {
     where += ' AND (t.assignee_id = ? OR t.created_by = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.user_id = ?))';
     params.push(uid, uid, uid);
   }
-  const tasks = enrichTasksWithAssignees(getTaskQueryPaged(where, params, 30, 0));
+  const tasks = enrichTasksWithSubtasks(enrichTasksWithAssignees(getTaskQueryPaged(where, params, 30, 0)));
   res.json(tasks);
 });
 
@@ -935,6 +981,12 @@ function spawnRecurringTask(task) {
   `).run(task.title, task.description, task.project_id, task.assignee_id,
          task.created_by, task.priority, nextDl, task.recurrence);
 
+  const subtaskRows = getSubtasks(task.id);
+  if (subtaskRows.length > 0) {
+    const insertSub = db.prepare('INSERT INTO subtasks (task_id, text, order_idx) VALUES (?, ?, ?)');
+    subtaskRows.forEach(s => insertSub.run(nextResult.lastInsertRowid, s.text, s.order_idx));
+  }
+
   if (task.assignee_id) {
     const recurLabels = { daily: 'ежедневная', every2days: 'каждые 2 дня', weekly: 'еженедельная', monthly: 'ежемесячная' };
     const msg = `🔄 Создана новая ${recurLabels[task.recurrence] || ''} задача: «${task.title}»`;
@@ -951,10 +1003,13 @@ function spawnRecurringTask(task) {
 }
 
 app.post('/api/tasks', auth, (req, res) => {
-  const { title, description, project_id, assignee_id, assignee_ids, priority, deadline, recurrence } = req.body;
+  const { title, description, project_id, assignee_id, assignee_ids, priority, deadline, recurrence, subtasks } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Название задачи обязательно' });
   if (title.trim().length > 500) return res.status(400).json({ error: 'Название слишком длинное (макс. 500 символов)' });
   if ((description || '').length > 10000) return res.status(400).json({ error: 'Описание слишком длинное (макс. 10 000 символов)' });
+
+  const subtaskTexts = Array.isArray(subtasks) ? subtasks.map(s => String(s).trim()).filter(Boolean) : [];
+  if (subtaskTexts.some(t => t.length > 300)) return res.status(400).json({ error: 'Текст подзадачи слишком длинный (макс. 300 символов)' });
 
   const ids = Array.isArray(assignee_ids) && assignee_ids.length > 0
     ? assignee_ids.map(Number).filter(Boolean)
@@ -967,7 +1022,12 @@ app.post('/api/tasks', auth, (req, res) => {
 
   if (ids.length > 0) setTaskAssignees(result.lastInsertRowid, ids);
 
-  const task = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [result.lastInsertRowid]))[0];
+  if (subtaskTexts.length > 0) {
+    const insertSub = db.prepare('INSERT INTO subtasks (task_id, text, order_idx) VALUES (?, ?, ?)');
+    subtaskTexts.forEach((text, i) => insertSub.run(result.lastInsertRowid, text, i));
+  }
+
+  const task = attachSubtasks(enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [result.lastInsertRowid]))[0]);
 
   const telegramMapCreate = ids.length > 0
     ? new Map(db.prepare(`SELECT id, telegram_id FROM users WHERE id IN (${ids.map(()=>'?').join(',')})`).all(...ids).map(u => [u.id, u.telegram_id]))
@@ -1003,6 +1063,11 @@ app.put('/api/tasks/:id', auth, (req, res) => {
   const { title, description, project_id, assignee_id, assignee_ids, priority, deadline, status, recurrence } = req.body;
   const newIds = Array.isArray(assignee_ids) ? assignee_ids.map(Number).filter(Boolean) : null;
 
+  // Subtasks gate: can't claim completion (done or pending_review) while any subtask is incomplete.
+  if (status === 'done' && existing.status !== 'done') {
+    if (blockIfIncompleteSubtasks(req.params.id, res)) return;
+  }
+
   // ── Review gate: if task was created by admin and employee marks as done → pending_review ──
   let newStatus = status || existing.status;
   if (status === 'done' && existing.status !== 'done' && req.user.role !== 'admin') {
@@ -1031,7 +1096,7 @@ app.put('/api/tasks/:id', auth, (req, res) => {
 
   if (newIds) setTaskAssignees(req.params.id, newIds);
 
-  const task = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [req.params.id]))[0];
+  const task = attachSubtasks(enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [req.params.id]))[0]);
 
   // Notify new assignees (Telegram only for new task assignment)
   const prevAssigneeId = existing.assignee_id;
@@ -1115,6 +1180,21 @@ app.patch('/api/tasks/:id/my-done', auth, (req, res) => {
     .run(done ? 1 : 0, done ? localNow() : null, req.params.id, targetId);
   recomputeTaskStatus(req.params.id);
 
+  // Subtasks gate: if this toggle would complete the task but subtasks remain,
+  // revert this assignee's done flag and the task status, then reject.
+  const tentative = db.prepare('SELECT status FROM tasks WHERE id = ?').get(req.params.id);
+  if (done && tentative.status === 'done' && hasIncompleteSubtasks(req.params.id)) {
+    db.prepare('UPDATE task_assignees SET done = 0, done_at = NULL WHERE task_id = ? AND user_id = ?').run(req.params.id, targetId);
+    db.prepare('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?').run(existing.status, localNow(), req.params.id);
+    const row = db.prepare('SELECT COUNT(*) as total, SUM(CASE WHEN done=1 THEN 1 ELSE 0 END) as done_count FROM subtasks WHERE task_id = ?').get(req.params.id);
+    return res.status(400).json({
+      error: `Сначала выполните все подзадачи (${row.done_count}/${row.total})`,
+      code: 'SUBTASKS_INCOMPLETE',
+      subtasks_done: row.done_count,
+      subtasks_total: row.total,
+    });
+  }
+
   // ── Review gate: if all done and task created by admin and actor is not admin → pending_review ──
   if (done && req.user.role !== 'admin') {
     const taskRow = db.prepare('SELECT created_by, status FROM tasks WHERE id = ?').get(req.params.id);
@@ -1131,7 +1211,7 @@ app.patch('/api/tasks/:id/my-done', auth, (req, res) => {
     spawnRecurringTask(existing);
   }
 
-  const task = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [req.params.id]))[0];
+  const task = attachSubtasks(enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [req.params.id]))[0]);
   if (done && task) {
     const allDone = (task.multi_assignees || []).every(a => a.done);
     const actor = db.prepare('SELECT name FROM users WHERE id = ?').get(targetId);
@@ -1186,9 +1266,10 @@ app.post('/api/tasks/:id/approve', auth, (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Не найдено' });
   if (req.user.role !== 'admin' && existing.created_by !== req.user.id) return res.status(403).json({ error: 'Нет доступа' });
   if (existing.status !== 'pending_review') return res.status(400).json({ error: 'Задача не ожидает проверки' });
+  if (blockIfIncompleteSubtasks(req.params.id, res)) return;
 
   db.prepare("UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?").run(localNow(), req.params.id);
-  const task = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [req.params.id]))[0];
+  const task = attachSubtasks(enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [req.params.id]))[0]);
 
   spawnRecurringTask(existing);
 
@@ -1217,7 +1298,7 @@ app.post('/api/tasks/:id/reject', auth, (req, res) => {
 
   const { comment } = req.body;
   db.prepare("UPDATE tasks SET status = 'in_progress', updated_at = ? WHERE id = ?").run(localNow(), req.params.id);
-  const task = enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [req.params.id]))[0];
+  const task = attachSubtasks(enrichTasksWithAssignees(getTaskQuery(' AND t.id = ?', [req.params.id]))[0]);
 
   // Add reject comment to task comments
   if (comment && comment.trim()) {
@@ -1253,6 +1334,50 @@ function canAccessTask(req, taskId) {
   const task = db.prepare('SELECT created_by, assignee_id FROM tasks WHERE id = ?').get(taskId);
   return task && (task.created_by === req.user.id || task.assignee_id === req.user.id);
 }
+
+// ─── Subtasks ─────────────────────────────────────────────────────────────────
+
+app.get('/api/tasks/:id/subtasks', auth, (req, res) => {
+  if (!canAccessTask(req, req.params.id)) return res.status(403).json({ error: 'Нет доступа' });
+  res.json(getSubtasks(req.params.id));
+});
+
+app.post('/api/tasks/:id/subtasks', auth, (req, res) => {
+  if (!canAccessTask(req, req.params.id)) return res.status(403).json({ error: 'Нет доступа' });
+  const task = db.prepare('SELECT id FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Задача не найдена' });
+  const { text } = req.body;
+  if (!text?.trim()) return res.status(400).json({ error: 'Текст подзадачи обязателен' });
+  if (text.trim().length > 300) return res.status(400).json({ error: 'Текст слишком длинный (макс. 300 символов)' });
+  const maxOrder = db.prepare('SELECT COALESCE(MAX(order_idx),-1)+1 as n FROM subtasks WHERE task_id = ?').get(req.params.id).n;
+  const result = db.prepare('INSERT INTO subtasks (task_id, text, order_idx) VALUES (?, ?, ?)').run(req.params.id, text.trim(), maxOrder);
+  res.json(db.prepare('SELECT * FROM subtasks WHERE id = ?').get(result.lastInsertRowid));
+});
+
+app.patch('/api/subtasks/:id', auth, (req, res) => {
+  const sub = db.prepare('SELECT * FROM subtasks WHERE id = ?').get(req.params.id);
+  if (!sub) return res.status(404).json({ error: 'Подзадача не найдена' });
+  if (!canAccessTask(req, sub.task_id)) return res.status(403).json({ error: 'Нет доступа' });
+  const { done, text } = req.body;
+  if (text !== undefined) {
+    if (!text.trim()) return res.status(400).json({ error: 'Текст подзадачи обязателен' });
+    if (text.trim().length > 300) return res.status(400).json({ error: 'Текст слишком длинный (макс. 300 символов)' });
+    db.prepare('UPDATE subtasks SET text = ? WHERE id = ?').run(text.trim(), req.params.id);
+  }
+  if (done !== undefined) {
+    db.prepare('UPDATE subtasks SET done = ?, done_at = ? WHERE id = ?')
+      .run(done ? 1 : 0, done ? localNow() : null, req.params.id);
+  }
+  res.json(db.prepare('SELECT * FROM subtasks WHERE id = ?').get(req.params.id));
+});
+
+app.delete('/api/subtasks/:id', auth, (req, res) => {
+  const sub = db.prepare('SELECT * FROM subtasks WHERE id = ?').get(req.params.id);
+  if (!sub) return res.status(404).json({ error: 'Подзадача не найдена' });
+  if (!canAccessTask(req, sub.task_id)) return res.status(403).json({ error: 'Нет доступа' });
+  db.prepare('DELETE FROM subtasks WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
 
 // ─── Task History ─────────────────────────────────────────────────────────────
 app.get('/api/tasks/:id/history', auth, (req, res) => {
@@ -1409,7 +1534,8 @@ app.post('/api/profile/avatar', auth, (req, res) => {
   if (!mimeMatch) return res.status(400).json({ error: 'Допустимые форматы: JPEG, PNG, GIF, WebP (SVG запрещён)' });
   const base64Data = avatar_img.slice(mimeMatch[0].length);
   const sizeBytes = Math.ceil(base64Data.length * 0.75);
-  if (sizeBytes > 2 * 1024 * 1024) return res.status(400).json({ error: 'Файл превышает 2 МБ' });
+  // Client resizes to ~256px before upload; anything past this is not a legitimate avatar.
+  if (sizeBytes > 300 * 1024) return res.status(400).json({ error: 'Файл превышает 300 КБ' });
   db.prepare('UPDATE users SET avatar_img = ? WHERE id = ?').run(avatar_img, req.user.id);
   res.json({ ok: true, avatar_img });
 });

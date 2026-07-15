@@ -125,6 +125,23 @@ function initials(name) {
   return (name || '?').split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
 }
 
+function resizeImageFile(file, maxDim = 256, quality = 0.85) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+      URL.revokeObjectURL(img.src);
+    };
+    img.onerror = () => reject(new Error('Не удалось прочитать изображение'));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
 function updateSidebarAvatar(u) {
   const av = document.getElementById('sidebar-avatar');
   if (!av) return;
@@ -2906,6 +2923,9 @@ function taskCard(t, urgencyLevel = null) {
   }
 
   const urgentBorder = { overdue: 'var(--danger)', today: '#EA580C', tomorrow: '#D97706' }[urgencyLevel] || '';
+  const subtaskBadge = (t.subtasks_total > 0)
+    ? `<span class="task-meta-item ma-progress" style="display:inline-flex;align-items:center;gap:4px" title="${t.subtasks_done} из ${t.subtasks_total} подзадач выполнено">${svgI(SVG_PATHS.check,11)} ${t.subtasks_done}/${t.subtasks_total} подзадач</span>`
+    : '';
   return `
     <div class="task-card ${t.status === 'done' ? 'done' : ''}" data-task-id="${t.id}"${urgentBorder ? ` style="border-left:3px solid ${urgentBorder};border-radius:0 10px 10px 0"` : ''}>
       <div class="task-card-left">
@@ -2918,6 +2938,7 @@ function taskCard(t, urgencyLevel = null) {
         <div class="task-title">${_escHtml(t.title)}</div>
         <div class="task-meta" style="margin-top:6px">
           ${assigneeMetaHtml}
+          ${subtaskBadge}
           ${dl}
           ${cd}
           ${t.creator_name && t.created_by !== state.user.id ? `<span class="task-meta-item" style="color:#94a3b8;font-size:11px">от ${t.creator_name}</span>` : ''}
@@ -3020,6 +3041,98 @@ function attachTaskCardListeners() {
   });
 }
 
+// ─── Subtasks ─────────────────────────────────────────────────────────────────
+function renderSubtaskRow(taskId, s) {
+  return `
+    <div class="subtask-row" id="subtask-row-${s.id}" style="display:flex;align-items:center;gap:8px;padding:5px 0">
+      <button class="subtask-checkbox ${s.done ? 'checked' : ''}" onclick="toggleSubtaskDone(${taskId},${s.id},${!s.done})" title="${s.done ? 'Снять отметку' : 'Отметить как выполнено'}">
+        ${s.done ? svgI(SVG_PATHS.check,12) : ''}
+      </button>
+      <span class="subtask-text ${s.done ? 'done' : ''}" style="flex:1;font-size:13.5px${s.done ? ';text-decoration:line-through;color:var(--text-light)' : ''}">${_escHtml(s.text)}</span>
+      <button class="icon-btn" onclick="deleteSubtask(${taskId},${s.id})" title="Удалить">${svgI(SVG_PATHS.trash,13)}</button>
+    </div>`;
+}
+function renderSubtaskAddForm(taskId) {
+  return `
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <input id="subtask-new-input-${taskId}" class="input" placeholder="Добавить пункт..." maxlength="300"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();addSubtaskToTask(${taskId})}">
+      <button type="button" class="btn btn-outline btn-sm" onclick="addSubtaskToTask(${taskId})">+ Добавить</button>
+    </div>`;
+}
+
+async function toggleSubtaskDone(taskId, subtaskId, done) {
+  const row = document.getElementById('subtask-row-' + subtaskId);
+  row?.querySelector('.subtask-checkbox')?.classList.toggle('checked', done);
+  const textEl = row?.querySelector('.subtask-text');
+  if (textEl) { textEl.classList.toggle('done', done); textEl.style.textDecoration = done ? 'line-through' : 'none'; }
+  try {
+    await api('PATCH', `/subtasks/${subtaskId}`, { done });
+    await refreshTaskDetailSubtasks(taskId);
+  } catch (e) {
+    toast(e.message, 'error');
+    await refreshTaskDetailSubtasks(taskId);
+  }
+}
+
+async function addSubtaskToTask(taskId) {
+  const input = document.getElementById('subtask-new-input-' + taskId);
+  const text = input?.value.trim();
+  if (!text) return;
+  try {
+    await api('POST', `/tasks/${taskId}/subtasks`, { text });
+    if (input) input.value = '';
+    await refreshTaskDetailSubtasks(taskId);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function deleteSubtask(taskId, subtaskId) {
+  try {
+    await api('DELETE', `/subtasks/${subtaskId}`);
+    await refreshTaskDetailSubtasks(taskId);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function showSubtaskAddInput(taskId) {
+  document.getElementById(`subtasks-add-toggle-${taskId}`)?.classList.add('hidden');
+  document.getElementById(`subtasks-add-form-${taskId}`)?.classList.remove('hidden');
+  document.getElementById(`subtask-new-input-${taskId}`)?.focus();
+}
+
+async function refreshTaskDetailSubtasks(taskId) {
+  try {
+    const t = await GET('/tasks/' + taskId);
+    const listEl = document.getElementById('td-subtasks-list');
+    if (listEl) listEl.innerHTML = (t.subtasks || []).map(s => renderSubtaskRow(taskId, s)).join('');
+    const titleEl = document.querySelector('.subtasks-title');
+    if (titleEl && t.subtasks?.length) titleEl.innerHTML = `${svgI(SVG_PATHS.check,14)} Подзадачи (${t.subtasks.filter(s=>s.done).length}/${t.subtasks.length})`;
+    updateDoneButtonGate(taskId, t.subtasks || []);
+    if (state.currentPage === 'tasks' || state.currentPage === 'mytasks') renderTasksPage();
+    else if (state.currentPage === 'dashboard') renderDashboard();
+    else if (state.currentPage === 'project') renderProjectPage(state.currentProjectId);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function updateDoneButtonGate(taskId, subtasks) {
+  const btn = document.getElementById('td-done-btn');
+  if (!btn) return;
+  const subDone = subtasks.filter(s=>s.done).length, subTotal = subtasks.length;
+  const blocked = subTotal > 0 && subDone < subTotal;
+  btn.disabled = blocked;
+  btn.title = blocked ? 'Заверши все подзадачи' : '';
+  let msg = document.getElementById('td-done-block-msg');
+  if (blocked && !msg) {
+    msg = document.createElement('span');
+    msg.id = 'td-done-block-msg';
+    msg.style.cssText = 'font-size:12px;color:var(--danger);margin-left:8px';
+    btn.insertAdjacentElement('afterend', msg);
+  }
+  if (msg) {
+    if (blocked) { msg.textContent = `Заверши все подзадачи (${subDone}/${subTotal})`; msg.style.display = ''; }
+    else msg.style.display = 'none';
+  }
+}
+
 // ─── Task Detail Modal ────────────────────────────────────────────────────────
 async function openTaskDetail(taskId) {
   try {
@@ -3069,6 +3182,7 @@ async function openTaskDetail(taskId) {
               <div class="label">Исполнители</div>
               <div class="value">
                 ${isMultiAssignee ? `
+                  ${t.subtasks?.length > 0 && t.subtasks.some(s=>!s.done) ? `<div style="font-size:12px;color:var(--danger);margin-bottom:6px">Задачу нельзя завершить, пока не выполнены все подзадачи (${t.subtasks.filter(s=>s.done).length}/${t.subtasks.length})</div>` : ''}
                   <div class="ma-detail-list">
                     ${ma.map(a => {
                       const canToggle = isAdmin || a.id === state.user.id;
@@ -3104,11 +3218,40 @@ async function openTaskDetail(taskId) {
             </div>` : ''}
           </div>
 
+          ${(t.subtasks && t.subtasks.length > 0) ? `
+            <div class="subtasks-section" style="margin-bottom:16px">
+              <div class="subtasks-title" style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:8px">
+                ${svgI(SVG_PATHS.check,14)} Подзадачи (${t.subtasks.filter(s=>s.done).length}/${t.subtasks.length})
+              </div>
+              <div class="subtasks-list" id="td-subtasks-list">
+                ${t.subtasks.map(s => renderSubtaskRow(t.id, s)).join('')}
+              </div>
+              ${canEdit ? renderSubtaskAddForm(t.id) : ''}
+            </div>
+          ` : (canEdit ? `
+            <div class="subtasks-section" style="margin-bottom:16px">
+              <button class="btn btn-outline btn-sm" onclick="showSubtaskAddInput(${t.id})" id="subtasks-add-toggle-${t.id}">${svgI(SVG_PATHS.check,13)} Добавить подзадачи</button>
+              <div id="td-subtasks-list"></div>
+              <div id="subtasks-add-form-${t.id}" class="hidden">${renderSubtaskAddForm(t.id)}</div>
+            </div>
+          ` : '')}
+
           ${canEdit ? `
-            <div style="display:flex;gap:10px;margin-bottom:20px">
-              ${!isMultiAssignee && (isAdmin || t.assignee_id === state.user.id) && t.status !== 'pending_review' ? `
-                <button class="btn ${t.status==='done' ? 'btn-outline' : 'btn-primary'} btn-sm" onclick="toggleTaskDone(${t.id},${t.status!=='done'},this)" style="display:inline-flex;align-items:center;gap:5px">${svgI('<polyline points="20 6 9 17 4 12"/>',13)} ${t.status==='done' ? 'Отменить выполнение' : 'Готово'}</button>
-              ` : ''}
+            <div style="display:flex;gap:10px;margin-bottom:20px;align-items:center;flex-wrap:wrap">
+              ${(() => {
+                const subDone = t.subtasks?.filter(s=>s.done).length ?? 0;
+                const subTotal = t.subtasks?.length ?? 0;
+                const blocked = subTotal > 0 && subDone < subTotal && t.status !== 'done';
+                return !isMultiAssignee && (isAdmin || t.assignee_id === state.user.id) && t.status !== 'pending_review' ? `
+                  <button class="btn ${t.status==='done' ? 'btn-outline' : 'btn-primary'} btn-sm" id="td-done-btn"
+                    ${blocked ? 'disabled title="Заверши все подзадачи"' : ''}
+                    onclick="${blocked ? '' : `toggleTaskDone(${t.id},${t.status!=='done'},this)`}"
+                    style="display:inline-flex;align-items:center;gap:5px">
+                    ${svgI('<polyline points="20 6 9 17 4 12"/>',13)} ${t.status==='done' ? 'Отменить выполнение' : 'Готово'}
+                  </button>
+                  ${blocked ? `<span id="td-done-block-msg" style="font-size:12px;color:var(--danger)">Заверши все подзадачи (${subDone}/${subTotal})</span>` : ''}
+                ` : '';
+              })()}
               <button class="btn btn-outline btn-sm" onclick="closeModal();openTaskModal(${t.id})" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.edit)} Редактировать</button>
               ${isAdmin || can('assign_tasks') ? `<button class="btn btn-danger btn-sm" onclick="deleteTask(${t.id})" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.trash)} Удалить</button>` : ''}
             </div>
@@ -3484,8 +3627,33 @@ function initCustomDatepicker(inputId, initial, options = {}) {
   updateTrigger();
 }
 
+let _newTaskSubtasks = [];
+
+function renderSubtaskRows() {
+  const el = document.getElementById('f-subtasks-list');
+  if (!el) return;
+  el.innerHTML = _newTaskSubtasks.map((text, i) => `
+    <div class="subtask-draft-row" style="display:flex;align-items:center;gap:8px;padding:6px 0">
+      <span style="flex:1;font-size:13.5px">${_escHtml(text)}</span>
+      <button type="button" class="icon-btn" onclick="removeSubtaskRow(${i})" title="Удалить">${svgI(SVG_PATHS.trash,13)}</button>
+    </div>`).join('');
+}
+function addSubtaskRow() {
+  const input = document.getElementById('f-subtask-input');
+  const text = input?.value.trim();
+  if (!text) return;
+  _newTaskSubtasks.push(text);
+  input.value = '';
+  renderSubtaskRows();
+}
+function removeSubtaskRow(index) {
+  _newTaskSubtasks.splice(index, 1);
+  renderSubtaskRows();
+}
+
 async function openTaskModal(taskId = null, defaultProjectId = null) {
   const isAdmin = state.user.role === 'admin';
+  _newTaskSubtasks = [];
   let task = null;
   if (taskId) {
     try { task = await GET('/tasks/' + taskId); } catch {}
@@ -3570,6 +3738,16 @@ async function openTaskModal(taskId = null, defaultProjectId = null) {
             <option value="monthly" ${task?.recurrence==='monthly' ? 'selected':''}>Каждый месяц</option>
           </select>
         </div>
+        ${!task ? `
+        <div class="field">
+          <label>Подзадачи <span style="font-size:11px;color:var(--text-light);font-weight:400">(необязательно)</span></label>
+          <div id="f-subtasks-list"></div>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <input id="f-subtask-input" class="input" placeholder="Добавить пункт..." maxlength="300"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();addSubtaskRow()}">
+            <button type="button" class="btn btn-outline btn-sm" onclick="addSubtaskRow()">+ Добавить</button>
+          </div>
+        </div>` : ''}
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline" onclick="closeModal()">Отмена</button>
@@ -3579,6 +3757,7 @@ async function openTaskModal(taskId = null, defaultProjectId = null) {
   `);
 
   initCustomDatepicker('f-deadline', deadline);
+  renderSubtaskRows();
 
   document.getElementById('save-task-btn').addEventListener('click', async () => {
     const title = document.getElementById('f-title').value.trim();
@@ -3600,6 +3779,7 @@ async function openTaskModal(taskId = null, defaultProjectId = null) {
         priority: document.getElementById('f-priority').value,
         deadline: deadlineVal,
         recurrence: document.getElementById('f-recurrence').value || 'none',
+        subtasks: task ? undefined : _newTaskSubtasks,
       };
       if (task) await PUT('/tasks/' + taskId, payload);
       else await POST('/tasks', payload);
@@ -6958,18 +7138,16 @@ async function renderSettingsPage() {
     document.getElementById('avatar-upload')?.addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      if (file.size > 2 * 1024 * 1024) { toast('Файл превышает 2 МБ', 'error'); e.target.value=''; return; }
-      const reader = new FileReader();
-      reader.onload = async (ev) => {
-        try {
-          await POST('/profile/avatar', { avatar_img: ev.target.result });
-          state.user.avatar_img = ev.target.result;
-          toast('Аватар обновлён', 'success');
-          renderSettingsPage();
-          updateSidebarAvatar(state.user);
-        } catch (err) { toast(err.message, 'error'); }
-      };
-      reader.readAsDataURL(file);
+      if (file.size > 8 * 1024 * 1024) { toast('Файл превышает 8 МБ', 'error'); e.target.value=''; return; }
+      try {
+        const resized = await resizeImageFile(file, 256, 0.85);
+        await POST('/profile/avatar', { avatar_img: resized });
+        state.user.avatar_img = resized;
+        toast('Аватар обновлён', 'success');
+        renderSettingsPage();
+        updateSidebarAvatar(state.user);
+      } catch (err) { toast(err.message, 'error'); }
+      e.target.value = '';
     });
   } catch (err) {
     document.getElementById('page-content').innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${err.message}</p></div>`;
