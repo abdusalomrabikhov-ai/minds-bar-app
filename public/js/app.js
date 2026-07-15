@@ -3284,7 +3284,7 @@ async function openTaskDetail(taskId) {
               <div class="comment-input-row">
                 <input class="comment-input" id="comment-input" placeholder="Написать комментарий... (@ для упоминания)">
                 <button class="emoji-btn" id="emoji-btn" title="Смайлики" type="button">😊</button>
-                <button class="btn btn-blue btn-sm" onclick="submitComment(${t.id})">Отправить</button>
+                <button class="btn btn-blue btn-sm" id="comment-submit-btn" onclick="submitComment(${t.id})">Отправить</button>
               </div>
             </div>
           </div>
@@ -3452,11 +3452,16 @@ function renderEmojiPanel() {
 async function submitComment(taskId) {
   const input = document.getElementById('comment-input');
   if (!input?.value.trim()) return;
+  const btn = document.getElementById('comment-submit-btn');
+  if (btn) { if (btn.disabled) return; btn.disabled = true; }
   try {
     await POST('/tasks/' + taskId + '/comments', { text: input.value.trim() });
     localStorage.removeItem('tt_comment_draft_' + taskId);
     openTaskDetail(taskId);
-  } catch (err) { toast(err.message, 'error'); }
+  } catch (err) {
+    toast(err.message, 'error');
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function deleteTask(taskId) {
