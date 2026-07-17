@@ -2147,7 +2147,8 @@ async function renderProjectContentTab(projectId) {
   const panel = document.getElementById('proj-tab-panel');
   if (!panel) return;
   const isAdmin  = state.user.role === 'admin' || can('manage_projects');
-  const canEdit  = isAdmin;
+  // «Проекты» = только добавлять (посты + импорт); редактировать/удалять/двигать — только админ
+  const canEdit  = state.user.role === 'admin';
   panel.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-light)">Загрузка...</div>';
   try {
     cpRestoreNav();
@@ -2175,12 +2176,12 @@ async function renderProjectContentTab(projectId) {
               ${svgI('<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',14)} Импорт Excel
               <input type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="importContentExcel(this,${projectId})">
             </label>
-            ${monthItems.length > 0 ? `<button class="btn btn-outline btn-sm" style="color:#EF4444;border-color:#EF4444" onclick="clearCpMonth(${projectId})">Очистить месяц</button>` : ''}
+            ${monthItems.length > 0 && canEdit ? `<button class="btn btn-outline btn-sm" style="color:#EF4444;border-color:#EF4444" onclick="clearCpMonth(${projectId})">Очистить месяц</button>` : ''}
           ` : ''}
         </div>
       </div>
 
-      ${buildContentCalendar(monthItems, cpYear, cpMonth, projectId, canEdit)}
+      ${buildContentCalendar(monthItems, cpYear, cpMonth, projectId, canEdit, isAdmin)}
 
       <div class="cp-footer">
         <span class="cp-stat" style="color:${CP_TYPES.post.color}">
@@ -2204,7 +2205,7 @@ async function renderProjectContentTab(projectId) {
   }
 }
 
-function buildContentCalendar(items, year, month, projectId, canEdit) {
+function buildContentCalendar(items, year, month, projectId, canEdit, canAdd) {
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const startOffset = firstDay === 0 ? 6 : firstDay - 1;
@@ -2250,7 +2251,7 @@ function buildContentCalendar(items, year, month, projectId, canEdit) {
           ${hasDesc ? `<span class="cp-chip-has-desc" title="${safeDesc.slice(0,80).replace(/"/g,'&quot;')}${safeDesc.length>80?'…':''}"></span>` : ''}
         </div>`;
       }).join('');
-      const addBtn = canEdit ? `<button class="cp-add-btn" onclick="cpOpenAdd(this,'${ds}',${projectId})" title="Добавить публикацию">+</button>` : '';
+      const addBtn = canAdd ? `<button class="cp-add-btn" onclick="cpOpenAdd(this,'${ds}',${projectId})" title="Добавить публикацию">+</button>` : '';
       const dropAttrs = canEdit ? `data-date="${ds}"` : '';
       return `<td class="cp-cell${isToday?' cp-today':''}${isWeekend?' cp-weekend':''}${dayItems.length?' cp-has-items':''}" ${dropAttrs}>
         <div class="cp-day-num">${d}${addBtn}</div>
@@ -3252,7 +3253,7 @@ async function openTaskDetail(taskId) {
                   ${blocked ? `<span id="td-done-block-msg" style="font-size:12px;color:var(--danger)">Заверши все подзадачи (${subDone}/${subTotal})</span>` : ''}
                 ` : '';
               })()}
-              <button class="btn btn-outline btn-sm" onclick="closeModal();openTaskModal(${t.id})" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.edit)} Редактировать</button>
+              ${isAdmin || can('review_content_plan') || can('assign_tasks') || can('manage_team') ? `<button class="btn btn-outline btn-sm" onclick="closeModal();openTaskModal(${t.id})" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.edit)} Редактировать</button>` : ''}
               ${isAdmin || can('assign_tasks') ? `<button class="btn btn-danger btn-sm" onclick="deleteTask(${t.id})" style="display:inline-flex;align-items:center;gap:5px">${svgI(SVG_PATHS.trash)} Удалить</button>` : ''}
             </div>
           ` : ''}
@@ -3762,6 +3763,16 @@ async function openTaskModal(taskId = null, defaultProjectId = null) {
   `);
 
   initCustomDatepicker('f-deadline', deadline);
+  // Смена дедлайна существующей задачи — только админ и проверяющий КП (при создании можно всем)
+  if (task && state.user.role !== 'admin' && !can('review_content_plan')) {
+    const trig = document.getElementById('cdp-trig-f-deadline');
+    if (trig) {
+      trig.disabled = true;
+      trig.style.opacity = '0.55';
+      trig.style.cursor = 'not-allowed';
+      trig.title = 'Менять срок может только администратор или проверяющий контент-плана';
+    }
+  }
   renderSubtaskRows();
 
   document.getElementById('save-task-btn').addEventListener('click', async () => {

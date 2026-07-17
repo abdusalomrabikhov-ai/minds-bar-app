@@ -510,7 +510,7 @@ app.post('/api/projects/:id/content/item', auth, requirePerm('manage_projects'),
   res.json({ ok: true, id: r.lastInsertRowid });
 });
 
-app.put('/api/content/:id', auth, requirePerm('manage_projects'), (req, res) => {
+app.put('/api/content/:id', auth, adminOnly, (req, res) => {
   const row = db.prepare('SELECT * FROM content_plan WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Не найдено' });
   const { date, type, title, quantity, description } = req.body;
@@ -523,7 +523,7 @@ app.put('/api/content/:id', auth, requirePerm('manage_projects'), (req, res) => 
   res.json({ ok: true });
 });
 
-app.delete('/api/content/:id', auth, requirePerm('manage_projects'), (req, res) => {
+app.delete('/api/content/:id', auth, adminOnly, (req, res) => {
   const row = db.prepare('SELECT cp.*, p.name as proj_name FROM content_plan cp LEFT JOIN projects p ON p.id = cp.project_id WHERE cp.id = ?').get(req.params.id);
   db.prepare('DELETE FROM tasks WHERE source_content_id = ?').run(req.params.id);
   db.prepare('DELETE FROM content_plan WHERE id = ?').run(req.params.id);
@@ -563,7 +563,7 @@ app.post('/api/projects/:id/sync-content-tasks', auth, requirePerm('manage_proje
   res.json({ ok: true });
 });
 
-app.delete('/api/projects/:id/content/month/:ym', auth, requirePerm('manage_projects'), (req, res) => {
+app.delete('/api/projects/:id/content/month/:ym', auth, adminOnly, (req, res) => {
   const toDelete = db.prepare("SELECT id FROM content_plan WHERE project_id = ? AND strftime('%Y-%m', date) = ?").all(req.params.id, req.params.ym);
   if (toDelete.length) {
     const ph = toDelete.map(() => '?').join(',');
@@ -1077,12 +1077,43 @@ app.put('/api/tasks/:id', auth, (req, res) => {
   const perms = JSON.parse(req.user.permissions || '{}');
   const canManageTeam  = perms.manage_team;
   const canAssignTasks = perms.assign_tasks;
-  if (req.user.role !== 'admin' && !isAssigned && !canManageTeam && !canAssignTasks) {
+  const canReviewCp    = perms.review_content_plan;
+  if (req.user.role !== 'admin' && !isAssigned && !canManageTeam && !canAssignTasks && !canReviewCp) {
     return res.status(403).json({ error: 'Нет доступа' });
   }
 
   const { title, description, project_id, assignee_id, assignee_ids, priority, deadline, status, recurrence } = req.body;
   const newIds = Array.isArray(assignee_ids) ? assignee_ids.map(Number).filter(Boolean) : null;
+
+  // ── Field lockdown: дедлайн — только админ/проверяющий КП; остальные поля — ещё и менеджеры;
+  // рядовой исполнитель может менять только статус (сравниваем со старыми значениями,
+  // т.к. модалка шлёт полный payload — неизменённые поля пропускаем) ──
+  const isPrivileged = req.user.role === 'admin' || can(req, 'review_content_plan');
+  if (!isPrivileged) {
+    if (deadline !== undefined && String(deadline || '') !== String(existing.deadline || '')) {
+      return res.status(403).json({ error: 'Менять срок задачи может только администратор или проверяющий контент-плана' });
+    }
+    if (!canManageTeam && !canAssignTasks) {
+      let assigneesChanged = false;
+      if (newIds) {
+        const cur = isMulti
+          ? db.prepare('SELECT user_id FROM task_assignees WHERE task_id = ?').all(req.params.id).map(r => r.user_id)
+          : (existing.assignee_id ? [existing.assignee_id] : []);
+        assigneesChanged = newIds.length !== cur.length || newIds.some(id => !cur.includes(id));
+      } else if (assignee_id !== undefined) {
+        assigneesChanged = (assignee_id || null) !== existing.assignee_id;
+      }
+      const otherChanged =
+        (title !== undefined && title !== existing.title) ||
+        (description !== undefined && (description ?? '') !== (existing.description ?? '')) ||
+        (project_id !== undefined && String(project_id || '') !== String(existing.project_id || '')) ||
+        (priority !== undefined && priority !== existing.priority) ||
+        (recurrence !== undefined && (recurrence || 'none') !== (existing.recurrence || 'none'));
+      if (otherChanged || assigneesChanged) {
+        return res.status(403).json({ error: 'Вам доступно только изменение статуса задачи' });
+      }
+    }
+  }
 
   // Subtasks gate: can't claim completion (done or pending_review) while any subtask is incomplete.
   if (status === 'done' && existing.status !== 'done') {
