@@ -157,6 +157,23 @@ function requirePerm(perm) {
   };
 }
 
+// Активные держатели права «Проверка контент-плана»
+function contentReviewers() {
+  return db.prepare('SELECT id, name, telegram_id, permissions FROM users WHERE COALESCE(archived, 0) = 0').all()
+    .filter(u => parsePerms(u.permissions).review_content_plan === true);
+}
+
+// Уведомить всех проверяющих контент-плана (кроме excludeIds): in-app + SSE + Telegram
+function notifyContentReviewers(task, message, excludeIds, sseType) {
+  contentReviewers().forEach(u => {
+    if (excludeIds.has(u.id)) return;
+    db.prepare("INSERT INTO notifications (user_id, task_id, type, message) VALUES (?, ?, 'status_change', ?)")
+      .run(u.id, task.id, message);
+    sendSSE(u.id, { type: sseType, task, message });
+    if (u.telegram_id) sendTelegramNotification(u.telegram_id, message);
+  });
+}
+
 // ─── Telegram Webhook ─────────────────────────────────────────────────────────
 app.post(WEBHOOK_PATH, (req, res) => {
   if (process.env.TELEGRAM_WEBHOOK_SECRET &&
@@ -886,10 +903,14 @@ app.get('/api/tasks', auth, (req, res) => {
 
 // ─── Task Review (Approve / Reject) ───────────────────────────────────────────
 app.get('/api/tasks/pending-review', auth, (req, res) => {
-  const canReview = req.user.role === 'admin' || can(req, 'review_tasks');
+  const canReview = req.user.role === 'admin' || can(req, 'review_tasks') || can(req, 'review_content_plan');
   if (!canReview) return res.status(403).json({ error: 'Нет доступа' });
+  // Проверяющий контент-плана видит все задачи на проверке; остальные — только созданные ими
+  const isContentReviewer = req.user.role !== 'admin' && can(req, 'review_content_plan');
   const tasks = enrichTasksWithSubtasks(enrichTasksWithAssignees(
-    getTaskQuery(" AND t.status = 'pending_review' AND t.created_by = ?", [req.user.id])
+    isContentReviewer
+      ? getTaskQuery(" AND t.status = 'pending_review'", [])
+      : getTaskQuery(" AND t.status = 'pending_review' AND t.created_by = ?", [req.user.id])
   ));
   res.json(tasks);
 });
@@ -1072,6 +1093,7 @@ app.put('/api/tasks/:id', auth, (req, res) => {
   let newStatus = status || existing.status;
   if (status === 'done' && existing.status !== 'done' && req.user.role !== 'admin') {
     if (existing.created_by && userCan(existing.created_by, 'review_tasks')) newStatus = 'pending_review';
+    else if (existing.project_id && !can(req, 'review_content_plan') && contentReviewers().length > 0) newStatus = 'pending_review';
   }
   const newAssignee = newIds ? (newIds[0] || null) : (assignee_id !== undefined ? (assignee_id || null) : existing.assignee_id);
   const newRecurrence = recurrence !== undefined ? (recurrence || 'none') : (existing.recurrence || 'none');
@@ -1132,6 +1154,10 @@ app.put('/api/tasks/:id', auth, (req, res) => {
         .run(uid, task.id, message);
       sendSSE(uid, { type: newStatus === 'pending_review' ? 'pending_review' : 'status_changed', task, message });
     });
+    if (newStatus === 'pending_review') {
+      notifyContentReviewers(task, message, new Set([req.user.id, ...notifyIds]), 'pending_review');
+      updateReviewBadgeSSE();
+    }
   }
 
   // Spawn next recurring task when done (not when redirected to pending_review)
@@ -1166,6 +1192,13 @@ app.put('/api/tasks/:id', auth, (req, res) => {
     }
   });
 
+  // Смена дедлайна → уведомить проверяющих контент-плана
+  if (deadline !== undefined && String(existing.deadline || '') !== String(deadline || '')) {
+    const fmtDl = d => d ? new Date(d).toLocaleString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' }) : '—';
+    const msg = `📅 ${actorName} изменил(а) дедлайн задачи «${task.title}»: ${fmtDl(existing.deadline)} → ${fmtDl(deadline)}`;
+    notifyContentReviewers(task, msg, new Set([req.user.id]), 'notification');
+  }
+
   sendSSE(task.assignee_id, { type: 'task_updated', task });
   res.json(task);
 });
@@ -1197,9 +1230,11 @@ app.patch('/api/tasks/:id/my-done', auth, (req, res) => {
 
   // ── Review gate: if all done and task created by admin and actor is not admin → pending_review ──
   if (done && req.user.role !== 'admin') {
-    const taskRow = db.prepare('SELECT created_by, status FROM tasks WHERE id = ?').get(req.params.id);
+    const taskRow = db.prepare('SELECT created_by, project_id, status FROM tasks WHERE id = ?').get(req.params.id);
     if (taskRow?.status === 'done') {
-      if (taskRow.created_by && userCan(taskRow.created_by, 'review_tasks')) {
+      const creatorGate = taskRow.created_by && userCan(taskRow.created_by, 'review_tasks');
+      const contentGate = taskRow.project_id && !can(req, 'review_content_plan') && contentReviewers().length > 0;
+      if (creatorGate || contentGate) {
         db.prepare("UPDATE tasks SET status = 'pending_review', updated_at = ? WHERE id = ?").run(localNow(), req.params.id);
       }
     }
@@ -1230,6 +1265,7 @@ app.patch('/api/tasks/:id/my-done', auth, (req, res) => {
       db.prepare('INSERT INTO notifications (user_id, task_id, type, message) VALUES (?, ?, ?, ?)').run(uid, task.id, 'status_change', message);
       sendSSE(uid, { type: isPendingReview ? 'pending_review' : 'status_changed', task, message });
     });
+    if (isPendingReview) notifyContentReviewers(task, message, new Set([targetId, ...notifyIds]), 'pending_review');
     if (isPendingReview) updateReviewBadgeSSE();
   }
   res.json({ ok: true, status: task?.status });
@@ -1261,10 +1297,10 @@ app.delete('/api/tasks/:id', auth, (req, res) => {
 });
 
 app.post('/api/tasks/:id/approve', auth, (req, res) => {
-  if (req.user.role !== 'admin' && !can(req, 'review_tasks')) return res.status(403).json({ error: 'Нет доступа' });
+  if (req.user.role !== 'admin' && !can(req, 'review_tasks') && !can(req, 'review_content_plan')) return res.status(403).json({ error: 'Нет доступа' });
   const existing = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Не найдено' });
-  if (req.user.role !== 'admin' && existing.created_by !== req.user.id) return res.status(403).json({ error: 'Нет доступа' });
+  if (req.user.role !== 'admin' && existing.created_by !== req.user.id && !can(req, 'review_content_plan')) return res.status(403).json({ error: 'Нет доступа' });
   if (existing.status !== 'pending_review') return res.status(400).json({ error: 'Задача не ожидает проверки' });
   if (blockIfIncompleteSubtasks(req.params.id, res)) return;
 
@@ -1290,10 +1326,10 @@ app.post('/api/tasks/:id/approve', auth, (req, res) => {
 });
 
 app.post('/api/tasks/:id/reject', auth, (req, res) => {
-  if (req.user.role !== 'admin' && !can(req, 'review_tasks')) return res.status(403).json({ error: 'Нет доступа' });
+  if (req.user.role !== 'admin' && !can(req, 'review_tasks') && !can(req, 'review_content_plan')) return res.status(403).json({ error: 'Нет доступа' });
   const existing = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Не найдено' });
-  if (req.user.role !== 'admin' && existing.created_by !== req.user.id) return res.status(403).json({ error: 'Нет доступа' });
+  if (req.user.role !== 'admin' && existing.created_by !== req.user.id && !can(req, 'review_content_plan')) return res.status(403).json({ error: 'Нет доступа' });
   if (existing.status !== 'pending_review') return res.status(400).json({ error: 'Задача не ожидает проверки' });
 
   const { comment } = req.body;

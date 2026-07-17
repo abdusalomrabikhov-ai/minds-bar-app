@@ -72,9 +72,6 @@ function initDB() {
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_hr_position_history_emp ON hr_position_history(employee_id)'); } catch {}
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_hr_salary_history_emp ON hr_salary_history(employee_id)'); } catch {}
 
-  // Migrations
-  try { db.exec('ALTER TABLE users ADD COLUMN archived INTEGER DEFAULT 0'); } catch {}
-
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,6 +127,7 @@ function initDB() {
   `);
 
   // Migrations
+  try { db.exec('ALTER TABLE users ADD COLUMN archived INTEGER DEFAULT 0'); } catch {}
   try { db.exec("ALTER TABLE tasks ADD COLUMN recurrence TEXT DEFAULT 'none'"); } catch {}
   try { db.exec("ALTER TABLE users ADD COLUMN permissions TEXT DEFAULT '{}'"); } catch {}
   try { db.exec("ALTER TABLE users ADD COLUMN avatar_img TEXT DEFAULT NULL"); } catch {}
