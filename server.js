@@ -21,6 +21,8 @@ if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
 }
 
 const app = express();
+// За прокси Railway: без этого rate-limit логина считает всех по IP прокси (один лимит на всю команду)
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 
 if (!process.env.JWT_SECRET) {
