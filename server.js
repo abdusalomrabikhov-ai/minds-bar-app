@@ -140,6 +140,13 @@ function parsePerms(raw) {
   try { return JSON.parse(raw || '{}'); } catch { return {}; }
 }
 
+// Keep in sync with PERM_LABELS in public/js/app.js
+const ALL_PERMS = ['reports', 'manage_projects', 'assign_tasks', 'manage_team', 'view_activity', 'manage_schedule', 'manage_finance', 'manage_finance_log', 'manage_ideahast', 'manage_kids', 'manage_b2c', 'review_tasks', 'review_content_plan'];
+function permsForRole(role, requested) {
+  if (role === 'admin') return JSON.stringify(Object.fromEntries(ALL_PERMS.map(p => [p, true])));
+  return JSON.stringify(requested || {});
+}
+
 function can(req, perm) {
   if (req.user.role === 'admin') return true;
   return parsePerms(req.user.permissions)[perm] === true;
@@ -353,7 +360,7 @@ function getContentTypeMembers(projectId, type) {
   return db.prepare('SELECT user_id FROM content_type_assignees WHERE project_id = ? AND content_type = ?').all(projectId, type);
 }
 
-function syncTasksForItem(item, projectId, createdBy, ctx) {
+function syncTasksForItem(item, projectId, createdBy, ctx, syncDeadline = true) {
   // ctx (optional): shared cache across a batch of calls in the same request
   // to avoid re-querying the same project/members for every content item.
   const project = ctx?.project !== undefined ? ctx.project : db.prepare('SELECT name FROM projects WHERE id = ?').get(projectId);
@@ -389,7 +396,11 @@ function syncTasksForItem(item, projectId, createdBy, ctx) {
       const ph = dupIds.map(() => '?').join(',');
       db.prepare(`DELETE FROM tasks WHERE id IN (${ph})`).run(...dupIds);
     }
-    db.prepare('UPDATE tasks SET title=?, deadline=? WHERE id=?').run(title, item.date, taskId);
+    if (syncDeadline) {
+      db.prepare('UPDATE tasks SET title=?, deadline=? WHERE id=?').run(title, item.date, taskId);
+    } else {
+      db.prepare('UPDATE tasks SET title=? WHERE id=?').run(title, taskId);
+    }
   }
 
   // Sync assignees to match current project members; track who is newly added.
@@ -561,7 +572,7 @@ app.post('/api/projects/:id/content/import', auth, requirePerm('manage_projects'
 app.post('/api/projects/:id/sync-content-tasks', auth, requirePerm('manage_projects'), (req, res) => {
   const items = db.prepare('SELECT * FROM content_plan WHERE project_id = ?').all(req.params.id);
   const ctx = { project: db.prepare('SELECT name FROM projects WHERE id = ?').get(req.params.id) };
-  items.forEach(item => syncTasksForItem(item, req.params.id, req.user.id, ctx));
+  items.forEach(item => syncTasksForItem(item, req.params.id, req.user.id, ctx, false));
   res.json({ ok: true });
 });
 
@@ -1538,10 +1549,11 @@ app.post('/api/users', auth, adminOnly, async (req, res) => {
 
   const colors = ['#6366f1','#8b5cf6','#ec4899','#f43f5e','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#06b6d4'];
   const color = colors[Math.floor(Math.random() * colors.length)];
-  const permsJson = JSON.stringify(permissions || {});
+  const finalRole = role || 'employee';
+  const permsJson = permsForRole(finalRole, permissions);
 
   const result = db.prepare('INSERT INTO users (name, email, password, role, avatar_color, permissions) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(name.trim(), email.toLowerCase().trim(), await bcrypt.hash(password, 10), role || 'employee', color, permsJson);
+    .run(name.trim(), email.toLowerCase().trim(), await bcrypt.hash(password, 10), finalRole, color, permsJson);
   const user = db.prepare('SELECT id, name, email, role, avatar_color, permissions FROM users WHERE id = ?').get(result.lastInsertRowid);
   logActivity(req.user.id, 'user_created', 'user', user.id, user.name);
   res.json({ ...user, permissions: parsePerms(user.permissions) });
@@ -1555,10 +1567,14 @@ app.put('/api/users/:id', auth, async (req, res) => {
   if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
 
   const { name, email, password, permissions } = req.body;
-  // Only admins may change the permissions field — employees cannot self-escalate
-  const permsJson = (permissions !== undefined && req.user.role === 'admin')
-    ? JSON.stringify(permissions)
-    : user.permissions;
+  // Only admins may change the permissions field — employees cannot self-escalate.
+  // Admin accounts always keep every permission (can() already grants admins everything;
+  // this keeps the stored JSON/UI badges in sync so an admin can't be edited down to fewer).
+  const permsJson = user.role === 'admin'
+    ? permsForRole('admin')
+    : (permissions !== undefined && req.user.role === 'admin')
+      ? JSON.stringify(permissions)
+      : user.permissions;
   db.prepare('UPDATE users SET name = ?, email = ?, password = ?, permissions = ? WHERE id = ?').run(
     name || user.name,
     email || user.email,
