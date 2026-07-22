@@ -6,12 +6,25 @@ const FONT_BOLD = path.join(__dirname, 'fonts', 'gothampro_bold.ttf');
 
 function buildSummaryData(days, fromOverride, toOverride) {
   const nowLocal   = new Date(Date.now() + 5 * 3600000); // UTC+5
+  // "Месяц" (days===30) means the current calendar month, matching the
+  // dashboard and employee-card semantics, not a rolling 30-day window.
+  const isCalendarMonth = days === 30 && !fromOverride && !toOverride;
+  const monthStart = isCalendarMonth
+    ? `${nowLocal.getFullYear()}-${String(nowLocal.getMonth()+1).padStart(2,'0')}-01`
+    : null;
+  const monthEnd = isCalendarMonth
+    ? new Date(nowLocal.getFullYear(), nowLocal.getMonth()+1, 0).getDate()
+    : null;
   // Use date strings directly; created_at stored as UTC so we compensate by
   // computing the UTC equivalent of start-of-day and end-of-day in UTC+5
-  const startLocal = fromOverride
+  const startLocal = isCalendarMonth
+    ? new Date(monthStart + 'T00:00:00+05:00')
+    : fromOverride
     ? new Date(fromOverride + 'T00:00:00+05:00')
     : new Date(nowLocal.getTime() - days * 86400000);
-  const endLocal   = toOverride
+  const endLocal   = isCalendarMonth
+    ? new Date(`${nowLocal.getFullYear()}-${String(nowLocal.getMonth()+1).padStart(2,'0')}-${String(monthEnd).padStart(2,'0')}T23:59:59+05:00`)
+    : toOverride
     ? new Date(toOverride + 'T23:59:59+05:00')
     : nowLocal;
   const nowISOt  = endLocal.toISOString().slice(0, 19).replace('T', ' ');
@@ -31,7 +44,8 @@ function buildSummaryData(days, fromOverride, toOverride) {
         (length(t.deadline) > 10 AND t.deadline < ? OR length(t.deadline) <= 10 AND t.deadline < ?)
       THEN 1 ELSE 0 END), 0) as overdue
     FROM tasks t
-    WHERE t.created_at >= ? AND t.created_at <= ?
+    WHERE (CASE WHEN t.deadline IS NOT NULL AND t.deadline != '' THEN t.deadline ELSE t.created_at END) >= ?
+      AND (CASE WHEN t.deadline IS NOT NULL AND t.deadline != '' THEN t.deadline ELSE t.created_at END) <= ?
   `).get(todayStartISO, todayISO, startISO, nowISOt);
 
   const employees = db.prepare(
@@ -48,7 +62,9 @@ function buildSummaryData(days, fromOverride, toOverride) {
         THEN 1 ELSE 0 END), 0) as overdue
       FROM tasks t
       LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
-      WHERE (t.assignee_id = ? OR ta.user_id = ?) AND t.created_at >= ? AND t.created_at <= ?
+      WHERE (t.assignee_id = ? OR ta.user_id = ?)
+        AND (CASE WHEN t.deadline IS NOT NULL AND t.deadline != '' THEN t.deadline ELSE t.created_at END) >= ?
+        AND (CASE WHEN t.deadline IS NOT NULL AND t.deadline != '' THEN t.deadline ELSE t.created_at END) <= ?
     `).get(todayStartISO, todayISO, user.id, user.id, user.id, startISO, nowISOt);
 
     const dlRows = db.prepare(`
@@ -57,7 +73,8 @@ function buildSummaryData(days, fromOverride, toOverride) {
       FROM tasks t
       LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
       WHERE (t.assignee_id = ? OR ta.user_id = ?)
-        AND t.created_at >= ? AND t.created_at <= ? AND t.deadline IS NOT NULL AND t.deadline != ''
+        AND t.deadline IS NOT NULL AND t.deadline != ''
+        AND t.deadline >= ? AND t.deadline <= ?
     `).all(user.id, user.id, user.id, startISO, nowISOt);
 
     const taskList = db.prepare(`
@@ -69,7 +86,9 @@ function buildSummaryData(days, fromOverride, toOverride) {
       FROM tasks t
       LEFT JOIN task_assignees ta ON ta.task_id = t.id AND ta.user_id = ?
       LEFT JOIN projects p ON p.id = t.project_id
-      WHERE (t.assignee_id = ? OR ta.user_id = ?) AND t.created_at >= ? AND t.created_at <= ?
+      WHERE (t.assignee_id = ? OR ta.user_id = ?)
+        AND (CASE WHEN t.deadline IS NOT NULL AND t.deadline != '' THEN t.deadline ELSE t.created_at END) >= ?
+        AND (CASE WHEN t.deadline IS NOT NULL AND t.deadline != '' THEN t.deadline ELSE t.created_at END) <= ?
       ORDER BY CASE t.status WHEN 'done' THEN 2 ELSE 1 END, t.deadline ASC NULLS LAST
     `).all(todayStartISO, todayISO, user.id, user.id, user.id, startISO, nowISOt);
 
