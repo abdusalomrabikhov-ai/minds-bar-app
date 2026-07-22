@@ -374,6 +374,7 @@ function syncTasksForItem(item, projectId, createdBy, ctx, syncDeadline = true) 
   const label = cpLabel(item.type);
   const title = item.title ? `${label}: ${item.title}` : label;
   const desc = `Контент-план · ${project?.name || ''}`;
+  const deadline = /^\d{4}-\d{2}-\d{2}$/.test(item.date) ? `${item.date}T18:00:00` : item.date;
 
   if (!members.length) {
     db.prepare('DELETE FROM tasks WHERE source_content_id = ?').run(item.id);
@@ -386,7 +387,7 @@ function syncTasksForItem(item, projectId, createdBy, ctx, syncDeadline = true) 
   let taskId;
   if (allTasks.length === 0) {
     const r = db.prepare(`INSERT INTO tasks (title,description,project_id,assignee_id,created_by,status,priority,deadline,source_content_id) VALUES (?,?,?,?,?,'new','medium',?,?)`)
-      .run(title, desc, projectId, members[0].user_id, createdBy || 1, item.date, item.id);
+      .run(title, desc, projectId, members[0].user_id, createdBy || 1, deadline, item.id);
     taskId = r.lastInsertRowid;
   } else {
     taskId = allTasks[0].id;
@@ -397,7 +398,7 @@ function syncTasksForItem(item, projectId, createdBy, ctx, syncDeadline = true) 
       db.prepare(`DELETE FROM tasks WHERE id IN (${ph})`).run(...dupIds);
     }
     if (syncDeadline) {
-      db.prepare('UPDATE tasks SET title=?, deadline=? WHERE id=?').run(title, item.date, taskId);
+      db.prepare('UPDATE tasks SET title=?, deadline=? WHERE id=?').run(title, deadline, taskId);
     } else {
       db.prepare('UPDATE tasks SET title=? WHERE id=?').run(title, taskId);
     }
